@@ -1,6 +1,6 @@
 /**
  * Contract between the Faisal AI agent's three parts:
- *  - groq.ts   runs the model and the tool-calling loop (OpenAI-compatible function calling);
+ *  - chat.ts   runs the model and the tool-calling loop (OpenAI-compatible function calling);
  *  - tools.ts  defines the system tools and executes them against the app's SystemAPI;
  *  - index.ts  shows tool activity and asks the user to confirm anything that changes the system.
  */

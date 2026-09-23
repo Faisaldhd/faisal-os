@@ -1,9 +1,13 @@
 import { manifest } from './manifest';
 import type { AppContext, AppModule } from '../../kernel/types';
-import { defineStrings, t } from '../../kernel/i18n';
+import { defineStrings, getLocale, t } from '../../kernel/i18n';
 import { renderIcon } from '../../shell/icon';
 import { renderMarkdown } from './markdown';
-import { FALLBACK_MODELS, GroqError, listModels, runGroqTurn, supportsTools, type ChatTurn, type Source } from './groq';
+import { ChatError, listModels, modelsOrFallback, runTurn, type ChatTurn, type Source } from './chat';
+import {
+  LEGACY_STORAGE_KEYS, PROVIDERS, PROVIDER_STORAGE, providerById, savedKey, savedModel, savedProvider,
+  searchesWeb, supportsTools, type Provider,
+} from './providers';
 import { createToolBox } from './tools';
 import type { ConfirmFn, ToolCall } from './agent';
 import { ICON_AI } from './icon';
@@ -14,11 +18,12 @@ defineStrings('ai', {
     title: 'Faisal AI',
     setupTitle: 'مرحباً بك في Faisal AI',
     setupBody: 'Faisal AI يعمل عبر GroqCloud: سريع جداً ومجاني ضمن حدود يومية. أدخل مفتاحك للبدء.',
-    setupGet: 'احصل على مفتاح مجاني من',
-    keyPlaceholder: 'gsk_…',
+    setupBodyDeepseek: 'Faisal AI يعمل عبر DeepSeek: نماذج قوية، والاستخدام مدفوع حسب الاستهلاك. أدخل مفتاحك للبدء.',
+    setupGet: 'احصل على مفتاح API من',
+    provider: 'المزوّد',
     save: 'حفظ والبدء',
     checking: 'جارٍ التحقق من المفتاح…',
-    keyNote: 'يُحفظ المفتاح في هذا المتصفح فقط ولا يُرسل إلا إلى api.groq.com.',
+    keyNote: 'يُحفظ المفتاح في هذا المتصفح فقط ولا يُرسل إلا إلى {host}.',
     model: 'النموذج',
     modelSearch: '{id} (يبحث في الويب)',
     modelAgent: '{id} (وكيل)',
@@ -27,6 +32,7 @@ defineStrings('ai', {
     allowed: 'تم السماح',
     denied: 'تم الرفض',
     agentHint: 'وضع الوكيل: أقدر أقرأ ملفاتك وأفتح التطبيقات، وأسألك قبل أي تغيير.',
+    agentHintNoSearch: 'وضع الوكيل: أقدر أقرأ ملفاتك وأفتح التطبيقات، وأسألك قبل أي تغيير. هذا المزوّد لا يبحث في الويب، فلن أعرض مصادر.',
     searchHint: 'هذا النموذج يبحث في الويب لكنه لا يتحكم في النظام. اختر نموذجاً عليه (وكيل) لإدارة الملفات والتطبيقات.',
     newChat: 'محادثة جديدة',
     removeKey: 'تغيير المفتاح',
@@ -42,7 +48,7 @@ defineStrings('ai', {
     stopped: '(أوقفت الرد)',
     errAuth: 'المفتاح غير صحيح أو ملغى. غيّر المفتاح وأدخل مفتاحاً جديداً.',
     errRate: 'تجاوزت حد الاستخدام المجاني مؤقتاً. انتظر قليلاً ثم أعد المحاولة.',
-    errNetwork: 'تعذّر الاتصال بـ GroqCloud. تأكد من اتصالك بالإنترنت.',
+    errNetwork: 'تعذّر الاتصال بـ {provider}. تأكد من اتصالك بالإنترنت.',
     errModel: 'هذا النموذج غير متاح الآن. اختر نموذجاً آخر من القائمة.',
     errGeneric: 'حدث خطأ: {msg}',
   },
@@ -50,11 +56,12 @@ defineStrings('ai', {
     title: 'Faisal AI',
     setupTitle: 'Welcome to Faisal AI',
     setupBody: 'Faisal AI runs on GroqCloud: very fast, and free within daily limits. Enter your key to start.',
-    setupGet: 'Get a free key from',
-    keyPlaceholder: 'gsk_…',
+    setupBodyDeepseek: 'Faisal AI runs on DeepSeek: strong models, paid per use. Enter your key to start.',
+    setupGet: 'Get an API key from',
+    provider: 'Provider',
     save: 'Save and start',
     checking: 'Checking the key…',
-    keyNote: 'The key is stored in this browser only and is sent only to api.groq.com.',
+    keyNote: 'The key is stored in this browser only and is sent only to {host}.',
     model: 'Model',
     modelSearch: '{id} (searches the web)',
     modelAgent: '{id} (agent)',
@@ -63,6 +70,7 @@ defineStrings('ai', {
     allowed: 'Allowed',
     denied: 'Denied',
     agentHint: 'Agent mode: I can read your files and open apps, and I ask before changing anything.',
+    agentHintNoSearch: 'Agent mode: I can read your files and open apps, and I ask before changing anything. This provider has no web search, so I will not show sources.',
     searchHint: 'This model searches the web but cannot control the system. Pick an (agent) model to manage files and apps.',
     newChat: 'New chat',
     removeKey: 'Change key',
@@ -78,18 +86,14 @@ defineStrings('ai', {
     stopped: '(You stopped the reply)',
     errAuth: 'The key is invalid or revoked. Use "Change key" to enter a new one.',
     errRate: 'Free usage limit reached for now. Wait a moment and try again.',
-    errNetwork: 'Could not reach GroqCloud. Check your internet connection.',
+    errNetwork: 'Could not reach {provider}. Check your internet connection.',
     errModel: 'This model is not available right now. Pick another one from the list.',
     errGeneric: 'Something went wrong: {msg}',
   },
 });
 
-const KEY_STORAGE = 'faisal.groq.apiKey';
-const MODEL_STORAGE = 'faisal.groq.model';
-/** Earlier versions of this app used Claude and Gemini; their saved keys are removed. */
-const LEGACY_KEYS = ['faisal.claude.apiKey', 'faisal.gemini.apiKey', 'faisal.ai.provider'];
-
-const read = (k: string) => { try { return localStorage.getItem(k) ?? ''; } catch { return ''; } };
+/** localStorage, or null when the browser blocks it (e.g. private mode). */
+const store = (): Storage | null => { try { return localStorage; } catch { return null; } };
 const write = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode: lives for this window only */ } };
 const remove = (k: string) => { try { localStorage.removeItem(k); } catch { /* nothing stored */ } };
 
@@ -100,18 +104,18 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return e;
 }
 
-const searches = (model: string) => model.startsWith('groq/compound');
-
 function launch(ctx: AppContext): void {
   const { window: win } = ctx;
   win.setTitle(t('ai.title'));
   const root = el('div', 'faisal-ai');
   win.content.append(root);
-  LEGACY_KEYS.forEach(remove);
+  LEGACY_STORAGE_KEYS.forEach(remove);
 
-  let apiKey = read(KEY_STORAGE);
+  // Each provider keeps its own key and model, so switching never loses the other's.
+  let provider = savedProvider(store());
+  let apiKey = savedKey(store(), provider);
+  let model = savedModel(store(), provider);
   let models: string[] = [];
-  let model = read(MODEL_STORAGE);
   const toolbox = createToolBox(ctx.sys);
   let history: ChatTurn[] = [];
   let abort: AbortController | null = null;
@@ -119,14 +123,42 @@ function launch(ctx: AppContext): void {
 
   const show = () => { root.replaceChildren(apiKey ? chatView() : setupView()); };
 
+  /** Switches provider: re-reads its own saved key and model, then re-renders. */
+  const useProvider = (id: string) => {
+    abort?.abort();
+    provider = providerById(id);
+    write(PROVIDER_STORAGE, provider.id);
+    apiKey = savedKey(store(), provider);
+    model = savedModel(store(), provider);
+    models = [];
+    show();
+  };
+
+  /** Keyboard-accessible provider picker; used on the key screen and in the chat bar. */
+  function providerSelect(): HTMLSelectElement {
+    const sel = el('select', 'faisal-ai-provider');
+    sel.setAttribute('aria-label', t('ai.provider'));
+    sel.dir = 'ltr';
+    sel.replaceChildren(...PROVIDERS.map((p) => {
+      const o = el('option', undefined, p.label[getLocale()]);
+      o.value = p.id;
+      o.selected = p.id === provider.id;
+      return o;
+    }));
+    sel.addEventListener('change', () => useProvider(sel.value));
+    return sel;
+  }
+
   function setupView(): HTMLElement {
     const box = el('div', 'faisal-ai-setup');
     const icon = el('div');
     icon.append(renderIcon(ICON_AI));
     icon.querySelector('svg')?.setAttribute('width', '56');
+    const field = el('label', 'faisal-ai-field');
+    field.append(el('span', undefined, t('ai.provider')), providerSelect());
     const get = el('div', 'note');
-    const link = el('a', undefined, 'console.groq.com');
-    link.href = 'https://console.groq.com/keys';
+    const link = el('a', undefined, provider.host);
+    link.href = provider.keyUrl;
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
     get.append(`${t('ai.setupGet')} `, link);
@@ -134,7 +166,7 @@ function launch(ctx: AppContext): void {
     input.type = 'password';
     input.autocomplete = 'off';
     input.dir = 'ltr';
-    input.placeholder = t('ai.keyPlaceholder');
+    input.placeholder = provider.keyPlaceholder;
     const status = el('div', 'note');
     status.setAttribute('role', 'status');
     const btn = el('button', 'primary', t('ai.save'));
@@ -145,20 +177,20 @@ function launch(ctx: AppContext): void {
       status.classList.remove('is-error');
       status.textContent = t('ai.checking');
       try {
-        models = await listModels(k); // proves the key works before saving it
+        models = await listModels(provider, k); // proves the key works before saving it
         apiKey = k;
-        write(KEY_STORAGE, k);
+        write(provider.keyStorage, k);
         show();
       } catch (err) {
         status.classList.add('is-error');
-        status.textContent = errorText(err);
+        status.textContent = errorText(err, provider);
         btn.disabled = false;
       }
     };
     btn.addEventListener('click', () => void submit());
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') void submit(); });
-    box.append(icon, el('h2', undefined, t('ai.setupTitle')), el('div', undefined, t('ai.setupBody')), get, input, btn, status,
-      el('div', 'note', t('ai.keyNote')));
+    box.append(icon, el('h2', undefined, t('ai.setupTitle')), el('div', undefined, t(provider.setupBodyKey)), field, get,
+      input, btn, status, el('div', 'note', t('ai.keyNote', { host: provider.host })));
     queueMicrotask(() => input.focus());
     return box;
   }
@@ -171,27 +203,33 @@ function launch(ctx: AppContext): void {
     picker.setAttribute('aria-label', t('ai.model'));
     picker.dir = 'ltr';
     const hint = el('div', 'faisal-ai-hint');
-    const syncHint = () => { hint.textContent = t(supportsTools(model) ? 'ai.agentHint' : 'ai.searchHint'); };
+    // Groq's compound models search the web server-side but reject custom tools; DeepSeek
+    // takes custom tools but has no web search at all — the hint says whichever is true.
+    const syncHint = () => {
+      const key = !supportsTools(provider, model) ? 'ai.searchHint'
+        : provider.serverSideSearch ? 'ai.agentHint' : 'ai.agentHintNoSearch';
+      hint.textContent = t(key);
+    };
     const fillModels = (ids: string[]) => {
       // No saved choice (or it was retired): start in agent mode.
-      if (!ids.includes(model)) model = ids.find(supportsTools) ?? ids[0] ?? model;
+      if (!ids.includes(model)) model = ids.find((id) => supportsTools(provider, id)) ?? ids[0] ?? model;
       syncHint();
       picker.replaceChildren(...ids.map((id) => {
-        const o = el('option', undefined, searches(id) ? t('ai.modelSearch', { id }) : supportsTools(id) ? t('ai.modelAgent', { id }) : id);
+        const o = el('option', undefined, searchesWeb(provider, id) ? t('ai.modelSearch', { id }) : supportsTools(provider, id) ? t('ai.modelAgent', { id }) : id);
         o.value = id;
         o.selected = id === model;
         return o;
       }));
     };
-    fillModels(models.length ? models : FALLBACK_MODELS);
+    fillModels(modelsOrFallback(provider, models));
     if (!models.length) {
-      // Refresh the list from the account (it changes as Groq adds and retires models).
-      listModels(apiKey).then((ids) => { if (ids.length) { models = ids; fillModels(ids); } }).catch(() => {});
+      // Refresh the list from the account (it changes as the provider adds and retires models).
+      listModels(provider, apiKey).then((ids) => { if (ids.length) { models = ids; fillModels(ids); } }).catch(() => {});
     }
-    picker.addEventListener('change', () => { model = picker.value; write(MODEL_STORAGE, model); syncHint(); });
+    picker.addEventListener('change', () => { model = picker.value; write(provider.modelStorage, model); syncHint(); });
     const newBtn = el('button', undefined, t('ai.newChat'));
     const keyBtn = el('button', undefined, t('ai.removeKey'));
-    bar.append(picker, el('span', 'grow'), newBtn, keyBtn);
+    bar.append(providerSelect(), picker, el('span', 'grow'), newBtn, keyBtn);
 
     const log = el('div', 'faisal-ai-log');
     log.setAttribute('aria-live', 'polite');
@@ -240,7 +278,7 @@ function launch(ctx: AppContext): void {
     });
     sendBtn.addEventListener('click', () => { if (abort) abort.abort(); else void send(); });
     newBtn.addEventListener('click', () => { abort?.abort(); history = []; emptyState(); ta.focus(); });
-    keyBtn.addEventListener('click', () => { abort?.abort(); remove(KEY_STORAGE); apiKey = ''; models = []; show(); });
+    keyBtn.addEventListener('click', () => { abort?.abort(); remove(provider.keyStorage); apiKey = ''; models = []; show(); });
 
     async function send() {
       const text = ta.value.trim();
@@ -305,7 +343,7 @@ function launch(ctx: AppContext): void {
         step.classList.add('is-done');
       };
       try {
-        const res = await runGroqTurn(apiKey, model, history, {
+        const res = await runTurn(provider, apiKey, model, history, {
           onText(d) { raw += d; if (!frame) frame = requestAnimationFrame(paint); },
           onTool(name, detail) {
             const line = el('div', 'faisal-ai-tool', t(name === 'web_search' ? 'ai.searching' : 'ai.fetching', { q: detail }));
@@ -313,7 +351,7 @@ function launch(ctx: AppContext): void {
             tools.append(line);
             scroll();
           },
-        }, abort.signal, supportsTools(model) ? { tools: toolbox, confirm, onCall, onResult } : undefined);
+        }, abort.signal, supportsTools(provider, model) ? { tools: toolbox, confirm, onCall, onResult } : undefined);
         if (frame) cancelAnimationFrame(frame);
         paint();
         if (res.truncated) body.append(el('p', 'faisal-ai-typing', t('ai.truncated')));
@@ -327,7 +365,7 @@ function launch(ctx: AppContext): void {
           body.append(el('p', 'faisal-ai-typing', t('ai.stopped')));
         } else {
           m.classList.add('error');
-          body.textContent = errorText(err);
+          body.textContent = errorText(err, provider);
         }
       } finally {
         abort = null;
@@ -362,14 +400,14 @@ function sourcesEl(sources: Source[]): HTMLElement {
   return box;
 }
 
-function errorText(err: unknown): string {
-  if (err instanceof GroqError) {
+function errorText(err: unknown, provider: Provider): string {
+  if (err instanceof ChatError) {
     if (err.status === 401 || err.status === 403) return t('ai.errAuth');
     if (err.status === 429) return t('ai.errRate');
     if (err.status === 404 || /model/i.test(err.message) && err.status === 400) return t('ai.errModel');
     return t('ai.errGeneric', { msg: err.message });
   }
-  if (err instanceof TypeError) return t('ai.errNetwork');
+  if (err instanceof TypeError) return t('ai.errNetwork', { provider: provider.label[getLocale()] });
   return t('ai.errGeneric', { msg: err instanceof Error ? err.message : String(err) });
 }
 
