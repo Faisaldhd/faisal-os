@@ -47,8 +47,18 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   });
   window.addEventListener('blur', () => { superAlone = false; });
 
-  // Ctrl+Alt+T opens a terminal, as on most Linux desktops.
+  /** True when the event belongs to whatever the user is typing into, never to a shortcut. */
+  const isTyping = (ev: KeyboardEvent): boolean => {
+    const target = ev.target as HTMLElement | null;
+    return !!target && (target.isContentEditable
+      || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT');
+  };
+
+  // Ctrl+Alt+T opens a terminal, as on most Linux desktops. Guarded like the window manager's
+  // shortcuts: a terminal is a real textarea, so the chord must not fire while it is being typed
+  // into, and never mid-IME composition.
   window.addEventListener('keydown', (ev) => {
+    if (isTyping(ev) || ev.isComposing) return;
     if (ev.ctrlKey && ev.altKey && !ev.shiftKey && isKey(ev, 'T')) {
       ev.preventDefault();
       overview.close();
@@ -59,6 +69,7 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   // Ctrl+Alt+Tab replaces the desktop Alt+Tab, which the operating system never sends to a
   // page. Focusing a minimized window restores it, exactly like the desktop switcher.
   window.addEventListener('keydown', (ev) => {
+    if (isTyping(ev) || ev.isComposing) return;
     if (!ev.ctrlKey || !ev.altKey || (ev.key !== 'Tab' && ev.code !== 'Tab')) return;
     const windows = sys.wm.list();
     const target = cycleTarget(windows.map((w) => w.id), sys.wm.focused()?.id ?? null, ev.shiftKey);
@@ -72,10 +83,7 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   // user is typing (a terminal is a real textarea) and never mid-IME composition.
   window.addEventListener('keydown', (ev) => {
     if (!ev.ctrlKey || !ev.altKey || ev.shiftKey || !isKey(ev, 'L')) return;
-    const target = ev.target as HTMLElement | null;
-    const typing = !!target && (target.isContentEditable
-      || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT');
-    if (typing || ev.isComposing || lock.isLocked() || !lock.isEnabled()) return;
+    if (isTyping(ev) || ev.isComposing || lock.isLocked() || !lock.isEnabled()) return;
     ev.preventDefault();
     overview.close();
     lock.lock();

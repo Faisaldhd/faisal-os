@@ -141,7 +141,17 @@ function launch({ sys, window: win, args }: AppContext): void {
     } else {
       setStatus('statusLoading');
       win.setTitle(t('terminal.v86'));
-      const { V86Backend } = await import('./backends/v86');
+      let V86Backend: typeof import('./backends/v86').V86Backend;
+      try {
+        ({ V86Backend } = await import('./backends/v86'));
+      } catch (err) {
+        // Offline, or a chunk a deploy deleted while this tab stayed open. Without this catch the
+        // rejection is unhandled and the status bar stays on "loading" forever with no retry hint.
+        if (closed) return;
+        setStatus('statusFailed', true);
+        term.write(`\r\n\x1b[31m${TERM_TEXT.v86Failed(String(err))}\x1b[0m\r\n`.replace(/\n/g, '\r\n').replace(/\r\r/g, '\r'));
+        return;
+      }
       if (closed || current !== kind) return;
       b = new V86Backend({
         assetsBase: new URL('v86/', document.baseURI).href,

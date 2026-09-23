@@ -49,6 +49,14 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
     });
   }
 
+  // Best-effort, once per boot: ask the browser to keep this origin's storage instead of
+  // evicting it under pressure. A refusal is not an error (System Monitor shows the answer).
+  if (backend.persistent) {
+    try {
+      if (typeof navigator.storage?.persist === 'function') void navigator.storage.persist().catch(() => {});
+    } catch { /* no Storage API in this context: nothing to request */ }
+  }
+
   const stored = await backend.loadAll();
   for (const s of stored) {
     nodes.set(s.path, {
@@ -65,19 +73,28 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
 
   const toStored = (n: Node): StoredNode => ({ ...n.stat, data: n.data });
 
-  // Persistence runs in the background; failures must never be silent (data would be lost on reload).
-  let warned = false;
-  const onPersistError = (err: unknown) => {
+  // Persistence is awaited, not "fire and forget": a mutation that has not reached IndexedDB
+  // yet is one the user only *thinks* they made, and a swallowed failure leaves memory and disk
+  // silently disagreeing until the next reload. Failures are reported every time (no
+  // once-per-session gate) and are not rethrown, so apps keep their existing error handling.
+  const onPersistError = (err: unknown): void => {
     console.error('[vfs] persistence failed', err);
-    if (!warned) {
-      warned = true;
-      bus.emit('notify', { title: t('vfs.error.title'), body: t('vfs.error.body') });
-    }
+    bus.emit('notify', { title: t('vfs.error.title'), body: t('vfs.error.body') });
   };
-  const persistNode = (n: Node) => { backend.put(toStored(n)).catch(onPersistError); };
-  const persistDelete = (path: string) => { backend.delete(path).catch(onPersistError); };
-  const persistDeleteMany = (paths: string[]) => { backend.deleteMany(paths).catch(onPersistError); };
-  const persistMany = (ns: Node[]) => { backend.putMany(ns.map(toStored)).catch(onPersistError); };
+  const persistNode = async (n: Node): Promise<void> => {
+    try { await backend.put(toStored(n)); } catch (err) { onPersistError(err); }
+  };
+  const persistDelete = async (path: string): Promise<void> => {
+    try { await backend.delete(path); } catch (err) { onPersistError(err); }
+  };
+  const persistDeleteMany = async (paths: string[]): Promise<void> => {
+    if (paths.length === 0) return;
+    try { await backend.deleteMany(paths); } catch (err) { onPersistError(err); }
+  };
+  const persistMany = async (ns: Node[]): Promise<void> => {
+    if (ns.length === 0) return;
+    try { await backend.putMany(ns.map(toStored)); } catch (err) { onPersistError(err); }
+  };
 
   const mkNode = (path: string, type: 'file' | 'dir', opts: { data?: Uint8Array; mode?: number; ctime?: number } = {}): Node => {
     const now = Date.now();
@@ -164,14 +181,14 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
       if (projected > TOTAL_QUOTA) throw new VFSError('EINVAL', path, 'quota');
 
       const node = mkNode(path, 'file', { data: bytes });
-      persistNode(node);
+      await persistNode(node);
       bus.emit('fs:change', { path, kind: existing ? 'modify' : 'create' });
     },
 
     async mkdir(p, opts) {
       const path = normalize(p);
       if (path === '/') {
-        if (!nodes.has('/')) { const n = mkNode('/', 'dir'); persistNode(n); }
+        if (!nodes.has('/')) { const n = mkNode('/', 'dir'); await persistNode(n); }
         return;
       }
       const existing = nodes.get(path);
@@ -188,7 +205,7 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
         getDir(parent);
       }
       const node = mkNode(path, 'dir');
-      persistNode(node);
+      await persistNode(node);
       bus.emit('fs:change', { path, kind: 'create' });
     },
 
@@ -202,10 +219,10 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
         const all = descendants(path);
         const paths = [path, ...all.map((d) => d.stat.path)];
         for (const pp of paths) nodes.delete(pp);
-        persistDeleteMany(paths);
+        await persistDeleteMany(paths);
       } else {
         nodes.delete(path);
-        persistDelete(path);
+        await persistDelete(path);
       }
       bus.emit('fs:change', { path, kind: 'delete' });
     },
@@ -226,6 +243,9 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
       const dstParent = dirname(dst);
       getDir(dstParent);
 
+      // A replaced destination is only deleted *after* its replacement is written (see below):
+      // deleting first means an interruption between the two loses both records on reload.
+      let replacedPaths: string[] = [];
       const existingDst = nodes.get(dst);
       if (existingDst) {
         if (existingDst.stat.type === 'dir') {
@@ -235,12 +255,11 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
         } else if (n.stat.type === 'dir') {
           throw new VFSError('ENOTDIR', dst);
         }
-        // replace existing file (or empty dir) at dst
-        const removedPaths = existingDst.stat.type === 'dir'
+        // replace the existing file (or empty dir) at dst
+        replacedPaths = existingDst.stat.type === 'dir'
           ? [dst, ...descendants(dst).map((d) => d.stat.path)]
           : [dst];
-        for (const pp of removedPaths) nodes.delete(pp);
-        persistDeleteMany(removedPaths);
+        for (const pp of replacedPaths) nodes.delete(pp);
       }
 
       if (n.stat.type === 'dir') {
@@ -265,13 +284,19 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
           });
           toPersist.push(movedChild);
         }
-        persistMany(toPersist);
-        persistDeleteMany(oldPaths.filter((p) => p !== dst)); // old paths no longer exist
+        const written = new Set(toPersist.map((x) => x.stat.path));
+        // Write the new tree first; only then drop what it replaced and the old paths.
+        await persistMany(toPersist);
+        await persistDeleteMany([
+          ...oldPaths.filter((p) => p !== dst && !written.has(p)),
+          ...replacedPaths.filter((p) => !written.has(p)),
+        ]);
       } else {
         nodes.delete(src);
         const moved = mkNode(dst, 'file', { data: n.data, mode: n.stat.mode, ctime: n.stat.ctime });
-        persistNode(moved);
-        persistDelete(src);
+        // persistNode overwrites the record at dst, so nothing has to be removed before it.
+        await persistNode(moved);
+        await persistDeleteMany([src, ...replacedPaths.filter((p) => p !== dst)]);
       }
 
       bus.emit('fs:change', { path: dst, oldPath: src, kind: 'rename' });
@@ -280,7 +305,7 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
     async chmod(p, mode) {
       const n = get(p);
       n.stat = { ...n.stat, mode };
-      persistNode(n);
+      await persistNode(n);
       bus.emit('fs:change', { path: n.stat.path, kind: 'modify' });
     },
   };

@@ -462,6 +462,9 @@ function launch(ctx: AppContext): void {
     });
     if (!name || name === st.name) return;
     const dest = join(currentPath, name);
+    // The VFS replaces an existing destination silently (it never raises EEXIST), so without
+    // this check renaming onto a name that already exists destroys that file without warning.
+    if (await vfs.exists(dest)) { showError(new Error(t('files.nameExists'))); return; }
     try {
       await vfs.rename(path, dest);
     } catch (err) {
