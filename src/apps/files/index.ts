@@ -4,7 +4,18 @@ import { HOME, VFSError } from '../../kernel/types';
 import { basename, dirname, join, normalize } from '../../kernel/path';
 import { defineStrings, t } from '../../kernel/i18n';
 import { formatBytes, formatDate } from './format';
-import { copyRecursive, sameOrDescendant, targetPathFor, uniqueName } from './copy';
+import { copyRecursive, targetPathFor, uniqueName } from './copy';
+import {
+  FILES_MIME,
+  PATHS_MIME,
+  PATHS_PLAIN_MIME,
+  decideDrop,
+  dropRefusedKey,
+  moveEntry,
+  resolveDragPaths,
+  type DropRefusal,
+  type MoveRefusal,
+} from './dnd';
 import { confirmDialog, promptDialog } from './dialog';
 import { ICONS, icon } from './icons';
 import './files.css';
@@ -52,6 +63,17 @@ defineStrings('files', {
     nameExists: 'هذا الاسم موجود بالفعل',
     errorGeneric: 'حدث خطأ: {message}',
     copyOf: 'نسخة',
+    moveTo: 'نقل إلى…',
+    moveToTitle: 'نقل إلى مجلد',
+    moveToPrompt: 'مسار المجلد الهدف',
+    dndRefusedSelf: 'لا يمكن نقل العنصر إلى نفسه',
+    dndRefusedSubtree: 'لا يمكن نقل مجلد إلى داخل نفسه',
+    dndRefusedSameParent: 'العنصر موجود في هذا المجلد بالفعل',
+    dndRefusedNotDirectory: 'يمكن الإفلات في المجلدات فقط',
+    dndRefusedNameTaken: 'يوجد عنصر بهذا الاسم في المجلد الهدف',
+    dndRefusedNoTarget: 'أفلِت العنصر فوق مجلد',
+    dndRefusedMissing: 'لم يعد العنصر المسحوب موجوداً',
+    dndRefusedUnknown: 'لا يمكن الإفلات هنا',
   },
   en: {
     title: 'Files',
@@ -95,6 +117,17 @@ defineStrings('files', {
     nameExists: 'That name already exists',
     errorGeneric: 'Error: {message}',
     copyOf: 'copy',
+    moveTo: 'Move to…',
+    moveToTitle: 'Move to folder',
+    moveToPrompt: 'Destination folder path',
+    dndRefusedSelf: 'Cannot move an item into itself',
+    dndRefusedSubtree: 'Cannot move a folder inside itself',
+    dndRefusedSameParent: 'That item is already in this folder',
+    dndRefusedNotDirectory: 'Drop onto a folder only',
+    dndRefusedNameTaken: 'The destination already has an item with that name',
+    dndRefusedNoTarget: 'Drop the item onto a folder',
+    dndRefusedMissing: 'The dragged item no longer exists',
+    dndRefusedUnknown: 'Cannot drop here',
   },
 });
 
@@ -216,14 +249,25 @@ function launch(ctx: AppContext): void {
     sidebarEl.appendChild(b);
   });
 
-  fileInput.addEventListener('change', async () => {
+  fileInput.addEventListener('change', () => {
     const files = fileInput.files;
     if (!files) return;
+    // The picker is cleared after the upload, exactly as before; drop uploads leave it alone.
+    void performUploads(files).then(() => {
+      if (!closed) fileInput.value = '';
+    });
+  });
+
+  /**
+   * The one upload path, shared by the picker and by files dropped onto the app.
+   * Names are never clobbered: a free name is picked first; the VFS still enforces its own
+   * per-file and total size quotas inside writeFile.
+   */
+  async function performUploads(files: ArrayLike<File>): Promise<void> {
     for (const f of Array.from(files)) {
       if (closed) return;
       try {
         const buf = new Uint8Array(await f.arrayBuffer());
-        // Never clobber an existing file: pick a free name ("name (2).ext") first.
         const name = await uniqueName(vfs, currentPath, sanitizeUploadName(f.name), t('files.copyOf'));
         if (closed) return;
         await vfs.writeFile(join(currentPath, name), buf);
@@ -232,9 +276,7 @@ function launch(ctx: AppContext): void {
         showError(err);
       }
     }
-    if (closed) return;
-    fileInput.value = '';
-  });
+  }
 
   /** Keeps a single path segment: strips separators and refuses "." / ".." so an upload cannot escape the folder. */
   function sanitizeUploadName(name: string): string {
@@ -449,27 +491,50 @@ function launch(ctx: AppContext): void {
     clipboard = { mode, paths: [...selection] };
   }
 
+  /**
+   * Shows the reason a move/drop was refused instead of spamming an error dialog.
+   * Returns false for the benign no-op (already in that folder), which stays silent.
+   */
+  function reportRefusal(reason: MoveRefusal): boolean {
+    if (reason !== 'sameParent') statusEl.textContent = t(dropRefusedKey(reason));
+    return false;
+  }
+
+  /** The single move path: clipboard cut-paste, drag & drop and "Move to…" all land here. */
+  async function commitMove(sources: string[], destDir: string): Promise<boolean> {
+    let movedAny = false;
+    for (const src of sources) {
+      if (closed) return movedAny;
+      try {
+        const res = await moveEntry(vfs, src, destDir, { onConflict: 'uniquify', copySuffix: t('files.copyOf') });
+        if (closed) return movedAny;
+        if (!res.ok) {
+          if (!movedAny) reportRefusal(res.reason);
+          continue;
+        }
+        movedAny = true;
+      } catch (err) {
+        // e.g. the dragged entry was deleted while the drag was in flight.
+        if (closed) return movedAny;
+        if (!movedAny) showError(err);
+      }
+    }
+    return movedAny;
+  }
+
   async function pasteClipboard() {
     if (!clipboard) return;
     const { mode, paths } = clipboard;
     for (const src of paths) {
       if (closed) return;
       try {
-        if (mode === 'cut' && sameOrDescendant(src, currentPath)) continue; // can't move into itself
-        let dest = targetPathFor(src, currentPath);
         if (mode === 'copy') {
           const name = await uniqueName(vfs, currentPath, basename(src), t('files.copyOf'));
           if (closed) return;
-          dest = join(currentPath, name);
-          await copyRecursive(vfs, src, dest);
+          await copyRecursive(vfs, src, join(currentPath, name));
         } else {
-          if (dest === src) continue;
-          if (await vfs.exists(dest)) {
-            const name = await uniqueName(vfs, currentPath, basename(src), t('files.copyOf'));
-            dest = join(currentPath, name);
-          }
-          if (closed) return;
-          await vfs.rename(src, dest);
+          // The same guards as a drop: self, own subtree and same folder are refused.
+          await commitMove([src], currentPath);
         }
       } catch (err) {
         if (closed) return;
@@ -477,6 +542,30 @@ function launch(ctx: AppContext): void {
       }
     }
     if (mode === 'cut') clipboard = null;
+  }
+
+  /**
+   * Accessible move: the context menu's "Move to…" asks for a destination folder and runs the
+   * same mover as a drag, so a keyboard-only user is never blocked. It behaves exactly like a
+   * drop of the current selection onto that folder (including the same refusals).
+   */
+  async function moveSelectionToDialog() {
+    if (selection.size === 0) return;
+    const paths = [...selection];
+    const suggested = dirname(paths[0]) === currentPath ? (currentPath === HOME ? join(HOME, 'Documents') : dirname(currentPath)) : currentPath;
+    const answer = await promptDialog(win.content, {
+      title: t('files.moveToTitle'),
+      message: t('files.moveToPrompt'),
+      initialValue: suggested,
+      okLabel: t('files.moveTo'),
+      cancelLabel: t('files.cancel'),
+      validate: (v) => (v.startsWith('/') ? null : t('files.nameInvalid')),
+    });
+    if (!answer) return;
+    const destDir = normalize(answer);
+    const moved = await commitMove(paths, destDir);
+    if (moved) selection = new Set();
+    await refresh();
   }
 
   async function downloadEntry(st: Stat) {
@@ -568,6 +657,9 @@ function launch(ctx: AppContext): void {
       null,
       { label: t('files.copy'), action: () => copySelection('copy') },
       { label: t('files.cut'), action: () => copySelection('cut') },
+      // Keyboard/context-menu route to the same mover a drag uses, so dragging is never
+      // the only way to move an entry into another folder.
+      { label: t('files.moveTo'), action: () => void moveSelectionToDialog() },
     ];
     if (st.type === 'file') items.push({ label: t('files.download'), action: () => void downloadEntry(st) });
     items.push(null, { label: t('files.delete'), action: () => void deleteSelection(), danger: true });
@@ -582,6 +674,135 @@ function launch(ctx: AppContext): void {
     items.push({ label: t('files.upload'), action: () => fileInput.click() });
     return items;
   }
+
+  // ---- drag & drop ----
+  /** Row currently highlighted as a move destination, or null. */
+  let dropRowEl: HTMLElement | null = null;
+
+  /** The stat of the row the pointer is over; null for the empty area around the rows. */
+  function dropTargetFor(e: DragEvent): Stat | null {
+    const row = e.target instanceof Element ? e.target.closest('.faisal-files-item, .faisal-files-list-row') : null;
+    if (!row) return null;
+    return entries.find((x) => x.path === (row as HTMLElement).dataset.path) ?? null;
+  }
+
+  function setDropTarget(row: HTMLElement | null) {
+    if (dropRowEl === row) return;
+    dropRowEl?.classList.remove('is-drop-target');
+    dropRowEl = row;
+    dropRowEl?.classList.add('is-drop-target');
+  }
+
+  function dragTypes(e: DragEvent): string[] {
+    const dt = e.dataTransfer;
+    if (!dt) return [];
+    return Array.from(dt.types ?? []);
+  }
+
+  function hasDraggedFiles(e: DragEvent): boolean {
+    const dt = e.dataTransfer;
+    if (!dt) return false;
+    return dt.files?.length > 0 || Array.from(dt.items ?? []).some((it) => it.kind === 'file');
+  }
+
+  /** Decides (and highlights) what a drop over a row would do. Pure logic lives in dnd.ts. */
+  function prepareRowDrop(e: DragEvent): { move: { sources: string[]; destDir: string } | null; reason: DropRefusal } {
+    const row = e.target instanceof Element ? e.target.closest('.faisal-files-item, .faisal-files-list-row') as HTMLElement | null : null;
+    const target = dropTargetFor(e);
+    const sources = resolveDragPaths(dragTypes(e), (f) => e.dataTransfer?.getData(f) ?? '');
+    const decision = decideDrop({
+      types: dragTypes(e),
+      sources,
+      target: target ? { path: target.path, type: target.type } : null,
+      // A drop may rename to a free name but must never overwrite an existing entry.
+      resolveName: (dir, name) => (existsIn(dir, name) ? { finalName: name, conflict: true } : { finalName: name, conflict: false }),
+    });
+    if (decision.kind === 'move') {
+      setDropTarget(row);
+      return { move: { sources: decision.sources, destDir: decision.destDir }, reason: 'unknown' };
+    }
+    setDropTarget(null);
+    return { move: null, reason: decision.kind === 'none' ? decision.reason : 'unknown' };
+  }
+
+  /** Synchronous existence view of the entries currently listed (a drop target's children). */
+  function existsIn(dir: string, name: string): boolean {
+    const full = join(dir, name);
+    return entries.some((x) => x.path === full);
+  }
+
+  async function applyDrop(sources: string[], destDir: string) {
+    const moved = await commitMove(sources, destDir);
+    if (closed) return;
+    if (moved) selection = new Set();
+    await refresh();
+  }
+
+  async function handleExternalDrop(e: DragEvent) {
+    if (closed) return;
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+      await performUploads(files);
+    } else {
+      // Some browsers only expose dropped files through items.
+      const collected: File[] = [];
+      for (const it of Array.from(e.dataTransfer?.items ?? [])) {
+        if (it.kind !== 'file') continue;
+        const f = it.getAsFile();
+        if (f) collected.push(f);
+      }
+      await performUploads(collected);
+    }
+    if (closed) return;
+    await refresh();
+  }
+
+  // View-level drag handlers are attached once (not per render) and cover both the rows
+  // (internal moves) and the empty area (external uploads); onClose detaches them.
+  const onViewDragover = (e: DragEvent) => {
+    if (hasDraggedFiles(e)) {
+      if (dragTypes(e).includes(PATHS_MIME)) return; // internal drag: rows own the highlight
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      viewEl.classList.add('faisal-files-dropzone-active');
+      return;
+    }
+    if (!dragTypes(e).includes(PATHS_MIME)) return; // unrelated drag (e.g. selected text): ignore
+    if (prepareRowDrop(e).move && e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  };
+
+  const onViewDragleave = (e: DragEvent) => {
+    // Only when the pointer really left the view, not when moving between child rows.
+    const to = e.relatedTarget;
+    if (!(to instanceof Node) || !viewEl.contains(to)) {
+      viewEl.classList.remove('faisal-files-dropzone-active');
+      setDropTarget(null);
+    }
+  };
+
+  const onViewDrop = (e: DragEvent) => {
+    viewEl.classList.remove('faisal-files-dropzone-active');
+    if (closed) { setDropTarget(null); return; }
+    if (hasDraggedFiles(e)) {
+      if (dragTypes(e).includes(PATHS_MIME)) return;
+      e.preventDefault();
+      setDropTarget(null);
+      void handleExternalDrop(e);
+      return;
+    }
+    if (!dragTypes(e).includes(PATHS_MIME)) return; // never hijack unrelated drags
+    e.preventDefault();
+    // The transfer must be read while the drop event is still live.
+    const { move, reason } = prepareRowDrop(e);
+    setDropTarget(null);
+    if (move) void applyDrop(move.sources, move.destDir);
+    else reportRefusal(reason);
+  };
+
+  const onViewDragend = () => {
+    viewEl.classList.remove('faisal-files-dropzone-active');
+    setDropTarget(null);
+  };
 
   // ---- rendering ----
   function orderedPaths(): string[] {
@@ -619,6 +840,40 @@ function launch(ctx: AppContext): void {
   }
 
   function attachItemEvents(el: HTMLElement, st: Stat, index: number) {
+    el.dataset.path = st.path;
+    el.draggable = true;
+    el.addEventListener('dragstart', (e) => {
+      // Dragging one entry of a multi-selection moves the whole selection.
+      const paths = selection.has(st.path) && selection.size > 0 ? [...selection] : [st.path];
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      dt.setData(PATHS_MIME, paths.join('\n'));
+      dt.setData(PATHS_PLAIN_MIME, paths.join('\n'));
+      dt.effectAllowed = 'move';
+      // A small ghost instead of the whole row.
+      const ghost = el.firstElementChild;
+      if (ghost && typeof dt.setDragImage === 'function') dt.setDragImage(ghost as Element, 20, 20);
+      if (!selection.has(st.path)) selectOnly(st.path);
+    });
+    el.addEventListener('dragend', () => {
+      setDropTarget(null);
+      viewEl.classList.remove('faisal-files-dropzone-active');
+    });
+    el.addEventListener('dragover', (e) => {
+      // Only an internal path drag may be dropped on a row; external files go to the view.
+      if (!dragTypes(e).includes(PATHS_MIME)) return;
+      if (st.type !== 'dir') { setDropTarget(null); return; } // never accept on a file row
+      if (prepareRowDrop(e).move) e.preventDefault();
+    });
+    el.addEventListener('drop', (e) => {
+      if (!dragTypes(e).includes(PATHS_MIME)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const { move, reason } = prepareRowDrop(e);
+      setDropTarget(null);
+      if (move) void applyDrop(move.sources, move.destDir);
+      else reportRefusal(reason);
+    });
     el.addEventListener('click', (e) => {
       e.stopPropagation();
       if (e.ctrlKey || e.metaKey) toggleSelect(st.path);
@@ -646,6 +901,7 @@ function launch(ctx: AppContext): void {
     entries.forEach((st, i) => {
       const item = document.createElement('div');
       item.className = 'faisal-files-item' + (selection.has(st.path) ? ' is-selected' : '');
+      item.dataset.path = st.path;
       const iconWrap = document.createElement('div');
       iconWrap.className = 'faisal-files-item-icon';
       iconWrap.appendChild(icon(st.type === 'dir' ? ICONS.folder : ICONS.file));
@@ -715,6 +971,12 @@ function launch(ctx: AppContext): void {
     e.preventDefault();
     showMenu(e.clientX, e.clientY, emptyAreaMenuItems());
   });
+
+  // drag & drop (attached once here, detached in onClose)
+  viewEl.addEventListener('dragover', onViewDragover);
+  viewEl.addEventListener('dragleave', onViewDragleave);
+  viewEl.addEventListener('drop', onViewDrop);
+  viewEl.addEventListener('dragend', onViewDragend);
 
   viewEl.addEventListener('keydown', (e) => {
     const paths = orderedPaths();
@@ -790,6 +1052,10 @@ function launch(ctx: AppContext): void {
     unsubFs();
     closeMenu();
     document.removeEventListener('mousedown', onDocMouseDown);
+    viewEl.removeEventListener('dragover', onViewDragover);
+    viewEl.removeEventListener('dragleave', onViewDragleave);
+    viewEl.removeEventListener('drop', onViewDrop);
+    viewEl.removeEventListener('dragend', onViewDragend);
     settlePendingRevoke();
   });
 
