@@ -8,6 +8,7 @@ import {
   buildExternalSearchUrl,
   isBlockedDomain,
   looksLikeDomain,
+  refusesFraming,
 } from './url';
 
 describe('looksLikeDomain', () => {
@@ -153,5 +154,39 @@ describe('blocklist matching', () => {
     expect(isBlockedDomain('https://www.openstreetmap.org/')).toBe(false);
     expect(isBlockedDomain('https://archive.org/')).toBe(false);
     expect(isBlockedDomain('https://developer.mozilla.org/')).toBe(false);
+  });
+});
+
+describe('refusesFraming — hosts measured to send X-Frame-Options: SAMEORIGIN', () => {
+  it('returns true for every measured host, with and without www.', () => {
+    for (const host of ['google.com', 'www.google.com', 'youtube.com', 'www.youtube.com', 'bing.com', 'www.bing.com']) {
+      expect(refusesFraming(`https://${host}/`)).toBe(true);
+    }
+  });
+  it('returns true for a measured host with a path and a query', () => {
+    expect(refusesFraming('https://www.google.com/search?q=cats&hl=en')).toBe(true);
+    expect(refusesFraming('https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s')).toBe(true);
+    expect(refusesFraming('https://www.bing.com/search?q=cats')).toBe(true);
+  });
+  it('returns false for a YouTube /embed/ path (its own supported endpoint)', () => {
+    expect(refusesFraming('https://www.youtube.com/embed/xyz')).toBe(false);
+    expect(refusesFraming('https://www.youtube.com/embed/xyz?start=10')).toBe(false);
+  });
+  it('returns false for Wikipedia (sends neither XFO nor frame-ancestors)', () => {
+    expect(refusesFraming('https://www.wikipedia.org/')).toBe(false);
+    expect(refusesFraming('https://en.wikipedia.org/wiki/Cat')).toBe(false);
+  });
+  it('returns false for an arbitrary https site', () => {
+    expect(refusesFraming('https://example.com/page?x=1')).toBe(false);
+    expect(refusesFraming('https://notbing.com/')).toBe(false);
+    expect(refusesFraming('https://mygoogle.com/')).toBe(false);
+  });
+  it('returns false for a non-http(s) scheme, and for unparseable input', () => {
+    expect(refusesFraming('javascript:alert(1)')).toBe(false);
+    expect(refusesFraming('data:text/html,hi')).toBe(false);
+    expect(refusesFraming('file:///etc/passwd')).toBe(false);
+    expect(refusesFraming('about:blank')).toBe(false);
+    expect(refusesFraming('not a url')).toBe(false);
+    expect(refusesFraming('')).toBe(false);
   });
 });

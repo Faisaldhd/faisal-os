@@ -243,6 +243,42 @@
 }
 .faisal-browser-blocked-open:hover { filter: brightness(1.08); }
 
+/* ── measured frame-refusal card (same card, two honest actions) ──── */
+
+/* Only the hosts actually measured to refuse framing get this variant; the
+   accent stripe marks "explained on purpose", not "broken". */
+.faisal-browser-refusal {
+  border-inline-start: 3px solid var(--faisal-accent-2, #c9982f);
+}
+
+.faisal-browser-blocked-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.faisal-browser-blocked-btn {
+  display: inline-flex;
+  align-items: center;
+  padding-block: 9px;
+  padding-inline: 20px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--faisal-fg, #1a1d26);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.faisal-browser-blocked-btn.is-primary {
+  background: var(--faisal-accent, #8f6412);
+  color: var(--faisal-accent-fg, #fff);
+}
+.faisal-browser-blocked-btn.is-primary:hover { filter: brightness(1.08); }
+.faisal-browser-blocked-btn.is-plain { border-color: var(--faisal-border, rgba(0, 0, 0, 0.13)); }
+.faisal-browser-blocked-btn.is-plain:hover { background: var(--faisal-surface-2, #ecebe6); }
+
 /* ── home page ───────────────────────────────────────────────────── */
 
 .faisal-browser-home {
@@ -347,7 +383,8 @@
 .faisal-browser-newtab:focus-visible,
 .faisal-browser-iconbtn:focus-visible,
 .faisal-browser-home-search-btn:focus-visible,
-.faisal-browser-blocked-open:focus-visible {
+.faisal-browser-blocked-open:focus-visible,
+.faisal-browser-blocked-btn:focus-visible {
   outline: 2px solid var(--faisal-focus-ring, #8F6412);
   outline-offset: 2px;
 }

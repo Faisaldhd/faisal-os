@@ -8,6 +8,7 @@ import {
   isAllowedFrameUrl,
   rewriteYouTubeEmbed,
   isBlockedDomain,
+  refusesFraming,
   buildSearchUrl,
   buildOpenStreetMapEmbedUrl,
   type SearchEngine,
@@ -286,13 +287,73 @@ function launch(ctx: AppContext): void {
     tab.bodyEl.append(card);
   }
 
+  /**
+   * Honest fallback for hosts measured to refuse framing: shown *instead of*
+   * an empty frame. The explanation matches the wording the Web app uses for
+   * the same situation, and the two actions are the only ones available — we
+   * cannot display the page, so we either hand it to the real browser or let
+   * the user spend one attempt.
+   */
+  function renderRefusalCard(tab: Tab, url: string, srcUrl: string): void {
+    const card = document.createElement('div');
+    card.className = 'faisal-browser-blocked faisal-browser-refusal';
+    const title = document.createElement('div');
+    title.className = 'faisal-browser-blocked-title';
+    title.textContent = t('browser.refusesTitle');
+    const body = document.createElement('div');
+    body.className = 'faisal-browser-blocked-body';
+    body.textContent = t('browser.refusesBody');
+    const urlLine = document.createElement('div');
+    urlLine.className = 'faisal-browser-blocked-url';
+    urlLine.textContent = url;
+    urlLine.dir = 'ltr';
+
+    const actions = document.createElement('div');
+    actions.className = 'faisal-browser-blocked-actions';
+
+    const openBtn = document.createElement('button');
+    openBtn.type = 'button';
+    openBtn.className = 'faisal-browser-blocked-btn is-primary';
+    openBtn.textContent = t('browser.refusesOpen');
+    openBtn.addEventListener('click', () => window.open(url, '_blank', 'noopener,noreferrer'));
+
+    const tryBtn = document.createElement('button');
+    tryBtn.type = 'button';
+    tryBtn.className = 'faisal-browser-blocked-btn is-plain';
+    tryBtn.textContent = t('browser.refusesTry');
+    // No bypass: this builds the very same sandboxed frame every other site
+    // gets, then hands control back to the normal loading path (including the
+    // delayed silence hint). If the site refuses, the frame stays blank and
+    // the hint still offers the real browser.
+    tryBtn.addEventListener('click', () => {
+      tab.bodyEl.textContent = '';
+      renderFrame(tab, url, srcUrl);
+    });
+
+    actions.append(openBtn, tryBtn);
+    card.append(title, body, urlLine, actions);
+    tab.bodyEl.append(card);
+  }
+
   function renderPage(tab: Tab, url: string): void {
     const srcUrl = rewriteYouTubeEmbed(url) ?? url;
     if (isBlockedDomain(srcUrl) || !isAllowedFrameUrl(srcUrl)) {
       renderBlockedCard(tab, url);
       return;
     }
+    // Measured refusers (X-Frame-Options: SAMEORIGIN) would only ever paint a
+    // blank grey area, so we explain that up front instead of wasting the
+    // attempt. Nothing is bypassed here — no proxy, no header tricks — and
+    // "Try embedding anyway" below creates exactly the same frame as always.
+    if (refusesFraming(srcUrl)) {
+      renderRefusalCard(tab, url, srcUrl);
+      return;
+    }
+    renderFrame(tab, url, srcUrl);
+  }
 
+  /** The one and only place an <iframe> is created for a navigation. */
+  function renderFrame(tab: Tab, url: string, srcUrl: string): void {
     const frameWrap = document.createElement('div');
     frameWrap.className = 'faisal-browser-framewrap';
 

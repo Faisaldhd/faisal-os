@@ -180,6 +180,56 @@ export const BLOCKED_DOMAINS: readonly string[] = [
   'paypal.com', 'chase.com', 'bankofamerica.com', 'wellsfargo.com', 'hsbc.com',
 ];
 
+/* ─────────────────── Sites measured to refuse being framed ─────────────────── */
+
+/**
+ * Hosts we have actually *measured* sending `X-Frame-Options: SAMEORIGIN`
+ * (or an equivalent `frame-ancestors` rule): a request for these origins
+ * reliably comes back blank inside an <iframe>. This list is deliberately
+ * short and evidence-based — it is not a guess about "big sites", and it is
+ * separate from `BLOCKED_DOMAINS` above, which is the broader don't-even-try
+ * policy used to decide what may be assigned to the frame at all.
+ *
+ * Matching is by host and its subdomains (`m.youtube.com` matches
+ * `youtube.com`), exactly like `isBlockedDomain`.
+ */
+export const MEASURED_FRAME_REFUSERS: readonly string[] = [
+  'google.com', // https://www.google.com sends X-Frame-Options: SAMEORIGIN
+  'youtube.com', // non-embed pages only — see the /embed/ exemption below
+  'bing.com', // https://www.bing.com sends X-Frame-Options: SAMEORIGIN
+];
+
+/** `/embed/<id>` is YouTube's own supported framing endpoint. */
+function isYouTubeEmbedPath(host: string, pathname: string): boolean {
+  if (!hostMatchesDomain(host, 'youtube.com')) return false;
+  const segments = pathname.split('/').filter(Boolean);
+  return segments[0] === 'embed' && segments.length >= 2;
+}
+
+/**
+ * True when `url` points at a host measured to refuse framing, so showing it
+ * in the <iframe> would only ever produce a blank grey area. The caller uses
+ * this to show an honest explanation *instead of* an empty frame.
+ *
+ * Pure and total: an unparseable URL, a non-http(s) scheme, or any host not
+ * on the measured list returns `false` (the frame is attempted as before, and
+ * the delayed silence hint still covers sites nobody has measured).
+ * `https://www.youtube.com/embed/<id>` returns `false` because that endpoint
+ * is explicitly allowed to be framed.
+ */
+export function refusesFraming(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+  const host = parsed.hostname.toLowerCase();
+  if (!MEASURED_FRAME_REFUSERS.some((d) => hostMatchesDomain(host, d))) return false;
+  return !isYouTubeEmbedPath(host, parsed.pathname);
+}
+
 /** Extra brand patterns that span many country TLDs (google.co.uk, google.de, …). */
 const BLOCKED_PATTERNS: readonly RegExp[] = [
   /(^|\.)google\.[a-z.]{2,24}$/i,
