@@ -1,10 +1,11 @@
+import { manifest } from './manifest';
 import type { AppContext, AppModule } from '../../kernel/types';
 import { HOME, VFSError } from '../../kernel/types';
 import { basename, normalize } from '../../kernel/path';
 import { defineStrings, t } from '../../kernel/i18n';
+import { shellConfirm } from '../../shell/dialog';
 import { promptDialog } from './dialog';
 import './editor.css';
-import { ICON_EDITOR } from '../../brand/icons';
 
 defineStrings('editor', {
   ar: {
@@ -28,6 +29,10 @@ defineStrings('editor', {
     errorGeneric: 'حدث خطأ: {message}',
     ln: 'سطر {line}',
     savedStatus: 'تم الحفظ',
+    discardTitle: 'تجاهل التغييرات غير المحفوظة؟',
+    discardBody: 'في «{name}» تغييرات لم تُحفظ، وستضيع إذا تابعت.',
+    discard: 'تجاهل التغييرات',
+    keep: 'متابعة التحرير',
   },
   en: {
     title: 'Text Editor',
@@ -50,6 +55,10 @@ defineStrings('editor', {
     errorGeneric: 'Error: {message}',
     ln: 'Line {line}',
     savedStatus: 'Saved',
+    discardTitle: 'Discard unsaved changes?',
+    discardBody: '“{name}” has changes that haven’t been saved. They will be lost if you continue.',
+    discard: 'Discard changes',
+    keep: 'Keep editing',
   },
 });
 
@@ -189,7 +198,25 @@ function launch(ctx: AppContext): void {
     }
   }
 
+  /** True when there is nothing to lose, or the user agreed to drop the changes. */
+  async function confirmDiscard(): Promise<boolean> {
+    if (!dirty) return true;
+    return shellConfirm({
+      title: t('editor.discardTitle'),
+      message: t('editor.discardBody', { name: currentPath ? basename(currentPath) : t('editor.untitled') }),
+      okLabel: t('editor.discard'),
+      cancelLabel: t('editor.keep'),
+      danger: true,
+    });
+  }
+  win.setCloseGuard(confirmDiscard);
+  // Leaving the page with unsaved text asks the browser to warn as well.
+  const onBeforeUnload = (e: BeforeUnloadEvent) => { if (dirty) e.preventDefault(); };
+  window.addEventListener('beforeunload', onBeforeUnload);
+  win.onClose(() => window.removeEventListener('beforeunload', onBeforeUnload));
+
   async function newFile() {
+    if (!(await confirmDiscard())) return;
     currentPath = null;
     textarea.value = '';
     setDirty(false);
@@ -329,15 +356,7 @@ function launch(ctx: AppContext): void {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.TextEditor',
-    name: { ar: 'محرر النصوص', en: 'Text Editor' },
-    description: { ar: 'محرر نصوص بسيط', en: 'A simple text editor' },
-    icon: ICON_EDITOR,
-    permissions: ['fs:home'],
-    category: 'accessories',
-    opens: ['.txt', '.md', '.json', '.js', '.ts', '.css', '.html', '.sh', '.conf', '.log'],
-  },
+  manifest,
   launch,
 };
 

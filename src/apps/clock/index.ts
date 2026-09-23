@@ -1,7 +1,7 @@
+import { manifest } from './manifest';
 import type { AppContext, AppModule } from '../../kernel/types';
 import { defineStrings, t, getLocale } from '../../kernel/i18n';
 import { CITY_CATALOG, DEFAULT_CITY_IDS, findCity, type CityDef } from './cities';
-import { ICON_CLOCK } from './icon';
 import './clock.css';
 
 defineStrings('clock', {
@@ -640,15 +640,7 @@ function launch(ctx: AppContext): void {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.Clock',
-    name: { ar: 'الساعة', en: 'Clock' },
-    description: { ar: 'الوقت العالمي، التقويم، ساعة الإيقاف والمؤقت', en: 'World time, calendar, stopwatch and timer' },
-    icon: ICON_CLOCK,
-    permissions: ['notifications'],
-    category: 'utilities',
-    core: false,
-  },
+  manifest,
   launch,
 };
 

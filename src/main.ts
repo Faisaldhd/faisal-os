@@ -10,17 +10,7 @@ import type { Locale, SystemAPI } from './kernel/types';
 
 import { createVFS } from './vfs';                           // Track B
 import { createWindowManager, mountShell } from './shell';   // Track A
-import terminalApp from './apps/terminal';                   // Track C
-import filesApp from './apps/files';                         // Track B
-import editorApp from './apps/editor';                       // Track B
-import settingsApp from './apps/settings';                   // Track A
-import calculatorApp from './apps/calculator';
-import claudeApp from './apps/claude';
-import imagesApp from './apps/images';
-import clockApp from './apps/clock';
-import monitorApp from './apps/monitor';
-import storeApp from './apps/store';
-import browserApp from './apps/browser';
+import { BUILTIN_APPS } from './apps';
 
 async function boot() {
   const root = document.getElementById('faisal-root')!;
@@ -40,9 +30,26 @@ async function boot() {
     notify: (title, body) => bus.emit('notify', { title, body }),
   };
 
-  [filesApp, terminalApp, editorApp, browserApp, claudeApp, calculatorApp, imagesApp, clockApp, monitorApp, storeApp, settingsApp].forEach((a) => apps.register(a));
+  BUILTIN_APPS.forEach((a) => apps.register(a));
   mountShell(root, sys);
   bus.emit('system:ready', {});
+  registerServiceWorker(sys);
+}
+
+/** Offline support and install-as-app (production builds only; see build/pwa.ts). */
+function registerServiceWorker(sys: SystemAPI) {
+  if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('./sw.js').then((reg) => {
+    reg.addEventListener('updatefound', () => {
+      const next = reg.installing;
+      next?.addEventListener('statechange', () => {
+        // A new version is ready; it takes over once every Fai$al OS tab is closed.
+        if (next.state === 'installed' && navigator.serviceWorker.controller) {
+          sys.notify(t('shell.update.title'), t('shell.update.body'));
+        }
+      });
+    });
+  }).catch((err) => console.warn('[sw] registration failed', err));
 }
 
 boot().catch((err) => {

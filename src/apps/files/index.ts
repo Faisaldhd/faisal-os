@@ -1,3 +1,4 @@
+import { manifest } from './manifest';
 import type { AppContext, AppModule, Stat } from '../../kernel/types';
 import { HOME, VFSError } from '../../kernel/types';
 import { basename, dirname, join, normalize } from '../../kernel/path';
@@ -6,7 +7,6 @@ import { formatBytes, formatDate } from './format';
 import { copyRecursive, sameOrDescendant, targetPathFor, uniqueName } from './copy';
 import { confirmDialog, promptDialog } from './dialog';
 import { ICONS, icon } from './icons';
-import { ICON_FILES } from '../../brand/icons';
 import './files.css';
 
 defineStrings('files', {
@@ -760,16 +760,7 @@ function launch(ctx: AppContext): void {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.Files',
-    name: { ar: 'الملفات', en: 'Files' },
-    description: { ar: 'استعرض وأدر ملفاتك', en: 'Browse and manage your files' },
-    icon: ICON_FILES,
-    permissions: ['fs:home'],
-    category: 'system',
-    core: true,
-    singleInstance: false,
-  },
+  manifest,
   launch,
 };
 

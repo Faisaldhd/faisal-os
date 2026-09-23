@@ -1,3 +1,4 @@
+import { manifest } from './manifest';
 import type { AppContext, AppModule, Stat } from '../../kernel/types';
 import { HOME } from '../../kernel/types';
 import { dirname, join } from '../../kernel/path';
@@ -5,7 +6,6 @@ import { defineStrings, t } from '../../kernel/i18n';
 import { galleryOrder, clampZoom, formatDimensions, formatBytesShort } from './helpers';
 import { mimeForPath } from './mime';
 import { sampleImages } from './samples';
-import { ICON_IMAGES } from './icon';
 import { icon, ICONS } from './toolbar-icons';
 import './images.css';
 
@@ -426,17 +426,7 @@ function launch(ctx: AppContext): void {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.ImageViewer',
-    name: { ar: 'عارض الصور', en: 'Image Viewer' },
-    description: { ar: 'تصفّح صورك وشاهدها', en: 'Browse and view your pictures' },
-    icon: ICON_IMAGES,
-    permissions: ['fs:home'],
-    opens: ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.bmp', '.avif'],
-    category: 'media',
-    core: false,
-    singleInstance: false,
-  },
+  manifest,
   launch,
 };
 

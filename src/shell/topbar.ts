@@ -25,8 +25,18 @@ export function mountTopbar(root: HTMLElement, sys: SystemAPI, onToggleOverview:
 
   const center = document.createElement('div');
   center.className = 'faisal-topbar-center';
+  // The clock doubles as the notification center button (as in GNOME).
+  const clockBtn = document.createElement('button');
+  clockBtn.type = 'button';
+  clockBtn.className = 'faisal-topbar-btn faisal-topbar-clock';
+  clockBtn.setAttribute('aria-haspopup', 'dialog');
+  clockBtn.setAttribute('aria-expanded', 'false');
   const clock = document.createElement('span');
-  center.append(clock);
+  const unreadDot = document.createElement('span');
+  unreadDot.className = 'faisal-notif-dot';
+  unreadDot.hidden = true;
+  clockBtn.append(clock, unreadDot);
+  center.append(clockBtn);
 
   const end = document.createElement('div');
   end.className = 'faisal-topbar-side faisal-topbar-end';
@@ -66,9 +76,12 @@ export function mountTopbar(root: HTMLElement, sys: SystemAPI, onToggleOverview:
     const dateFmt = new Intl.DateTimeFormat(locale, { weekday: 'short', month: 'short', day: 'numeric' });
     clock.textContent = `${dateFmt.format(now)}  ${timeFmt.format(now)}`;
   }
-  updateClock();
-  const clockTimer = window.setInterval(updateClock, 15_000);
-  window.addEventListener('beforeunload', () => window.clearInterval(clockTimer));
+  // Tick on the minute boundary, so the time never lags behind the real clock.
+  const tick = () => {
+    updateClock();
+    window.setTimeout(tick, 60_000 - (Date.now() % 60_000) + 50);
+  };
+  tick();
 
   let menuEl: HTMLElement | null = null;
 

@@ -1,6 +1,8 @@
 import type { SystemAPI, WindowManager, AppManifest } from '../kernel/types';
 import { t } from '../kernel/i18n';
 import { renderIcon } from './icon';
+import { showContextMenu, wireContextMenu } from './contextmenu';
+import { appTileMenuItems, getDashIds } from './desktop';
 
 const ICON_WINDOW =
   '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="3" y1="8.5" x2="21" y2="8.5" stroke="currentColor" stroke-width="1.6"/></svg>';
@@ -101,13 +103,20 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
         sys.apps.launch(app.id);
         close();
       });
+      wireContextMenu(tile, (x, y) => {
+        showContextMenu(x, y, appTileMenuItems(sys, app, { onChange: renderApps, onLaunch: close }), { invoker: tile });
+      });
       appGrid.append(tile);
     });
   }
 
   function renderDock() {
     dock.textContent = '';
-    for (const app of sys.apps.list()) {
+    const dashIds = getDashIds(sys);
+    const byId = new Map(sys.apps.list().map((a) => [a.id, a] as const));
+    for (const id of dashIds) {
+      const app = byId.get(id);
+      if (!app) continue;
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'faisal-dock-btn';
@@ -116,6 +125,9 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
       btn.addEventListener('click', () => {
         sys.apps.launch(app.id);
         close();
+      });
+      wireContextMenu(btn, (x, y) => {
+        showContextMenu(x, y, appTileMenuItems(sys, app, { onChange: renderDock, onLaunch: close }), { invoker: btn });
       });
       dock.append(btn);
     }
@@ -126,14 +138,38 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
     renderApps();
     renderDock();
   });
+  sys.bus.on('settings:change', ({ key }) => {
+    if (!open) return;
+    if (key === 'shell.dash') renderDock();
+  });
 
   search.addEventListener('input', renderApps);
+  /** Moves the highlighted result; arrows follow the grid (and the reading direction). */
+  function select(index: number) {
+    if (!filtered.length) return;
+    selected = Math.max(0, Math.min(filtered.length - 1, index));
+    [...appGrid.children].forEach((tile, i) => tile.classList.toggle('is-selected', i === selected));
+    (appGrid.children[selected] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' });
+  }
+  function columns(): number {
+    const tiles = [...appGrid.children] as HTMLElement[];
+    const top = tiles[0]?.offsetTop;
+    const n = tiles.findIndex((tile) => tile.offsetTop !== top);
+    return n > 0 ? n : Math.max(1, tiles.length);
+  }
   search.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter' && filtered.length > 0) {
-      sys.apps.launch(filtered[0].id);
-      close();
-    } else if (ev.key === 'Escape') {
-      close();
+    const rtl = getComputedStyle(appGrid).direction === 'rtl';
+    switch (ev.key) {
+      case 'Enter':
+        if (filtered[selected]) { void sys.apps.launch(filtered[selected].id); close(); }
+        break;
+      case 'Escape':
+        close();
+        break;
+      case 'ArrowRight': ev.preventDefault(); select(selected + (rtl ? -1 : 1)); break;
+      case 'ArrowLeft': ev.preventDefault(); select(selected + (rtl ? 1 : -1)); break;
+      case 'ArrowDown': ev.preventDefault(); select(selected + columns()); break;
+      case 'ArrowUp': ev.preventDefault(); select(selected - columns()); break;
     }
   });
 

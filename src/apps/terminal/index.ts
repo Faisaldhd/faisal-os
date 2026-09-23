@@ -3,6 +3,7 @@
  *  - sim: the built-in bash-like Faisal shell over the VFS (instant)
  *  - v86: a real Linux kernel in the v86 emulator, over its serial console
  */
+import { manifest } from './manifest';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
@@ -12,7 +13,6 @@ import type { AppContext, AppModule, TerminalBackend } from '../../kernel/types'
 import { t } from '../../kernel/i18n';
 import { SimBackend } from './backends/sim';
 import { TERM_TEXT } from './strings';
-import { ICON_TERMINAL } from '../../brand/icons';
 
 type Kind = TerminalBackend['kind'];
 
@@ -178,17 +178,7 @@ function launch({ sys, window: win, args }: AppContext): void {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.Terminal',
-    name: { ar: 'الطرفية', en: 'Terminal' },
-    description: { ar: 'سطر أوامر شبيه بـ bash، ولينكس حقيقي عبر v86', en: 'A bash-like command line, plus real Linux via v86' },
-    icon: ICON_TERMINAL,
-    // fs:system so users can read /etc/os-release etc. The shell itself refuses
-    // writes outside /home/user and /tmp, like an unprivileged Linux user.
-    permissions: ['fs:home', 'fs:read-all'],
-    category: 'system',
-    core: true,
-  },
+  manifest,
   launch,
 };
 

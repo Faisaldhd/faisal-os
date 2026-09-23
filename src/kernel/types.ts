@@ -14,6 +14,8 @@ export interface SystemEvents {
   'app:launched': { appId: string; windowId: string };
   'app:closed': { appId: string; windowId: string };
   'window:focus': { windowId: string };
+  /** A window was minimized, restored, maximized, snapped or closed. */
+  'window:change': { windowId: string };
   'settings:change': { key: string; value: unknown };
   'notify': { title: string; body?: string; appId?: string };
   'system:ready': Record<string, never>;
@@ -85,13 +87,24 @@ export interface WindowHandle {
   focus(): void;
   close(): void;
   onClose(cb: () => void): Unsubscribe;
+  /**
+   * Asked before the user closes the window (close button, menu, shortcut); return false
+   * to keep it open, e.g. after "discard unsaved changes?". close() itself always closes.
+   */
+  setCloseGuard(guard: (() => boolean | Promise<boolean>) | null): void;
   onResize(cb: (size: { width: number; height: number }) => void): Unsubscribe;
 }
 
 export interface WindowManager {
   open(opts: WindowOptions): WindowHandle;
+  /** Windows in stacking order, bottom to top. */
   list(): WindowHandle[];
   get(id: string): WindowHandle | undefined;
+  /** The focused (topmost visible) window, if any. */
+  focused(): WindowHandle | undefined;
+  isMinimized(id: string): boolean;
+  minimize(id: string): void;
+  toggleMaximize(id: string): void;
 }
 
 /* ───────────────────────────── Apps ───────────────────────────────── */
@@ -146,8 +159,14 @@ export interface AppModule {
   launch(ctx: AppContext): void | Promise<void>;
 }
 
+/** An app whose code is loaded on first launch; only the manifest is needed up front. */
+export interface LazyAppModule {
+  manifest: AppManifest;
+  load(): Promise<AppModule>;
+}
+
 export interface AppRegistry {
-  register(app: AppModule): void;
+  register(app: AppModule | LazyAppModule): void;
   /** التطبيقات المثبتة فقط (تظهر في المشغّل). */
   list(): AppManifest[];
   /** كل التطبيقات المتاحة مع حالة التثبيت. متاحة للجميع للقراءة. */

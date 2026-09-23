@@ -1,7 +1,7 @@
+import { manifest } from './manifest';
 import type { AppContext, AppModule, CatalogEntry, Locale, Permission } from '../../kernel/types';
 import { t } from '../../kernel/i18n';
 import { renderIcon } from '../../shell/icon';
-import { ICON_STORE } from './icon';
 import {
   CATEGORIES,
   describeApp,
@@ -39,8 +39,16 @@ function wait(ms: number): Promise<void> {
 }
 
 function launch(ctx: AppContext) {
-  const { sys, window: win } = ctx;
+  const { sys, window: win, args } = ctx;
   win.content.textContent = '';
+
+  // `['app', <id>]` opens that app's detail page directly (used by the shell's
+  // context-menu "App details" action). Since the Store is singleInstance, a
+  // relaunch while a Store window is already open reuses that window and does
+  // NOT re-run this function with the new args — the caller works around that
+  // by closing the existing Store window (sys.apps.closeWindow) before
+  // launching again, so args are always applied fresh here.
+  const initialDetailId = args[0] === 'app' && typeof args[1] === 'string' ? args[1] : undefined;
 
   const root = document.createElement('div');
   root.className = 'faisal-store';
@@ -66,7 +74,9 @@ function launch(ctx: AppContext) {
 
   let tab: StoreTab = 'explore';
   let category: CategoryFilter = 'all';
-  let detailId: string | undefined;
+  let detailId: string | undefined = initialDetailId && sys.apps.catalog().some((a) => a.id === initialDetailId)
+    ? initialDetailId
+    : undefined;
   let busy = false; // install/remove in progress
   let confirmingRemove = false;
 
@@ -447,18 +457,7 @@ function launch(ctx: AppContext) {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.Store',
-    name: { ar: 'المتجر', en: 'Store' },
-    description: { ar: 'ثبّت التطبيقات وأزلها', en: 'Install and remove apps' },
-    icon: ICON_STORE,
-    permissions: ['apps:manage', 'notifications'],
-    category: 'system',
-    version: '1.0.0',
-    core: true,
-    defaultInstalled: true,
-    singleInstance: true,
-  },
+  manifest,
   launch,
 };
 

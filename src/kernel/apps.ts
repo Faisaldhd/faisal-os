@@ -1,5 +1,5 @@
 import type {
-  AppModule, AppRegistry, AppManifest, EventBus, Permission, SystemAPI, SystemEvents, VFS,
+  AppModule, AppRegistry, AppManifest, EventBus, LazyAppModule, Permission, SystemAPI, SystemEvents, VFS,
   WindowHandle, WindowManager,
 } from './types';
 import { HOME, VFSError } from './types';
@@ -68,6 +68,10 @@ function scopeWM(wm: WindowManager, appId: string): WindowManager {
     open: (opts) => wm.open({ ...opts, appId }),
     list: () => wm.list().filter((w) => w.appId === appId),
     get: (id) => { const w = wm.get(id); return w?.appId === appId ? w : undefined; },
+    focused: () => { const w = wm.focused(); return w?.appId === appId ? w : undefined; },
+    isMinimized: (id) => wm.get(id)?.appId === appId && wm.isMinimized(id),
+    minimize: (id) => { if (wm.get(id)?.appId === appId) wm.minimize(id); },
+    toggleMaximize: (id) => { if (wm.get(id)?.appId === appId) wm.toggleMaximize(id); },
   };
 }
 
@@ -75,7 +79,9 @@ const INSTALL_KEY = 'apps.installState';
 type InstallState = { removed: string[]; added: string[] };
 
 export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
-  const apps = new Map<string, AppModule>();
+  /** manifest is frozen at register time; code() loads (once) and returns the app's launch function. */
+  type Entry = { manifest: AppManifest; code(): Promise<AppModule['launch']> };
+  const apps = new Map<string, Entry>();
   const running = new Map<string, { win: WindowHandle; startedAt: number }[]>();
 
   const state = (): InstallState => {
@@ -100,7 +106,12 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
   const registry: AppRegistry = {
     register(app) {
       if (apps.has(app.manifest.id)) throw new Error(`App already registered: ${app.manifest.id}`);
-      apps.set(app.manifest.id, Object.freeze({ ...app, manifest: Object.freeze({ ...app.manifest }) }));
+      const manifest = Object.freeze({ ...app.manifest });
+      let pending: Promise<AppModule['launch']> | null = null;
+      const code = 'launch' in app
+        ? () => Promise.resolve(app.launch)
+        : () => (pending ??= (app as LazyAppModule).load().then((m) => m.launch, (err) => { pending = null; throw err; }));
+      apps.set(manifest.id, Object.freeze({ manifest, code }));
     },
     list(): AppManifest[] {
       const st = state();
@@ -190,14 +201,20 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
           : Object.freeze({ get: sys.settings.get, set: denied('settings') }),
         locale: sys.locale,
         t: sys.t,
-        notify: perms.includes('notifications') ? sys.notify : () => {},
+        // Tagged with the app, so the notification shows its icon and opens it on click.
+        notify: perms.includes('notifications') ? (title: string, body?: string) => sys.bus.emit('notify', { title, body, appId }) : () => {},
       });
       try {
-        await app.launch({ sys: scoped, window: win, args: [...args] });
+        // First launch downloads the app's chunk; show a spinner in the window meanwhile.
+        win.content.classList.add('is-loading');
+        const launchApp = await app.code().finally(() => win.content.classList.remove('is-loading'));
+        await launchApp({ sys: scoped, window: win, args: [...args] });
         sys.bus.emit('app:launched', { appId, windowId: win.id });
       } catch (err) {
         console.error(`[apps] ${appId} failed to launch`, err);
-        win.content.textContent = String(err);
+        // A deploy removed the chunk this page was built with: the fix is a reload.
+        const stale = /dynamically imported module|Importing a module script failed|error loading dynamically/i.test(String(err));
+        win.content.textContent = stale ? sys.t('shell.update.reload') : String(err);
       }
       return win;
     },

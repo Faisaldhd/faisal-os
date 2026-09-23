@@ -1,10 +1,12 @@
+import { manifest } from './manifest';
 import type { AppContext, AppModule } from '../../kernel/types';
 import { t } from '../../kernel/i18n';
 import { renderIcon } from '../../shell/icon';
 import { ACCENTS, BRAND_ACCENT_ID, applyTheme, applyAccent, type ThemeMode } from '../../shell/appearance';
-import { ICON_SETTINGS } from '../../brand/icons';
 import { BRAND, MARK_GLYPH_SVG } from '../../brand/logo';
 import { brandLockup } from '../../shell/splash';
+import { shellConfirm } from '../../shell/dialog';
+import { RESTORE_KEY } from '../../shell/session';
 import './strings';
 
 const OS_NAME = BRAND.product;
@@ -15,7 +17,30 @@ const ICON_APPEARANCE =
 const ICON_LANGUAGE =
   '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 12h18M12 3c2.4 2.6 3.6 5.7 3.6 9s-1.2 6.4-3.6 9c-2.4-2.6-3.6-5.7-3.6-9S9.6 5.6 12 3z" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
 
-type SectionId = 'appearance' | 'language' | 'about';
+const ICON_SYSTEM =
+  '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 20h8M12 16v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+
+type SectionId = 'appearance' | 'language' | 'system' | 'about';
+
+/** Keyboard shortcuts handled by the shell and window manager. */
+const SHORTCUTS: [keys: string, labelKey: string][] = [
+  ['Super', 'settings.sc.overview'],
+  ['Ctrl+Alt+T', 'settings.sc.terminal'],
+  ['Ctrl+Alt+W', 'settings.sc.close'],
+  ['Super+↑', 'settings.sc.maximize'],
+  ['Super+↓', 'settings.sc.restore'],
+  ['Super+← / →', 'settings.sc.snap'],
+  ['Super+D', 'settings.sc.desktop'],
+  ['Super+Shift+S', 'settings.sc.screenshot'],
+];
+
+function formatBytes(n: number): string {
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  // LRI…PDI keeps "18 KB" in order inside Arabic text.
+  return `\u2066${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${units[i]}\u2069`;
+}
 
 function row(labelKey: string, descKey?: string): { row: HTMLElement; control: HTMLElement } {
   const r = document.createElement('div');
@@ -59,6 +84,7 @@ function launch(ctx: AppContext) {
   const sections: { id: SectionId; labelKey: string; icon: string; render: () => void }[] = [
     { id: 'appearance', labelKey: 'settings.nav.appearance', icon: ICON_APPEARANCE, render: renderAppearance },
     { id: 'language', labelKey: 'settings.nav.language', icon: ICON_LANGUAGE, render: renderLanguage },
+    { id: 'system', labelKey: 'settings.nav.system', icon: ICON_SYSTEM, render: renderSystem },
     { id: 'about', labelKey: 'settings.nav.about', icon: MARK_GLYPH_SVG, render: renderAbout },
   ];
 
@@ -157,6 +183,84 @@ function launch(ctx: AppContext) {
     panel.append(group(langRow.row));
   }
 
+  function renderSystem() {
+    panel.textContent = '';
+    const h2 = document.createElement('h2');
+    h2.textContent = t('settings.nav.system');
+    panel.append(h2);
+
+    const restoreRow = row('settings.system.restore', 'settings.system.restoreDesc');
+    const toggle = document.createElement('div');
+    toggle.className = 'faisal-toggle-row';
+    toggle.style.width = '160px';
+    const on = sys.settings.get<boolean>(RESTORE_KEY, true);
+    for (const value of [true, false]) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'faisal-toggle-btn' + (value === on ? ' is-active' : '');
+      b.textContent = t(value ? 'settings.system.on' : 'settings.system.off');
+      b.setAttribute('aria-pressed', String(value === on));
+      b.addEventListener('click', () => {
+        sys.settings.set(RESTORE_KEY, value);
+        for (const c of toggle.children) { c.classList.toggle('is-active', c === b); c.setAttribute('aria-pressed', String(c === b)); }
+      });
+      toggle.append(b);
+    }
+    restoreRow.control.append(toggle);
+
+    const storageRow = row('settings.system.storage', 'settings.system.storageDesc');
+    const usage = document.createElement('span');
+    usage.className = 'faisal-settings-value';
+    usage.textContent = '…';
+    storageRow.control.append(usage);
+    void (navigator.storage?.estimate?.() ?? Promise.reject(new Error('unsupported')))
+      .then((e) => { usage.textContent = t('settings.system.storageUsed', { used: formatBytes(e.usage ?? 0), quota: formatBytes(e.quota ?? 0) }); })
+      .catch(() => { usage.textContent = t('settings.system.storageUnknown'); });
+
+    const resetRow = row('settings.system.reset', 'settings.system.resetDesc');
+    const resetBtn = document.createElement('button');
+    resetBtn.type = 'button';
+    resetBtn.className = 'faisal-settings-danger-btn';
+    resetBtn.textContent = t('settings.system.resetBtn');
+    resetBtn.addEventListener('click', async () => {
+      const ok = await shellConfirm({
+        title: t('settings.system.resetTitle'),
+        message: t('settings.system.resetBody'),
+        okLabel: t('settings.system.resetConfirm'),
+        cancelLabel: t('settings.system.cancel'),
+        danger: true,
+      });
+      if (!ok) return;
+      try {
+        for (const k of Object.keys(localStorage)) if (k.startsWith('faisal.')) localStorage.removeItem(k);
+      } catch { /* storage unavailable: nothing to clear */ }
+      const done = () => location.reload();
+      try {
+        const req = indexedDB.deleteDatabase('faisal-vfs');
+        req.onsuccess = req.onerror = req.onblocked = done;
+      } catch { done(); }
+    });
+    resetRow.control.append(resetBtn);
+
+    const shortcuts = group(...SHORTCUTS.map(([keys, labelKey]) => {
+      const r = row(labelKey);
+      const kbd = document.createElement('kbd');
+      kbd.className = 'faisal-kbd';
+      kbd.dir = 'ltr';
+      kbd.textContent = keys;
+      r.control.append(kbd);
+      return r.row;
+    }));
+    const h3 = document.createElement('h3');
+    h3.className = 'faisal-settings-subhead';
+    h3.textContent = t('settings.system.shortcuts');
+    const note = document.createElement('p');
+    note.className = 'faisal-settings-note';
+    note.textContent = t('settings.system.shortcutsNote');
+
+    panel.append(group(restoreRow.row, storageRow.row), h3, shortcuts, note, group(resetRow.row));
+  }
+
   function renderAbout() {
     panel.textContent = '';
     const h2 = document.createElement('h2');
@@ -200,16 +304,7 @@ function launch(ctx: AppContext) {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.Settings',
-    name: { ar: 'الإعدادات', en: 'Settings' },
-    description: { ar: 'تخصيص مظهر النظام ولغته', en: 'Customize system appearance and language' },
-    icon: ICON_SETTINGS,
-    permissions: ['settings'],
-    category: 'system',
-    core: true,
-    singleInstance: true,
-  },
+  manifest,
   launch,
 };
 

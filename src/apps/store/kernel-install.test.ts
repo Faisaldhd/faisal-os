@@ -24,6 +24,7 @@ function makeWM(): WindowManager {
         appId: o.appId,
         content: document.createElement('div'),
         setTitle() {},
+        setCloseGuard() {},
         focus() {},
         close() {
           closed.add(h.id);
@@ -37,6 +38,10 @@ function makeWM(): WindowManager {
     },
     list: () => wins.filter((w) => !closed.has(w.id)),
     get: (id) => wins.find((w) => w.id === id && !closed.has(w.id)),
+    focused: () => undefined,
+    isMinimized: () => false,
+    minimize() {},
+    toggleMaximize() {},
   };
   return wm;
 }

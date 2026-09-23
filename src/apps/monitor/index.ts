@@ -1,9 +1,9 @@
+import { manifest } from './manifest';
 import type { AppContext, AppModule, CatalogEntry, Permission, RunningApp } from '../../kernel/types';
 import { defineStrings, t } from '../../kernel/i18n';
 import { formatUptime, aggregateByTopLevel, formatBytes, clampRatio } from './helpers';
 import { walkVFS } from './fs-walk';
 import { drawLineChart } from './chart';
-import { ICON_MONITOR } from './icon';
 import { icon, ICONS } from './tab-icons';
 import './monitor.css';
 
@@ -430,16 +430,7 @@ function launch(ctx: AppContext): void {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.SystemMonitor',
-    name: { ar: 'مراقب النظام', en: 'System Monitor' },
-    description: { ar: 'راقب التطبيقات وأداء النظام والتخزين', en: 'Monitor apps, performance and storage' },
-    icon: ICON_MONITOR,
-    permissions: ['system:monitor', 'fs:read-all'],
-    category: 'system',
-    core: false,
-    singleInstance: true,
-  },
+  manifest,
   launch,
 };
 

@@ -1,7 +1,7 @@
+import { manifest } from './manifest';
 import type { AppContext, AppModule } from '../../kernel/types';
 import { t, getLocale } from '../../kernel/i18n';
 import { renderIcon } from '../../shell/icon';
-import { ICON_BROWSER } from './icon';
 import { loadBookmarks, saveBookmarks, loadEngine, saveEngine } from './model';
 import {
   resolveAddressInput,
@@ -522,19 +522,7 @@ function launch(ctx: AppContext): void {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.Browser',
-    name: { ar: 'المتصفح', en: 'Browser' },
-    description: {
-      ar: 'تصفّح الويب داخل النظام عبر إطار مضمّن آمن — بعض المواقع تمنع ذلك عمداً',
-      en: 'Browse the web inside the OS via a safe embedded frame — some sites deliberately block this',
-    },
-    icon: ICON_BROWSER,
-    permissions: ['network'],
-    category: 'utilities',
-    version: '1.0.0',
-    core: false,
-  },
+  manifest,
   launch,
 };
 

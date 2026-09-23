@@ -688,6 +688,8 @@ body {
   position: relative;
   overflow: auto;
   background: var(--faisal-bg);
+  /* Apps lay out by their window's width (container queries), not the screen's. */
+  container: faisal-window / inline-size;
 }
 
 .faisal-resize-handle {
@@ -812,9 +814,13 @@ body {
   padding: 10px 14px;
 }
 
-@media (max-width: 700px) {
+@container faisal-window (max-width: 620px) {
   .faisal-settings { flex-direction: column; }
-  .faisal-settings-nav { width: 100%; flex-direction: row; overflow-x: auto; border-inline-end: none; border-block-end: 1px solid var(--faisal-border); }
+  .faisal-settings-nav { width: 100%; flex-direction: row; overflow-x: auto; border-inline-end: none; border-block-end: 1px solid var(--faisal-border); padding: 6px; }
+  .faisal-settings-nav-btn { white-space: nowrap; padding: 7px 10px; }
+  .faisal-settings-panel { padding: 16px 14px; }
+  .faisal-settings-row { flex-wrap: wrap; }
+  .faisal-settings-row > div:first-child { flex: 1 1 200px; }
 }
 
 /* ───────────────────────── Brand: wordmarks + boot splash ───────────────────────── */
@@ -909,6 +915,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .faisal-splash { display: none; }
+  .faisal-window.is-opening { animation: none; }
 }
 
 /* ───────────────────────── Screenshot (Win+Shift+S) ───────────────────────── */
@@ -976,3 +983,337 @@ body {
 }
 .faisal-shot-bar button:hover { background: rgba(255, 255, 255, 0.22); }
 .faisal-shot-bar button:first-of-type { background: var(--faisal-brand-mark-gold, #E3B650); color: #16264F; }
+/* ───────────────────────── Desktop icons ───────────────────────── */
+
+.faisal-desktop-icons {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(auto-fill, 96px);
+  justify-content: start;
+  gap: 4px;
+  padding: 14px;
+  align-content: start;
+}
+
+.faisal-desktop-icon {
+  width: 92px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px;
+  border-radius: var(--faisal-radius-sm);
+  border: 1px solid transparent;
+  cursor: default;
+  user-select: none;
+  color: #fff;
+}
+.faisal-desktop-icon:hover { background: rgba(255, 255, 255, 0.1); }
+.faisal-desktop-icon.is-selected {
+  background: color-mix(in srgb, var(--faisal-accent) 32%, rgba(255, 255, 255, 0.12));
+  border-color: color-mix(in srgb, var(--faisal-accent-2) 60%, transparent);
+}
+.faisal-desktop-icon:focus-visible {
+  outline: 2px solid var(--faisal-accent-2);
+  outline-offset: 2px;
+}
+
+.faisal-desktop-icon-img {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faisal-accent);
+}
+.faisal-desktop-icon-img svg { width: 44px; height: 44px; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.35)); }
+
+.faisal-desktop-icon-label {
+  font-size: 11.5px;
+  text-align: center;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  word-break: break-word;
+}
+
+/* ───────────────────────── Context menu ───────────────────────── */
+
+.faisal-ctxmenu {
+  position: fixed;
+  z-index: 3000;
+  min-width: 220px;
+  max-width: 300px;
+  background: var(--faisal-surface);
+  color: var(--faisal-fg);
+  border-radius: var(--faisal-radius);
+  box-shadow: 0 14px 36px var(--faisal-shadow), 0 0 0 1px var(--faisal-border);
+  padding: 6px;
+  font-size: 13.5px;
+}
+
+.faisal-ctxmenu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--faisal-fg);
+  font: inherit;
+  text-align: start;
+  padding: 8px 10px;
+  border-radius: var(--faisal-radius-sm);
+  cursor: pointer;
+}
+.faisal-ctxmenu-item:hover,
+.faisal-ctxmenu-item:focus-visible {
+  background: var(--faisal-surface-2);
+  outline: none;
+}
+.faisal-ctxmenu-item:disabled {
+  color: var(--faisal-fg-muted);
+  cursor: default;
+  background: transparent;
+}
+.faisal-ctxmenu-item.is-danger { color: var(--faisal-danger); }
+
+.faisal-ctxmenu-check {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.faisal-ctxmenu-check svg { width: 12px; height: 12px; fill: none; stroke: currentColor; }
+
+.faisal-ctxmenu-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faisal-fg-muted);
+}
+.faisal-ctxmenu-item.is-danger .faisal-ctxmenu-icon { color: var(--faisal-danger); }
+.faisal-ctxmenu-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; }
+
+.faisal-ctxmenu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.faisal-ctxmenu-sep {
+  height: 1px;
+  margin: 6px 8px;
+  background: var(--faisal-border);
+}
+
+/* ───────────────────────── Shell dialog (confirm) ───────────────────────── */
+
+.faisal-shell-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  background: var(--faisal-overlay-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.faisal-shell-dialog {
+  width: min(360px, 90vw);
+  background: var(--faisal-surface);
+  color: var(--faisal-fg);
+  border-radius: var(--faisal-radius);
+  box-shadow: 0 20px 50px var(--faisal-shadow);
+  padding: 20px;
+}
+.faisal-shell-dialog h3 { margin: 0 0 8px; font-size: 15px; }
+.faisal-shell-dialog p { margin: 0 0 18px; font-size: 13px; color: var(--faisal-fg-muted); }
+
+.faisal-shell-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.faisal-shell-dialog-btn {
+  border: 1px solid var(--faisal-border);
+  background: var(--faisal-surface-2);
+  color: var(--faisal-fg);
+  font: inherit;
+  padding: 8px 16px;
+  border-radius: var(--faisal-radius-sm);
+  cursor: pointer;
+}
+.faisal-shell-dialog-btn.is-primary { background: var(--faisal-accent); color: var(--faisal-accent-fg); border-color: transparent; }
+.faisal-shell-dialog-btn.is-danger { background: var(--faisal-danger); color: #fff; border-color: transparent; }
+
+/* Always-on-top windows get a subtle gold hairline so they read as "pinned". */
+.faisal-window.is-pinned {
+  box-shadow: 0 0 0 1px var(--faisal-brand-mark-gold), 0 18px 50px var(--faisal-shadow);
+}
+
+/* App code still downloading (first launch of a lazily loaded app). */
+.faisal-window-content.is-loading::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  border: 3px solid var(--faisal-border);
+  border-top-color: var(--faisal-accent);
+  animation: faisal-spin 0.8s linear infinite;
+}
+@keyframes faisal-spin { to { transform: rotate(360deg); } }
+
+/* ───────────────────────── Window manager extras ───────────────────────── */
+
+.faisal-window.is-opening { animation: faisal-window-in 0.14s ease-out; }
+@keyframes faisal-window-in {
+  from { opacity: 0; transform: scale(0.97); }
+}
+.faisal-window.is-snapped { border-radius: 0; }
+
+/* Where a window will land if dropped at a screen edge. */
+.faisal-snap-preview {
+  position: absolute;
+  z-index: 99999;
+  pointer-events: none;
+  border-radius: var(--faisal-radius);
+  background: color-mix(in srgb, var(--faisal-accent) 18%, transparent);
+  border: 2px solid color-mix(in srgb, var(--faisal-accent) 55%, transparent);
+  transition: left 0.08s, top 0.08s, width 0.08s, height 0.08s;
+}
+.faisal-snap-preview[hidden] { display: none; }
+
+/* Dock: the focused app's dot is wider; minimized-only apps get a hollow dot. */
+.faisal-dock-btn.is-active::after { width: 14px; margin-inline-start: -7px; border-radius: 3px; }
+.faisal-dock-btn.is-hidden::after { background: transparent; box-shadow: inset 0 0 0 1.5px var(--faisal-brand-mark-gold, #E3B650); }
+
+/* Settings: System section */
+.faisal-settings-value { font-size: 12.5px; color: var(--faisal-fg-muted); white-space: nowrap; }
+.faisal-settings-subhead { font-size: 13px; margin: 18px 4px 8px; color: var(--faisal-fg-muted); font-weight: 600; }
+.faisal-settings-note { font-size: 12px; color: var(--faisal-fg-muted); margin: 6px 4px 16px; line-height: 1.6; }
+.faisal-kbd {
+  font-family: var(--faisal-font-mono);
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--faisal-border);
+  border-block-end-width: 2px;
+  background: var(--faisal-surface-2);
+  white-space: nowrap;
+}
+.faisal-settings-danger-btn {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: var(--faisal-radius-sm);
+  border: 1px solid var(--faisal-danger);
+  color: var(--faisal-danger);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.faisal-settings-danger-btn:hover { background: color-mix(in srgb, var(--faisal-danger) 10%, transparent); }
+
+/* ───────────────────────── Notification center ───────────────────────── */
+
+.faisal-topbar-clock { position: relative; font-weight: 600; }
+.faisal-notif-dot {
+  position: absolute;
+  inset-block-start: 8px;
+  inset-inline-end: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--faisal-brand-gold, #E3B650);
+}
+.faisal-notif-dot[hidden] { display: none; }
+.faisal-notif-icon.has-app { background: none; padding: 0; }
+.faisal-notif-icon.has-app svg { width: 22px; height: 22px; }
+.faisal-notif-text { min-width: 0; }
+.faisal-notif-body { overflow-wrap: anywhere; }
+.faisal-notif { cursor: pointer; }
+.faisal-notif-time { font-size: 11px; color: var(--faisal-fg-muted); margin-block-start: 3px; }
+
+.faisal-notif-center {
+  position: fixed;
+  top: calc(var(--faisal-topbar-h) + 6px);
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  width: min(380px, calc(100vw - 16px));
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  background: var(--faisal-surface);
+  color: var(--faisal-fg);
+  border-radius: calc(var(--faisal-radius) + 2px);
+  box-shadow: 0 16px 40px var(--faisal-shadow), 0 0 0 1px var(--faisal-border);
+  z-index: 950;
+  font-size: 13px;
+  animation: faisal-notif-in 0.16s ease-out;
+}
+[dir="rtl"] .faisal-notif-center { transform: translateX(50%); }
+.faisal-notif-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 8px;
+}
+.faisal-notif-head h3 { margin: 0; font-size: 14px; }
+.faisal-notif-clear, .faisal-notif-x {
+  font: inherit;
+  border: none;
+  background: transparent;
+  color: var(--faisal-fg-muted);
+  cursor: pointer;
+  border-radius: var(--faisal-radius-sm);
+}
+.faisal-notif-clear { font-size: 12px; padding: 4px 8px; }
+.faisal-notif-clear:hover, .faisal-notif-x:hover { background: var(--faisal-surface-2); color: var(--faisal-fg); }
+.faisal-notif-list { overflow-y: auto; padding: 0 8px 8px; display: flex; flex-direction: column; gap: 4px; }
+.faisal-notif-item { display: flex; align-items: flex-start; border-radius: var(--faisal-radius); background: var(--faisal-surface-2); }
+.faisal-notif-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  text-align: start;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  padding: 10px 12px;
+  cursor: pointer;
+  border-radius: var(--faisal-radius);
+}
+.faisal-notif-open:hover { background: var(--faisal-surface-3); }
+.faisal-notif-x { font-size: 18px; line-height: 1; padding: 6px 10px; margin: 4px; }
+.faisal-notif-empty { padding: 26px 10px; text-align: center; color: var(--faisal-fg-muted); }
+.faisal-notif-dnd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-block-start: 1px solid var(--faisal-border);
+  cursor: pointer;
+}
+.faisal-notif-dnd input { width: 34px; height: 18px; accent-color: var(--faisal-accent); cursor: pointer; }

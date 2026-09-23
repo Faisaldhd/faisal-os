@@ -9,16 +9,19 @@ import { mountDock } from './dock';
 import { mountScreenshot } from './screenshot';
 import { mountNotifications } from './notifications';
 import { mountSplash } from './splash';
+import { mountDesktop } from './desktop';
+import { mountSession } from './session';
 
 export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   wireAppearance(sys.bus, sys.settings);
   mountSplash(sys.bus);
 
+  mountDesktop(root, sys, sys.wm);
   const overview = mountOverview(root, sys, sys.wm);
   const screenshot = mountScreenshot(sys);
-  mountTopbar(root, sys, () => overview.toggle(), () => screenshot.capture());
+  const topbar = mountTopbar(root, sys, () => overview.toggle(), () => screenshot.capture());
   mountDock(root, sys);
-  mountNotifications(root, sys.bus);
+  mountNotifications(root, sys, topbar.querySelector<HTMLButtonElement>('.faisal-topbar-clock'));
 
   // GNOME behaviour: tapping the Super/Windows key alone toggles Activities; Alt+F1 does too.
   let superAlone = false;
@@ -34,4 +37,15 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
     if ((ev.key === 'Meta' || ev.key === 'OS') && superAlone) { superAlone = false; ev.preventDefault(); overview.toggle(); }
   });
   window.addEventListener('blur', () => { superAlone = false; });
+
+  // Ctrl+Alt+T opens a terminal, as on most Linux desktops.
+  window.addEventListener('keydown', (ev) => {
+    if (ev.ctrlKey && ev.altKey && !ev.shiftKey && ev.code === 'KeyT') {
+      ev.preventDefault();
+      overview.close();
+      void sys.apps.launch('org.faisal.Terminal').catch(() => {});
+    }
+  });
+
+  mountSession(sys);
 }
