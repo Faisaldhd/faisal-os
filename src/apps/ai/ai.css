@@ -179,15 +179,30 @@
 
 /* Chat view fills the window: header, scrolling log, input. */
 .faisal-ai-chat { display: flex; flex-direction: column; block-size: 100%; min-block-size: 0; }
-.faisal-ai-model {
+.faisal-ai-model, .faisal-ai-provider {
   font: inherit;
   font-size: 12px;
-  max-inline-size: 60%;
   padding: 4px 6px;
   border-radius: var(--faisal-radius-sm);
   border: 1px solid var(--faisal-border);
   background: var(--faisal-surface);
   color: var(--faisal-fg);
+}
+.faisal-ai-model { max-inline-size: 55%; }
+.faisal-ai-provider { max-inline-size: 32%; }
+.faisal-ai-model:focus-visible, .faisal-ai-provider:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8F6412);
+  outline-offset: 1px;
+}
+/* Provider row on the key screen: visible label above the picker. */
+.faisal-ai-field { display: flex; flex-direction: column; gap: 4px; }
+.faisal-ai-field > span { font-size: 12px; color: var(--faisal-fg-muted); }
+.faisal-ai-setup .faisal-ai-provider {
+  font-size: 13.5px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  inline-size: 100%;
+  max-inline-size: none;
 }
 .faisal-ai-setup .note.is-error { color: var(--faisal-danger); }
 
