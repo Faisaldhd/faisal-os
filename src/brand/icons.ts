@@ -9,7 +9,7 @@
 
 const XMLNS = 'xmlns="http://www.w3.org/2000/svg"';
 
-function tile(grad: [string, string], rim: string, body: string, defs = ''): string {
+export function tile(grad: [string, string], rim: string, body: string, defs = ''): string {
   return (
     `<svg ${XMLNS} viewBox="0 0 64 64">` +
     '<defs>' +
@@ -25,7 +25,7 @@ function tile(grad: [string, string], rim: string, body: string, defs = ''): str
   );
 }
 
-const GOLD =
+export const GOLD =
   '<linearGradient id="fiGold" x1="0" y1="18" x2="0" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#F6DB93"/><stop offset="1" stop-color="#D4A03A"/></linearGradient>';
 
 /** Files — gold folder on royal navy. */

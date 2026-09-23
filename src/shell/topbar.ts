@@ -148,7 +148,16 @@ export function mountTopbar(root: HTMLElement, sys: SystemAPI, onToggleOverview:
       closeMenu();
       sys.apps.launch('org.faisal.Settings', ['about']);
     });
-    aboutSection.append(aboutBtn);
+    // Full screen: also captures the Windows/Super key (Keyboard Lock only works in full screen).
+    const fsBtn = document.createElement('button');
+    fsBtn.type = 'button';
+    fsBtn.className = 'faisal-menu-item';
+    fsBtn.textContent = t(document.fullscreenElement ? 'shell.menu.exitFullscreen' : 'shell.menu.fullscreen');
+    fsBtn.addEventListener('click', () => {
+      closeMenu();
+      void toggleFullscreen();
+    });
+    aboutSection.append(fsBtn, aboutBtn);
     menu.append(aboutSection);
 
     return menu;
@@ -171,4 +180,20 @@ export function mountTopbar(root: HTMLElement, sys: SystemAPI, onToggleOverview:
   });
 
   return bar;
+}
+
+type KeyboardLock = { lock?: (codes?: string[]) => Promise<void>; unlock?: () => void };
+
+async function toggleFullscreen(): Promise<void> {
+  const kb = (navigator as Navigator & { keyboard?: KeyboardLock }).keyboard;
+  try {
+    if (document.fullscreenElement) {
+      kb?.unlock?.();
+      await document.exitFullscreen();
+      return;
+    }
+    await document.documentElement.requestFullscreen();
+    // Lets the page receive the Windows/Super key instead of the OS Start menu (Chromium only).
+    await kb?.lock?.(['MetaLeft', 'MetaRight']).catch(() => {});
+  } catch { /* full screen refused by the browser or frame: nothing to do */ }
 }

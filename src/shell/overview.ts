@@ -121,6 +121,12 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
     }
   }
 
+  sys.bus.on('apps:changed', () => {
+    if (!open) return;
+    renderApps();
+    renderDock();
+  });
+
   search.addEventListener('input', renderApps);
   search.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter' && filtered.length > 0) {

@@ -17,6 +17,8 @@ export interface SystemEvents {
   'settings:change': { key: string; value: unknown };
   'notify': { title: string; body?: string; appId?: string };
   'system:ready': Record<string, never>;
+  /** Installed set changed (Store installed/removed an app). Shell re-renders launchers. */
+  'apps:changed': Record<string, never>;
 }
 
 export interface EventBus {
@@ -100,7 +102,11 @@ export type Permission =
   | 'fs:system'      // قراءة وكتابة كامل نظام الملفات
   | 'notifications'
   | 'settings'       // تعديل إعدادات النظام
+  | 'apps:manage'    // تثبيت وإزالة التطبيقات (المتجر)
+  | 'system:monitor' // رؤية التطبيقات المفتوحة وإغلاقها (مراقب النظام)
   | 'network';
+
+export type AppCategory = 'system' | 'utilities' | 'accessories' | 'media' | 'development';
 
 export interface AppManifest {
   id: string;                      // "org.faisal.Files"
@@ -111,6 +117,22 @@ export interface AppManifest {
   singleInstance?: boolean;
   /** امتدادات الملفات التي يفتحها التطبيق (".txt"). */
   opens?: string[];
+  category?: AppCategory;
+  version?: string;
+  /** تطبيق أساسي لا يمكن إزالته (الملفات، الطرفية، الإعدادات، المتجر). */
+  core?: boolean;
+  /** يُثبَّت تلقائياً عند أول تشغيل (الافتراضي true). */
+  defaultInstalled?: boolean;
+}
+
+export interface CatalogEntry extends AppManifest {
+  installed: boolean;
+}
+
+export interface RunningApp {
+  appId: string;
+  windowId: string;
+  startedAt: number;   // ms epoch
 }
 
 export interface AppContext {
@@ -126,7 +148,18 @@ export interface AppModule {
 
 export interface AppRegistry {
   register(app: AppModule): void;
+  /** التطبيقات المثبتة فقط (تظهر في المشغّل). */
   list(): AppManifest[];
+  /** كل التطبيقات المتاحة مع حالة التثبيت. متاحة للجميع للقراءة. */
+  catalog(): CatalogEntry[];
+  /** يتطلب apps:manage. */
+  install(appId: string): void;
+  /** يتطلب apps:manage. يغلق نوافذ التطبيق. التطبيقات الأساسية ترمي خطأ. */
+  uninstall(appId: string): void;
+  /** يتطلب system:monitor. */
+  running(): RunningApp[];
+  /** يتطلب system:monitor. */
+  closeWindow(windowId: string): void;
   launch(appId: string, args?: string[]): Promise<WindowHandle | undefined>;
   /** يجد التطبيق المناسب لملف حسب الامتداد. */
   appForFile(path: string): AppManifest | undefined;

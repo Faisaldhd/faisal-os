@@ -206,6 +206,8 @@ const app: AppModule = {
     description: { ar: 'تخصيص مظهر النظام ولغته', en: 'Customize system appearance and language' },
     icon: ICON_SETTINGS,
     permissions: ['settings'],
+    category: 'system',
+    core: true,
     singleInstance: true,
   },
   launch,

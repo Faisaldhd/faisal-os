@@ -335,6 +335,7 @@ const app: AppModule = {
     description: { ar: 'محرر نصوص بسيط', en: 'A simple text editor' },
     icon: ICON_EDITOR,
     permissions: ['fs:home'],
+    category: 'accessories',
     opens: ['.txt', '.md', '.json', '.js', '.ts', '.css', '.html', '.sh', '.conf', '.log'],
   },
   launch,

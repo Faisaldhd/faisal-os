@@ -186,6 +186,8 @@ const app: AppModule = {
     // fs:system so users can read /etc/os-release etc. The shell itself refuses
     // writes outside /home/user and /tmp, like an unprivileged Linux user.
     permissions: ['fs:home', 'fs:read-all'],
+    category: 'system',
+    core: true,
   },
   launch,
 };
