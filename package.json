@@ -1,6 +1,6 @@
 {
   "name": "faisal-os",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Fai$al OS — a browser-based personal desktop OS, also packaged as a desktop app with Electron.",
   "main": "electron/main.cjs",
   "scripts": {
