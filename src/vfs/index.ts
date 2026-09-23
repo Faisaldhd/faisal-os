@@ -33,6 +33,26 @@ function toStat(n: Node): Stat {
 }
 
 /**
+ * Reads the stored tree, and refuses to let a broken store kill the file system.
+ *
+ * An unreadable or corrupt IndexedDB used to reject `createVFS`, which left every
+ * `sys.fs` call rejecting for the whole session — the shell renders, and then nothing
+ * works: no new file, no rename, no navigation, no error the user can act on. Starting
+ * from an empty index instead rebuilds the standard tree (see `seed`), which is then
+ * written back to the same store, so the next boot loads a healthy one. The user is told
+ * plainly rather than being left with a dead desktop.
+ */
+async function loadStored(bus: EventBus, backend: StorageBackend): Promise<StoredNode[]> {
+  try {
+    return await backend.loadAll();
+  } catch (err) {
+    console.error('[vfs] could not read the stored tree', err);
+    bus.emit('notify', { title: t('vfs.error.title'), body: t('vfs.error.body') });
+    return [];
+  }
+}
+
+/**
  * Persistent, IndexedDB-backed VFS with an in-memory index for fast reads.
  * Falls back to an in-memory-only backend when IndexedDB is unavailable.
  */
@@ -57,7 +77,7 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
     } catch { /* no Storage API in this context: nothing to request */ }
   }
 
-  const stored = await backend.loadAll();
+  const stored = await loadStored(bus, backend);
   for (const s of stored) {
     nodes.set(s.path, {
       stat: { path: s.path, name: s.name, type: s.type, size: s.size, mode: s.mode, mtime: s.mtime, ctime: s.ctime },
@@ -322,7 +342,10 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
   // ask for a file: those paths simply did not exist, so navigation and creation hit
   // ENOENT. `seed` is idempotent (mkdir -p, and files are written only when absent),
   // so running it always repairs such a store and is a no-op on a healthy one.
-  await seed(vfs);
+  // It is also total: one impossible path (a standard folder that a broken store
+  // holds as a FILE, say) must never take the whole file system down with it — that
+  // is exactly the failure mode this whole change exists to remove.
+  await seed(vfs, bus);
 
   return vfs;
 }
@@ -330,22 +353,38 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
 /**
  * Ensures the standard tree exists. Must stay idempotent and non-destructive:
  * it now runs on every boot, so it may never overwrite a file the user owns.
+ * Every step is guarded on its own, so whatever cannot be created is reported
+ * and the boot continues.
  */
-async function seed(vfs: VFS): Promise<void> {
+async function seed(vfs: VFS, bus: EventBus): Promise<void> {
+  let failures = 0;
+  const attempt = async (label: string, run: () => Promise<unknown>): Promise<void> => {
+    try {
+      await run();
+    } catch (err) {
+      failures += 1;
+      console.warn(`[vfs] could not ensure ${label}`, err);
+    }
+  };
+
   const dirs = [
     '/bin', '/etc', '/home', '/home/user', '/tmp', '/usr', '/var',
     '/home/user/Documents', '/home/user/Downloads', '/home/user/Pictures',
     '/home/user/Music', '/home/user/Desktop',
   ];
   for (const d of dirs) {
-    await vfs.mkdir(d, { recursive: true });
-    await vfs.chmod(d, 0o755);
+    await attempt(d, async () => {
+      await vfs.mkdir(d, { recursive: true });
+      await vfs.chmod(d, 0o755);
+    });
   }
 
   /** Writes a seed file only when it is missing: the user's copy always wins. */
   const writeIfAbsent = async (path: string, contents: string): Promise<void> => {
-    if (await vfs.exists(path)) return;
-    await vfs.writeFile(path, contents);
+    await attempt(path, async () => {
+      if (await vfs.exists(path)) return;
+      await vfs.writeFile(path, contents);
+    });
   };
 
   const osRelease = [
@@ -389,6 +428,12 @@ async function seed(vfs: VFS): Promise<void> {
     '',
   ].join('\n');
   await writeIfAbsent('/home/user/Documents/readme.md', readme);
+
+  if (failures > 0) {
+    // One honest line instead of a silently half-built home. The next boot tries again,
+    // because everything above is idempotent and runs on every start.
+    bus.emit('notify', { title: t('vfs.error.title'), body: t('vfs.error.body') });
+  }
 }
 
 /**

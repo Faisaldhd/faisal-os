@@ -135,6 +135,46 @@ describe('VFS', () => {
     expect(await again.readText('/home/user/Documents/welcome.txt')).toBe('نص المستخدم');
   });
 
+  /**
+   * A store can be hostile, not merely incomplete: an older build (or a half-applied
+   * migration) can leave a standard folder name occupied by a FILE. Seeding must not
+   * throw on it — one impossible path may not take the whole file system down, which is
+   * how a rendered desktop ends up with every file operation rejecting and nothing to say.
+   */
+  it('survives a store where a standard folder name is occupied by a file', async () => {
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open('faisal-vfs', 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('nodes')) db.createObjectStore('nodes', { keyPath: 'path' });
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction('nodes', 'readwrite');
+        const store = tx.objectStore('nodes');
+        const now = Date.now();
+        store.put({ path: '/home/user', name: 'user', type: 'dir', size: 0, mode: 0o755, mtime: now, ctime: now });
+        store.put({
+          path: '/home/user/Documents', name: 'Documents', type: 'file', size: 4, mode: 0o644,
+          mtime: now, ctime: now, data: new TextEncoder().encode('oops'),
+        });
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => { db.close(); reject(tx.error); };
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    const vfs = await createVFS(createBus());
+
+    // The file system is alive, the user's own (odd) node is untouched, and every folder
+    // that CAN be created still is — the report is a notification, not a dead session.
+    expect(await vfs.exists('/home/user')).toBe(true);
+    expect((await vfs.stat('/home/user/Documents')).type).toBe('file');
+    expect(await vfs.exists('/home/user/Desktop')).toBe(true);
+    expect(await vfs.exists('/home/user/Downloads')).toBe(true);
+    expect(await vfs.exists('/tmp')).toBe(true);
+  });
+
   describe('basic operations', () => {
     it('stat/exists/readdir', async () => {
       const vfs = await createVFS(createBus());
