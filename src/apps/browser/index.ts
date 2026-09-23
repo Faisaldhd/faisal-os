@@ -23,6 +23,7 @@ import {
   buildOpenStreetMapEmbedUrl,
   type SearchEngine,
 } from './url';
+import { offerCloudReader } from './cloud-reader';
 import './strings';
 import './browser.css';
 
@@ -329,8 +330,11 @@ function launch(ctx: AppContext): void {
     link.target = '_blank';
     link.rel = 'noopener noreferrer';
     link.textContent = t('browser.openReal');
-    card.append(title, body, urlLine, link);
+    const actions = document.createElement('div');
+    actions.className = 'faisal-browser-blocked-actions';
+    card.append(title, body, urlLine, link, actions);
     tab.bodyEl.append(card);
+    offerCloudReader(actions, url, tab.bodyEl);
   }
 
   /**
@@ -379,6 +383,7 @@ function launch(ctx: AppContext): void {
     actions.append(openBtn, tryBtn);
     card.append(title, body, urlLine, actions);
     tab.bodyEl.append(card);
+    offerCloudReader(actions, url, tab.bodyEl);
   }
 
   function renderPage(tab: Tab, url: string): void {

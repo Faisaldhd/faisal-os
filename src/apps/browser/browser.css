@@ -419,3 +419,25 @@ webview.faisal-browser-webview {
 :root[dir='rtl'] .faisal-browser-address:placeholder-shown {
   direction: rtl;
 }
+
+/* ── cloud proxy reader (cloud-reader.ts) ─────────────────────────── */
+
+.faisal-browser-cloudtoken {
+  display: block;
+  inline-size: 100%;
+  box-sizing: border-box;
+  margin-block: 14px 4px;
+  padding: 9px 12px;
+  border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  border-radius: 10px;
+  background: var(--faisal-bg, #fff);
+  color: inherit;
+  font: inherit;
+}
+.faisal-browser-cloud-error { margin-block-start: 12px; color: var(--faisal-danger, #b3261e); font-size: 13px; }
+.faisal-browser-readerpage { max-inline-size: 720px; margin: 0 auto; padding: 20px 22px 40px; line-height: 1.8; }
+.faisal-browser-readerpage h1 { font-size: 1.35em; line-height: 1.4; margin-block: 12px; }
+.faisal-browser-readerpage p { margin-block: 0 12px; overflow-wrap: anywhere; }
+.faisal-browser-reader-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; padding-block-end: 10px; border-block-end: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13)); }
+.faisal-browser-reader-badge { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--faisal-accent, #8f6412); color: var(--faisal-accent-fg, #fff); }
+.faisal-browser-reader-status, .faisal-browser-reader-empty { color: var(--faisal-fg-muted, #666); }
