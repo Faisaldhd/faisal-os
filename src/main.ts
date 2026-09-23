@@ -20,6 +20,7 @@ import imagesApp from './apps/images';
 import clockApp from './apps/clock';
 import monitorApp from './apps/monitor';
 import storeApp from './apps/store';
+import browserApp from './apps/browser';
 
 async function boot() {
   const root = document.getElementById('faisal-root')!;
@@ -39,7 +40,7 @@ async function boot() {
     notify: (title, body) => bus.emit('notify', { title, body }),
   };
 
-  [filesApp, terminalApp, editorApp, claudeApp, calculatorApp, imagesApp, clockApp, monitorApp, storeApp, settingsApp].forEach((a) => apps.register(a));
+  [filesApp, terminalApp, editorApp, browserApp, claudeApp, calculatorApp, imagesApp, clockApp, monitorApp, storeApp, settingsApp].forEach((a) => apps.register(a));
   mountShell(root, sys);
   bus.emit('system:ready', {});
 }
