@@ -49,6 +49,47 @@
   --faisal-titlebar-h: 38px;
   --faisal-topbar-h: 34px;
 
+  /* Spacing scale: the 4px-based steps the shell and the apps already paint with. */
+  --faisal-space-2xs: 2px;
+  --faisal-space-xs: 4px;
+  --faisal-space-sm: 6px;
+  --faisal-space-md: 8px;
+  --faisal-space-lg: 12px;
+  --faisal-space-xl: 16px;
+  --faisal-space-2xl: 24px;
+  --faisal-space-3xl: 32px;
+
+  /* Type scale: the font sizes already in use, from micro labels to the About block. */
+  --faisal-font-size-xs: 11px;
+  --faisal-font-size-sm: 12px;
+  --faisal-font-size-base: 13px;
+  --faisal-font-size-md: 16px;
+  --faisal-font-size-lg: 18px;
+  --faisal-font-size-2xl: 26px;
+
+  /* Elevation scale: the four composite shadows the shell draws (inset stays literal). */
+  --faisal-shadow-1: 0 2px 8px var(--faisal-shadow);
+  --faisal-shadow-2: 0 10px 30px var(--faisal-shadow);
+  --faisal-shadow-3: 0 14px 36px var(--faisal-shadow);
+  --faisal-shadow-4: 0 18px 50px var(--faisal-shadow);
+
+  /* Z-index layers, lowest first. Values are kept exactly as they were painted, so
+   * the stacking order cannot change; `--faisal-z-below` tucks a decoration behind
+   * the surface it belongs to, `--faisal-z-snap` is the topmost pointer-events: none
+   * hint. Only the shell sheet may use these. */
+  --faisal-z-below: -1;
+  --faisal-z-icons: 1;
+  --faisal-z-dock: 400;
+  --faisal-z-topbar: 500;
+  --faisal-z-overview: 800;
+  --faisal-z-menu: 900;
+  --faisal-z-notif-center: 950;
+  --faisal-z-notif: 2000;
+  --faisal-z-overlay: 3000;
+  --faisal-z-dialogs: 4000;
+  --faisal-z-splash: 10000;
+  --faisal-z-snap: 99999;
+
   --faisal-font: -apple-system, "Segoe UI", "Noto Sans Arabic", "Noto Sans", Tahoma, system-ui, sans-serif;
   --faisal-font-mono: "Cascadia Code", "Courier New", ui-monospace, monospace;
 
@@ -119,6 +160,9 @@
   color-scheme: dark;
 }
 
+/* Spacing, type scale and the z-index layers are theme-independent, and the four
+ * elevation steps are composites over `--faisal-shadow`, so they follow the theme
+ * without a second declaration here. */
 * { box-sizing: border-box; }
 
 html, body {
@@ -175,7 +219,7 @@ body {
   content: "";
   position: absolute;
   inset: 0;
-  z-index: -1;
+  z-index: var(--faisal-z-below);
   pointer-events: none;
   opacity: var(--faisal-wall-pattern-opacity);
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='%23F0CF7A' stroke-opacity='.075' stroke-width='1'%3E%3Cpath d='M60 38 66.2 45 75.6 44.4 75 53.8 82 60 75 66.2 75.6 75.6 66.2 75 60 82 53.8 75 44.4 75.6 45 66.2 38 60 45 53.8 44.4 44.4 53.8 45Z'/%3E%3Cpath d='M0 22 6.2 29 15.6 28.4M22 0 29 6.2 28.4 15.6M98 0 91 6.2 91.6 15.6M120 22 113.8 29 104.4 28.4M0 98 6.2 91 15.6 91.6M22 120 29 113.8 28.4 104.4M98 120 91 113.8 91.6 104.4M120 98 113.8 91 104.4 91.6'/%3E%3Cpath d='M15.6 28.4 44.4 44.4M28.4 15.6 44.4 44.4M104.4 28.4 75.6 44.4M91.6 15.6 75.6 44.4M15.6 91.6 44.4 75.6M28.4 104.4 44.4 75.6M104.4 91.6 75.6 75.6M91.6 104.4 75.6 75.6'/%3E%3Ccircle cx='60' cy='60' r='3' /%3E%3C/g%3E%3C/svg%3E");
@@ -210,7 +254,7 @@ body {
   font-size: 13.5px;
   user-select: none;
   position: relative;
-  z-index: 500;
+  z-index: var(--faisal-z-topbar);
 }
 
 .faisal-topbar-side {
@@ -281,7 +325,7 @@ body {
   border-radius: var(--faisal-radius);
   box-shadow: 0 12px 32px var(--faisal-shadow), 0 0 0 1px var(--faisal-border);
   padding: 8px;
-  z-index: 900;
+  z-index: var(--faisal-z-menu);
   font-size: 13.5px;
 }
 
@@ -373,7 +417,7 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  z-index: 2000;
+  z-index: var(--faisal-z-notif);
   pointer-events: none;
 }
 
@@ -426,7 +470,7 @@ body {
   background: var(--faisal-overlay-bg);
   backdrop-filter: blur(28px) saturate(1.1);
   -webkit-backdrop-filter: blur(28px) saturate(1.1);
-  z-index: 800;
+  z-index: var(--faisal-z-overview);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -621,7 +665,7 @@ body {
   padding-block-end: calc(10px + env(safe-area-inset-bottom, 0px));
   padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
   position: relative;
-  z-index: 400;
+  z-index: var(--faisal-z-dock);
   pointer-events: none;
 }
 
@@ -766,7 +810,7 @@ body {
 
 .faisal-resize-handle {
   position: absolute;
-  z-index: 5;
+  z-index: var(--faisal-z-icons);
 }
 .faisal-resize-n, .faisal-resize-s { inset-inline: 6px; height: 6px; cursor: ns-resize; }
 .faisal-resize-n { inset-block-start: 0; }
@@ -921,7 +965,7 @@ body {
 .faisal-splash {
   position: fixed;
   inset: 0;
-  z-index: 10000;
+  z-index: var(--faisal-z-splash);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1002,7 +1046,7 @@ body {
 .faisal-shot {
   position: fixed;
   inset: 0;
-  z-index: 3000;
+  z-index: var(--faisal-z-overlay);
   background: #000;
   display: flex;
   align-items: center;
@@ -1025,7 +1069,7 @@ body {
 }
 .faisal-shot-sel {
   position: absolute;
-  z-index: 1;
+  z-index: var(--faisal-z-icons);
   border: 1.5px solid var(--faisal-brand-mark-gold, #E3B650);
   /* Punches the selection out of the dim layer. */
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4);
@@ -1067,7 +1111,7 @@ body {
 .faisal-desktop-icons {
   position: absolute;
   inset: 0;
-  z-index: 1;
+  z-index: var(--faisal-z-icons);
   display: grid;
   grid-auto-flow: column;
   grid-template-rows: repeat(auto-fill, 96px);
@@ -1130,7 +1174,7 @@ body {
 
 .faisal-ctxmenu {
   position: fixed;
-  z-index: 3000;
+  z-index: var(--faisal-z-overlay);
   min-width: 220px;
   max-width: 300px;
   background: var(--faisal-surface);
@@ -1213,7 +1257,7 @@ body {
 .faisal-shell-overlay {
   position: fixed;
   inset: 0;
-  z-index: 4000;
+  z-index: var(--faisal-z-dialogs);
   background: var(--faisal-overlay-bg);
   display: flex;
   align-items: center;
@@ -1291,7 +1335,7 @@ body {
   inset-inline-start: 0;
   inline-size: 100%;
   block-size: 100%;
-  z-index: 99999;
+  z-index: var(--faisal-z-snap);
   pointer-events: none;
   border-radius: var(--faisal-radius);
   background: color-mix(in srgb, var(--faisal-accent) 18%, transparent);
@@ -1364,7 +1408,7 @@ body {
   color: var(--faisal-fg);
   border-radius: calc(var(--faisal-radius) + 2px);
   box-shadow: 0 16px 40px var(--faisal-shadow), 0 0 0 1px var(--faisal-border);
-  z-index: 950;
+  z-index: var(--faisal-z-notif-center);
   font-size: 13px;
   animation: faisal-notif-in 0.16s ease-out;
 }
