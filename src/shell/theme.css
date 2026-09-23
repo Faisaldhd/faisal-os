@@ -556,6 +556,43 @@ body {
 .faisal-dock-btn:hover { transform: translateY(-3px); }
 .faisal-dock-btn svg { width: 56px; height: 56px; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.3)); }
 
+/* Pinned dock: its own row under the window surface, so maximized windows end above it. */
+.faisal-dock-bar {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  padding: 6px 12px 10px;
+  position: relative;
+  z-index: 400;
+  pointer-events: none;
+}
+.faisal-dock-pinned {
+  margin: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  pointer-events: auto;
+  backdrop-filter: blur(18px) saturate(1.2);
+  -webkit-backdrop-filter: blur(18px) saturate(1.2);
+}
+.faisal-dock-pinned .faisal-dock-btn { flex: none; position: relative; }
+.faisal-dock-btn.is-running::after {
+  content: "";
+  position: absolute;
+  inset-block-end: -7px;
+  inset-inline-start: 50%;
+  width: 5px;
+  height: 5px;
+  margin-inline-start: -2.5px;
+  border-radius: 50%;
+  background: var(--faisal-brand-mark-gold, #E3B650);
+}
+@media (max-width: 700px) {
+  .faisal-dock-pinned { gap: 6px; padding: 8px 10px; }
+  .faisal-dock-pinned .faisal-dock-btn,
+  .faisal-dock-pinned .faisal-dock-btn svg { width: 44px; height: 44px; }
+}
+
 .faisal-overview-empty {
   color: rgba(255, 255, 255, 0.75);
   font-size: 13px;
