@@ -2,6 +2,7 @@
  * Boot sequence (تسلسل الإقلاع) — ملك kernel. المسارات لا تعدّل هذا الملف؛
  * كل مسار يصدّر من نقطة الدخول الخاصة به بالتواقيع المحددة هنا.
  */
+import { nativeWeb } from './shell/native-web';
 import { createBus } from './kernel/bus';
 import { createSettings } from './kernel/settings';
 import { createAppRegistry } from './kernel/apps';
@@ -76,6 +77,8 @@ async function boot() {
 /** Offline support and install-as-app (production builds only; see build/pwa.ts). */
 function registerServiceWorker(sys: SystemAPI) {
   if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
+  // The desktop build ships its files locally and updates with the app itself.
+  if (nativeWeb()) return;
   navigator.serviceWorker.register('./sw.js').then((reg) => {
     reg.addEventListener('updatefound', () => {
       const next = reg.installing;

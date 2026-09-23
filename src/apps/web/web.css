@@ -361,3 +361,8 @@
   .faisal-web-open { min-block-size: 44px; }
   .faisal-web-fallback { margin-block: 18px; padding: 20px 16px; }
 }
+
+/* Desktop build: Electron's <webview> lays its guest out as a flex child. */
+webview.faisal-web-webview {
+  display: flex;
+}

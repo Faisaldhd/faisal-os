@@ -25,6 +25,16 @@ import type { AppContext, AppModule } from '../../kernel/types';
 import { t } from '../../kernel/i18n';
 import { renderIcon } from '../../shell/icon';
 import {
+  nativeWeb,
+  createWebview,
+  isWebUrl,
+  openInRealBrowser,
+  safeCall,
+  type NavigateEvent,
+  type WebviewElement,
+} from '../../shell/native-web';
+import { buildExternalSearchUrl, resolveAddressInput } from '../browser/url';
+import {
   createHistory,
   canGoBack,
   canGoForward,
@@ -171,7 +181,7 @@ interface WebRuntime {
 
 /** Opens the requested URL in a real browser tab — the only sanctioned escape hatch. */
 function openExternally(url: string): void {
-  window.open(url, '_blank', 'noopener,noreferrer');
+  openInRealBrowser(url);
 }
 
 function iconButton(svg: string, label: string, extraClass?: string): HTMLButtonElement {
@@ -239,6 +249,9 @@ export function launchWebApp(
   let navSeq = 0;
   /** The one and only iframe in the window; null while a refusal card is shown. */
   let frame: HTMLIFrameElement | null = null;
+  /** Desktop build: pages load in a real <webview>, so framing refusals do not apply. */
+  const native = nativeWeb();
+  let view: WebviewElement | null = null;
 
   /* ───────────────────────── the opt-in local proxy ─────────────────────────
    * Inert until BOTH hold: (a) the owner's tool answered the probe, and (b) the
@@ -319,8 +332,9 @@ export function launchWebApp(
     const url = plan.displayUrl ?? currentUrl(history) ?? '';
     if (document.activeElement !== ui.address) ui.address.value = url;
     ui.address.title = url;
-    ui.back.disabled = !canGoBack(history);
-    ui.forward.disabled = !canGoForward(history);
+    const v = view;
+    ui.back.disabled = !canGoBack(history) && !(v && safeCall(() => v.canGoBack(), false));
+    ui.forward.disabled = !canGoForward(history) && !(v && safeCall(() => v.canGoForward(), false));
     ui.openExternal.disabled = !url;
   }
 
@@ -576,6 +590,11 @@ export function launchWebApp(
     clearTimer();
     ui.body.textContent = '';
     frame = null;
+    view = null;
+    if (native) {
+      renderNative();
+      return;
+    }
 
     // A proxy card is the current view: it wins over the fallback card.
     if (proxyIsActive(proxy)) {
@@ -659,6 +678,44 @@ export function launchWebApp(
     ui.body.append(stage);
     watchFrame(iframe, ++navSeq);
     syncChrome();
+  }
+
+  /**
+   * Desktop build: the site itself in a <webview>. Its own navigation (links,
+   * redirects) updates the address field and the remembered URL; back/forward
+   * ask the webview first.
+   */
+  function renderNative(): void {
+    const url = plan.displayUrl ?? currentUrl(history) ?? def.url;
+    const stage = document.createElement('div');
+    stage.className = 'faisal-web-stage';
+    const v = createWebview(url, 'faisal-web-frame faisal-web-webview');
+    const follow = (e: Event) => {
+      const ev = e as NavigateEvent;
+      if (ev.isMainFrame === false || !isWebUrl(ev.url)) return;
+      plan = { ...plan, displayUrl: ev.url };
+      history = replaceUrl(history, ev.url);
+      saveLastUrl(def, ev.url, storage);
+      syncChrome();
+    };
+    v.addEventListener('did-navigate', follow);
+    v.addEventListener('did-navigate-in-page', follow);
+    v.addEventListener('dom-ready', () => syncChrome());
+    stage.append(v);
+    ui.body.append(stage);
+    view = v;
+    syncChrome();
+  }
+
+  /** Desktop build: any http(s) address loads as-is; words search Google. */
+  function planNative(raw: string) {
+    const resolved = resolveAddressInput(raw);
+    const url = resolved.kind === 'url'
+      ? resolved.url
+      : resolved.query.trim() ? buildExternalSearchUrl(resolved.query.trim(), 'google') : null;
+    return url && isWebUrl(url)
+      ? { embedUrl: url, displayUrl: url, rewrittenFrom: null, searchFor: null, refusal: null }
+      : planNavigation(raw, ctx.sys.locale());
   }
 
   /**
@@ -849,7 +906,10 @@ export function launchWebApp(
       return;
     }
 
-    const next = planNavigation(transformed, ctx.sys.locale());
+    // Both plans receive the TRANSFORMED address: on the desktop build the
+    // native path loads any http(s) address as-is, and a bare video id must
+    // still become its embed URL before it gets there.
+    const next = native ? planNative(transformed) : planNavigation(transformed, ctx.sys.locale());
     plan = next;
     signal = next.refusal ? 'loaded' : 'pending';
     // A fresh address means a fresh decision: the escape hatch is per attempt.
@@ -865,16 +925,22 @@ export function launchWebApp(
 
   /* ── wiring ── */
   ui.back.addEventListener('click', () => {
+    const v = view;
+    if (v && safeCall(() => v.canGoBack(), false)) { v.goBack(); return; }
     history = goBack(history);
     const url = currentUrl(history);
     if (url) navigate(url);
   });
   ui.forward.addEventListener('click', () => {
+    const v = view;
+    if (v && safeCall(() => v.canGoForward(), false)) { v.goForward(); return; }
     history = goForward(history);
     const url = currentUrl(history);
     if (url) navigate(url);
   });
   ui.reload.addEventListener('click', () => {
+    const v = view;
+    if (v) { safeCall(() => v.reload(), undefined); return; }
     signal = 'pending';
     renderFrame();
   });
@@ -897,7 +963,7 @@ export function launchWebApp(
   win.onClose(() => clearTimer());
 
   // Start on the remembered/home URL, with no new history entry.
-  plan = planNavigation(startUrl, ctx.sys.locale());
+  plan = native ? planNative(startUrl) : planNavigation(startUrl, ctx.sys.locale());
   syncChrome();
   renderFrame();
   // Ask whether the owner's proxy is running. Purely additive: until it answers,

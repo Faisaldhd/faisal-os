@@ -2,6 +2,16 @@ import { manifest } from './manifest';
 import type { AppContext, AppModule } from '../../kernel/types';
 import { t, getLocale } from '../../kernel/i18n';
 import { renderIcon } from '../../shell/icon';
+import {
+  nativeWeb,
+  createWebview,
+  isWebUrl,
+  openInRealBrowser,
+  safeCall,
+  type NavigateEvent,
+  type TitleEvent,
+  type WebviewElement,
+} from '../../shell/native-web';
 import { loadBookmarks, saveBookmarks, loadEngine, saveEngine } from './model';
 import {
   resolveAddressInput,
@@ -50,11 +60,19 @@ interface Tab {
   labelEl: HTMLElement;
   bodyEl: HTMLElement;
   hintTimer: ReturnType<typeof setTimeout> | null;
+  /** Desktop build only: the live <webview> showing this tab's page. */
+  view: WebviewElement | null;
+  /** The page's own title, once the webview reports one. */
+  pageTitle: string | null;
 }
 
 function launch(ctx: AppContext): void {
   const { window: win } = ctx;
   win.content.textContent = '';
+  /** Non-null in the desktop build: pages load in a real <webview>, so no site refuses. */
+  const native = nativeWeb();
+  /** Where a new tab and the Home button go: Google on desktop, the built-in home page on the web. */
+  const START_URL: string | null = native ? 'https://www.google.com/' : null;
 
   const root = document.createElement('div');
   root.className = 'faisal-browser';
@@ -74,8 +92,9 @@ function launch(ctx: AppContext): void {
   // ── toolbar ──
   const toolbar = document.createElement('div');
   toolbar.className = 'faisal-browser-toolbar';
-  const backBtn = iconButton(ICON_BACK, t('browser.backHint'));
-  const fwdBtn = iconButton(ICON_FORWARD, t('browser.forwardHint'));
+  // The hints explain iframe-only limits; the desktop webview has real history.
+  const backBtn = iconButton(ICON_BACK, t(native ? 'browser.back' : 'browser.backHint'));
+  const fwdBtn = iconButton(ICON_FORWARD, t(native ? 'browser.forward' : 'browser.forwardHint'));
   const reloadBtn = iconButton(ICON_RELOAD, t('browser.reload'));
   const homeBtn = iconButton(ICON_HOME, t('browser.home'));
   backBtn.classList.add('faisal-browser-navbtn');
@@ -87,8 +106,7 @@ function launch(ctx: AppContext): void {
   addressInput.type = 'text';
   addressInput.dir = 'ltr';
   addressInput.className = 'faisal-browser-address';
-  addressInput.placeholder = t('browser.addressPlaceholder');
-  addressInput.setAttribute('aria-label', t('browser.addressPlaceholder'));
+  // Set by syncEnginePlaceholder() once the engine is known.
   addressInput.autocomplete = 'off';
   addressInput.spellcheck = false;
   addressForm.append(addressInput);
@@ -99,24 +117,47 @@ function launch(ctx: AppContext): void {
   engineSelect.className = 'faisal-browser-engine';
   engineSelect.title = t('browser.engineLabel');
   engineSelect.setAttribute('aria-label', t('browser.engineLabel'));
-  const engineOptions: { id: SearchEngine; key: string }[] = [
-    { id: 'wikipedia', key: 'browser.engineWikipedia' },
-    { id: 'duckduckgo', key: 'browser.engineDuckDuckGo' },
-    { id: 'google', key: 'browser.engineGoogle' },
-    { id: 'bing', key: 'browser.engineBing' },
-  ];
+  const engineOptions: { id: SearchEngine; key: string }[] = native
+    ? [
+        { id: 'google', key: 'browser.engineNameGoogle' },
+        { id: 'wikipedia', key: 'browser.engineNameWikipedia' },
+        { id: 'duckduckgo', key: 'browser.engineNameDuckDuckGo' },
+        { id: 'bing', key: 'browser.engineNameBing' },
+      ]
+    : [
+        { id: 'wikipedia', key: 'browser.engineWikipedia' },
+        { id: 'duckduckgo', key: 'browser.engineDuckDuckGo' },
+        { id: 'google', key: 'browser.engineGoogle' },
+        { id: 'bing', key: 'browser.engineBing' },
+      ];
   for (const opt of engineOptions) {
     const o = document.createElement('option');
     o.value = opt.id;
     o.textContent = t(opt.key);
     engineSelect.append(o);
   }
-  let engine: SearchEngine = loadEngine();
+  // Desktop: Google is the default, since every engine loads in-tab there.
+  let engine: SearchEngine = loadEngine(native ? 'google' : 'wikipedia');
   engineSelect.value = engine;
   engineSelect.addEventListener('change', () => {
     engine = (engineSelect.value as SearchEngine) ?? 'wikipedia';
     saveEngine(engine);
+    syncEnginePlaceholder();
   });
+
+  function engineName(id: SearchEngine): string {
+    return t(engineOptions.find((o) => o.id === id)?.key ?? 'browser.engineNameGoogle');
+  }
+
+  /** The address bar says which engine a search goes to (desktop names the engine; web keeps its original copy). */
+  function syncEnginePlaceholder(): void {
+    const text = native
+      ? t('browser.addressPlaceholderEngine', { engine: engineName(engine) })
+      : t('browser.addressPlaceholder');
+    addressInput.placeholder = text;
+    addressInput.setAttribute('aria-label', text);
+  }
+  syncEnginePlaceholder();
 
   toolbar.append(backBtn, fwdBtn, reloadBtn, homeBtn, addressForm, starBtn, openTabBtn, engineSelect);
 
@@ -155,18 +196,21 @@ function launch(ctx: AppContext): void {
     hero.className = 'faisal-browser-home-hero';
     const heroTitle = document.createElement('div');
     heroTitle.className = 'faisal-browser-home-title';
-    heroTitle.textContent = t('browser.homeTitle');
+    heroTitle.textContent = t(native ? 'browser.homeTitleDesktop' : 'browser.homeTitle');
     const heroSub = document.createElement('div');
     heroSub.className = 'faisal-browser-home-sub';
-    heroSub.textContent = t('browser.homeSubtitle');
+    heroSub.textContent = t(native ? 'browser.homeSubtitleDesktop' : 'browser.homeSubtitle');
 
     const searchForm = document.createElement('form');
     searchForm.className = 'faisal-browser-home-search';
     const searchInput = document.createElement('input');
     searchInput.type = 'text';
     searchInput.className = 'faisal-browser-home-search-input';
-    searchInput.placeholder = t('browser.homeSearchPlaceholder');
-    searchInput.setAttribute('aria-label', t('browser.homeSearchPlaceholder'));
+    const searchHint = native
+      ? t('browser.homeSearchPlaceholderEngine', { engine: engineName(engine) })
+      : t('browser.homeSearchPlaceholder');
+    searchInput.placeholder = searchHint;
+    searchInput.setAttribute('aria-label', searchHint);
     searchInput.autocomplete = 'off';
     searchInput.spellcheck = false;
     const searchBtn = document.createElement('button');
@@ -193,16 +237,18 @@ function launch(ctx: AppContext): void {
 
     interface ShortcutDef { labelKey: string; url: string; descKey?: string }
     const shortcuts: ShortcutDef[] = [
+      ...(native ? [{ labelKey: 'browser.tileGoogle', url: 'https://www.google.com/' }] : []),
       { labelKey: 'browser.tileWikipediaAr', url: 'https://ar.wikipedia.org/' },
       { labelKey: 'browser.tileWikipediaEn', url: 'https://en.wikipedia.org/' },
       { labelKey: 'browser.tileOsm', url: buildOpenStreetMapEmbedUrl() },
-      { labelKey: 'browser.tileYouTube', url: 'https://www.youtube.com/', descKey: 'browser.tileYouTubeDesc' },
+      // The "paste a video link" hint is about the iframe embed rewrite; the desktop opens YouTube itself.
+      { labelKey: 'browser.tileYouTube', url: 'https://www.youtube.com/', descKey: native ? undefined : 'browser.tileYouTubeDesc' },
       { labelKey: 'browser.tileArchive', url: 'https://archive.org/' },
       { labelKey: 'browser.tileMdn', url: 'https://developer.mozilla.org/' },
       { labelKey: 'browser.tileBbc', url: 'https://www.bbc.com/arabic' },
     ];
     for (const sc of shortcuts) {
-      const blocked = isBlockedDomain(sc.url);
+      const blocked = !native && isBlockedDomain(sc.url);
       const tile = document.createElement('button');
       tile.type = 'button';
       tile.className = 'faisal-browser-tile';
@@ -221,7 +267,7 @@ function launch(ctx: AppContext): void {
         badge.className = 'faisal-browser-tile-badge';
         badge.textContent = t('browser.opensInTab');
         tile.append(badge);
-        tile.addEventListener('click', () => window.open(sc.url, '_blank', 'noopener,noreferrer'));
+        tile.addEventListener('click', () => openInRealBrowser(sc.url));
       } else {
         tile.addEventListener('click', () => navigate(tab, sc.url));
       }
@@ -336,6 +382,10 @@ function launch(ctx: AppContext): void {
   }
 
   function renderPage(tab: Tab, url: string): void {
+    if (native) {
+      renderNative(tab, url);
+      return;
+    }
     const srcUrl = rewriteYouTubeEmbed(url) ?? url;
     if (isBlockedDomain(srcUrl) || !isAllowedFrameUrl(srcUrl)) {
       renderBlockedCard(tab, url);
@@ -397,8 +447,35 @@ function launch(ctx: AppContext): void {
     tab.bodyEl.append(frameWrap);
   }
 
+  /**
+   * Desktop build: a real <webview>. The site navigates on its own (links,
+   * redirects, in-page routing), so its URL and title flow back into this
+   * tab's current history entry rather than growing our own stack; back and
+   * forward ask the webview first (see goBack/goForward).
+   */
+  function renderNative(tab: Tab, url: string): void {
+    const view = createWebview(url, 'faisal-browser-iframe faisal-browser-webview');
+    const follow = (e: Event) => {
+      const ev = e as NavigateEvent;
+      if (ev.isMainFrame === false || !isWebUrl(ev.url)) return;
+      tab.history[tab.index] = ev.url;
+      updateChrome(tab);
+    };
+    view.addEventListener('did-navigate', follow);
+    view.addEventListener('did-navigate-in-page', follow);
+    view.addEventListener('page-title-updated', (e) => {
+      tab.pageTitle = (e as TitleEvent).title || null;
+      updateChrome(tab);
+    });
+    view.addEventListener('dom-ready', () => updateChrome(tab));
+    tab.view = view;
+    tab.bodyEl.append(view);
+  }
+
   function renderTabBody(tab: Tab): void {
     tab.bodyEl.textContent = '';
+    tab.view = null;
+    tab.pageTitle = null;
     if (tab.hintTimer) { clearTimeout(tab.hintTimer); tab.hintTimer = null; }
     const url = currentUrl(tab);
     if (url === null) renderHome(tab);
@@ -418,33 +495,37 @@ function launch(ctx: AppContext): void {
     const resolved = resolveAddressInput(rawInput);
     if (resolved.kind === 'search') {
       if (!resolved.query) return;
-      if (engine === 'wikipedia') {
+      if (engine === 'wikipedia' || native) {
         pushHistory(tab, buildSearchUrl(resolved.query, 'wikipedia', getLocale()));
       } else {
         window.open(buildSearchUrl(resolved.query, engine, getLocale()), '_blank', 'noopener,noreferrer');
         return; // active tab's own history is untouched
       }
     } else {
-      if (!isAllowedFrameUrl(resolved.url)) return; // same-origin / non-https — refuse silently, address bar keeps its value
+      if (native ? !isWebUrl(resolved.url) : !isAllowedFrameUrl(resolved.url)) return; // same-origin / non-https — refuse silently, address bar keeps its value
       pushHistory(tab, resolved.url);
     }
     renderTabBody(tab);
   }
 
   function goBack(tab: Tab): void {
+    const view = tab.view;
+    if (view && safeCall(() => view.canGoBack(), false)) { view.goBack(); return; }
     if (tab.index <= 0) return;
     tab.index -= 1;
     renderTabBody(tab);
   }
 
   function goForward(tab: Tab): void {
+    const view = tab.view;
+    if (view && safeCall(() => view.canGoForward(), false)) { view.goForward(); return; }
     if (tab.index >= tab.history.length - 1) return;
     tab.index += 1;
     renderTabBody(tab);
   }
 
   function goHome(tab: Tab): void {
-    pushHistory(tab, null);
+    pushHistory(tab, START_URL);
     renderTabBody(tab);
   }
 
@@ -454,8 +535,9 @@ function launch(ctx: AppContext): void {
     if (tab.id !== activeId) return;
     const url = currentUrl(tab);
     addressInput.value = url ?? '';
-    backBtn.disabled = tab.index <= 0;
-    fwdBtn.disabled = tab.index >= tab.history.length - 1;
+    const view = tab.view;
+    backBtn.disabled = tab.index <= 0 && !(view && safeCall(() => view.canGoBack(), false));
+    fwdBtn.disabled = tab.index >= tab.history.length - 1 && !(view && safeCall(() => view.canGoForward(), false));
     starBtn.disabled = url === null;
     openTabBtn.disabled = url === null;
     const isStarred = url !== null && bookmarks.has(url);
@@ -464,7 +546,7 @@ function launch(ctx: AppContext): void {
     starBtn.classList.toggle('is-active', isStarred);
     starBtn.title = isStarred ? t('browser.unstar') : t('browser.star');
 
-    const label = url ? hostnameOf(url) : t('browser.home');
+    const label = url ? (tab.pageTitle ?? hostnameOf(url)) : t('browser.home');
     tab.labelEl.textContent = label;
     tab.labelEl.title = url ?? t('browser.home');
     win.setTitle(`${t('browser.title')} — ${label}`);
@@ -503,7 +585,7 @@ function launch(ctx: AppContext): void {
     const bodyEl = document.createElement('div');
     bodyEl.className = 'faisal-browser-body';
 
-    const tab: Tab = { id, history: [null], index: 0, tabEl, labelEl, bodyEl, hintTimer: null };
+    const tab: Tab = { id, history: [START_URL], index: 0, tabEl, labelEl, bodyEl, hintTimer: null, view: null, pageTitle: null };
     tabList.append(tabEl);
     pageArea.append(bodyEl);
     tabs.push(tab);
@@ -547,15 +629,27 @@ function launch(ctx: AppContext): void {
     }
   }
 
-  function openNewTab(): void {
+  function openNewTab(url?: string): void {
     const tab = makeTab();
     activateTab(tab.id);
+    if (url) navigate(tab, url);
+    else renderTabBody(tab);
   }
 
   newTabBtn.addEventListener('click', () => openNewTab());
+  // Desktop: window.open / target=_blank inside one of THIS window's pages opens a new tab here.
+  const stopPopups = native?.onOpenTab((url, fromId) => {
+    const owns = tabs.some((tb) => tb.view && safeCall(() => tb.view!.getWebContentsId(), -1) === fromId);
+    if (owns) openNewTab(url);
+  });
   backBtn.addEventListener('click', () => { const tab = activeTab(); if (tab) goBack(tab); });
   fwdBtn.addEventListener('click', () => { const tab = activeTab(); if (tab) goForward(tab); });
-  reloadBtn.addEventListener('click', () => { const tab = activeTab(); if (tab) renderTabBody(tab); });
+  reloadBtn.addEventListener('click', () => {
+    const tab = activeTab();
+    if (!tab) return;
+    if (tab.view) safeCall(() => tab.view!.reload(), undefined);
+    else renderTabBody(tab);
+  });
   homeBtn.addEventListener('click', () => { const tab = activeTab(); if (tab) goHome(tab); });
   starBtn.addEventListener('click', () => {
     const tab = activeTab();
@@ -570,7 +664,7 @@ function launch(ctx: AppContext): void {
   openTabBtn.addEventListener('click', () => {
     const tab = activeTab();
     const url = tab ? currentUrl(tab) : null;
-    if (url) window.open(url, '_blank', 'noopener,noreferrer');
+    if (url) openInRealBrowser(url);
   });
   addressForm.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -588,6 +682,7 @@ function launch(ctx: AppContext): void {
   });
 
   win.onClose(() => {
+    stopPopups?.();
     for (const tb of tabs) if (tb.hintTimer) clearTimeout(tb.hintTimer);
   });
 

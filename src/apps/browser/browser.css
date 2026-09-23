@@ -409,3 +409,13 @@
 @container faisal-window (max-width: 560px) {
   .faisal-browser-home-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* Desktop build: Electron's <webview> lays its guest out as a flex child. */
+webview.faisal-browser-webview {
+  display: flex;
+}
+
+/* The field is LTR for URLs, but an empty field shows a sentence in the UI language. */
+:root[dir='rtl'] .faisal-browser-address:placeholder-shown {
+  direction: rtl;
+}
