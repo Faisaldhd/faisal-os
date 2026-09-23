@@ -1,17 +1,49 @@
-# Builds the desktop (Electron) app and publishes it as a GitHub Release when a
-# version tag is pushed (`npm version patch && git push --follow-tags`).
-# Installed copies check these releases and update themselves (electron/main.cjs).
+# Every push to main (a merged PR from anyone, human or agent) builds the
+# desktop (Electron) app and publishes it as a new GitHub Release. Installed
+# copies check these releases and update themselves (electron/main.cjs), so a
+# merge reaches the installed app with no manual step.
+#
+# Versioning is automatic: the next patch after the latest release
+# (v1.0.4 → v1.0.5), keeping package.json's major.minor. Bump major/minor in
+# package.json to start a new series. Nothing is committed back to the repo.
 name: Desktop release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+# One release at a time, in merge order, so two quick merges can't claim the same version.
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
 
 permissions:
   contents: read
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Next version
+        id: next
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          series=$(node -p "require('./package.json').version.split('.').slice(0, 2).join('.')")
+          latest=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName \
+            --jq "[.[].tagName | select(startswith(\"v$series.\")) | ltrimstr(\"v$series.\") | tonumber] | max // empty")
+          base_patch=$(node -p "require('./package.json').version.split('.')[2]")
+          patch=$(( ${latest:-$base_patch} + 1 ))
+          echo "version=$series.$patch" >> "$GITHUB_OUTPUT"
+          echo "Releasing $series.$patch"
+
   build:
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -23,12 +55,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Tag must match package.json version
-        shell: bash
-        run: test "${GITHUB_REF_NAME}" = "v$(node -p "require('./package.json').version")"
       - run: npm ci
       - run: npm test
-      # Build only; the release job below publishes every platform at once.
+      # The installer and its update manifest carry this version; not committed.
+      - run: npm version ${{ needs.version.outputs.version }} --no-git-tag-version --allow-same-version
       - run: npx vite build
       - run: npx electron-builder --publish never
       - uses: actions/upload-artifact@v4
@@ -43,7 +73,7 @@ jobs:
             release/latest*.yml
 
   release:
-    needs: build
+    needs: [version, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -55,8 +85,10 @@ jobs:
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.version.outputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist-desktop/* \
+          gh release create "$TAG" dist-desktop/* \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Fai\$al OS $GITHUB_REF_NAME" \
+            --target "$GITHUB_SHA" \
+            --title "Fai\$al OS $TAG" \
             --generate-notes
