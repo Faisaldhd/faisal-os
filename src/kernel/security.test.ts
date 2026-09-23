@@ -65,6 +65,10 @@ describe('app sandbox (kernel capabilities)', () => {
       },
       list: () => wins,
       get: (id) => wins.find((w) => w.id === id),
+      focused: () => undefined,
+      isMinimized: () => false,
+      minimize() {},
+      toggleMaximize() {},
     };
     let sys!: SystemAPI;
     const apps = createAppRegistry(() => sys);

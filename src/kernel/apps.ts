@@ -68,6 +68,10 @@ function scopeWM(wm: WindowManager, appId: string): WindowManager {
     open: (opts) => wm.open({ ...opts, appId }),
     list: () => wm.list().filter((w) => w.appId === appId),
     get: (id) => { const w = wm.get(id); return w?.appId === appId ? w : undefined; },
+    focused: () => { const w = wm.focused(); return w?.appId === appId ? w : undefined; },
+    isMinimized: (id) => wm.get(id)?.appId === appId && wm.isMinimized(id),
+    minimize: (id) => { if (wm.get(id)?.appId === appId) wm.minimize(id); },
+    toggleMaximize: (id) => { if (wm.get(id)?.appId === appId) wm.toggleMaximize(id); },
   };
 }
 

@@ -909,6 +909,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .faisal-splash { display: none; }
+  .faisal-window.is-opening { animation: none; }
 }
 
 /* ───────────────────────── Screenshot (Win+Shift+S) ───────────────────────── */
@@ -1173,3 +1174,27 @@ body {
   animation: faisal-spin 0.8s linear infinite;
 }
 @keyframes faisal-spin { to { transform: rotate(360deg); } }
+
+/* ───────────────────────── Window manager extras ───────────────────────── */
+
+.faisal-window.is-opening { animation: faisal-window-in 0.14s ease-out; }
+@keyframes faisal-window-in {
+  from { opacity: 0; transform: scale(0.97); }
+}
+.faisal-window.is-snapped { border-radius: 0; }
+
+/* Where a window will land if dropped at a screen edge. */
+.faisal-snap-preview {
+  position: absolute;
+  z-index: 99999;
+  pointer-events: none;
+  border-radius: var(--faisal-radius);
+  background: color-mix(in srgb, var(--faisal-accent) 18%, transparent);
+  border: 2px solid color-mix(in srgb, var(--faisal-accent) 55%, transparent);
+  transition: left 0.08s, top 0.08s, width 0.08s, height 0.08s;
+}
+.faisal-snap-preview[hidden] { display: none; }
+
+/* Dock: the focused app's dot is wider; minimized-only apps get a hollow dot. */
+.faisal-dock-btn.is-active::after { width: 14px; margin-inline-start: -7px; border-radius: 3px; }
+.faisal-dock-btn.is-hidden::after { background: transparent; box-shadow: inset 0 0 0 1.5px var(--faisal-brand-mark-gold, #E3B650); }
