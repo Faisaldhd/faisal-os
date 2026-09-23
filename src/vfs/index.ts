@@ -310,13 +310,27 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
     },
   };
 
-  if (nodes.size === 0) {
-    await seed(vfs);
-  }
+  // Reconcile the standard tree on EVERY boot, not only on an empty store.
+  //
+  // This used to be `if (nodes.size === 0) await seed(vfs)`, which quietly assumed
+  // the only way to reach this point is a first boot. It is not: a store written by
+  // an older build, or one whose writes were lost mid-seed (persistence used to be
+  // fire-and-forget), loads as a real but INCOMPLETE file system — `/home/user` with
+  // no `Documents`, `Desktop`, `Downloads`, `Pictures` or `Music`. The gate then
+  // skipped the repair forever, and the visible result was an OS that boots, opens
+  // Files on an empty home, and does nothing when you click a place in the sidebar or
+  // ask for a file: those paths simply did not exist, so navigation and creation hit
+  // ENOENT. `seed` is idempotent (mkdir -p, and files are written only when absent),
+  // so running it always repairs such a store and is a no-op on a healthy one.
+  await seed(vfs);
 
   return vfs;
 }
 
+/**
+ * Ensures the standard tree exists. Must stay idempotent and non-destructive:
+ * it now runs on every boot, so it may never overwrite a file the user owns.
+ */
 async function seed(vfs: VFS): Promise<void> {
   const dirs = [
     '/bin', '/etc', '/home', '/home/user', '/tmp', '/usr', '/var',
@@ -328,6 +342,12 @@ async function seed(vfs: VFS): Promise<void> {
     await vfs.chmod(d, 0o755);
   }
 
+  /** Writes a seed file only when it is missing: the user's copy always wins. */
+  const writeIfAbsent = async (path: string, contents: string): Promise<void> => {
+    if (await vfs.exists(path)) return;
+    await vfs.writeFile(path, contents);
+  };
+
   const osRelease = [
     'NAME="Faisal OS"',
     `VERSION="${OS_VERSION}"`,
@@ -336,9 +356,9 @@ async function seed(vfs: VFS): Promise<void> {
     'PRETTY_NAME="Faisal OS 0.1"',
     '',
   ].join('\n');
-  await vfs.writeFile('/etc/os-release', osRelease);
-  await vfs.writeFile('/etc/hostname', 'faisal\n');
-  await vfs.writeFile(
+  await writeIfAbsent('/etc/os-release', osRelease);
+  await writeIfAbsent('/etc/hostname', 'faisal\n');
+  await writeIfAbsent(
     '/etc/motd',
     'مرحباً بك في فيصل\nWelcome to Fai$al OS\n',
   );
@@ -358,7 +378,7 @@ async function seed(vfs: VFS): Promise<void> {
     'and try the terminal.',
     '',
   ].join('\n');
-  await vfs.writeFile('/home/user/Documents/welcome.txt', welcome);
+  await writeIfAbsent('/home/user/Documents/welcome.txt', welcome);
 
   const readme = [
     '# Fai$al OS',
@@ -368,7 +388,7 @@ async function seed(vfs: VFS): Promise<void> {
     'A browser-based virtual operating system.',
     '',
   ].join('\n');
-  await vfs.writeFile('/home/user/Documents/readme.md', readme);
+  await writeIfAbsent('/home/user/Documents/readme.md', readme);
 }
 
 /**

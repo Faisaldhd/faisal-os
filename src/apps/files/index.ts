@@ -249,9 +249,30 @@ function launch(ctx: AppContext): void {
     const span = document.createElement('span');
     span.textContent = s.label;
     b.appendChild(span);
-    b.addEventListener('click', () => navigate(s.path));
+    b.addEventListener('click', () => void openPlace(s.path));
     sidebarEl.appendChild(b);
   });
+
+  /**
+   * Opens a standard place, creating it first when it is missing.
+   *
+   * The sidebar is a fixed list of the conventional folders, so a store that lost
+   * one of them (a partial seed, or a build that wrote them once and failed) used to
+   * make the click do nothing visible: `navigate` stats the path, gets ENOENT, and
+   * bails. The user asked for their Documents; the honest answer is to have them.
+   */
+  async function openPlace(path: string): Promise<void> {
+    try {
+      await vfs.stat(path);
+    } catch {
+      try {
+        await vfs.mkdir(path, { recursive: true });
+      } catch {
+        /* navigate() below reports the real reason to the user */
+      }
+    }
+    await navigate(path);
+  }
 
   fileInput.addEventListener('change', () => {
     const files = fileInput.files;

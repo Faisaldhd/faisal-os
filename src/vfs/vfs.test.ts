@@ -83,6 +83,58 @@ describe('VFS', () => {
     expect(await vfs2.readText('/home/user/Documents/welcome.txt')).toBe('مرحباً معدّل');
   });
 
+  /**
+   * The state a real browser ended up in: a store that is NOT empty, but incomplete —
+   * `/home/user` exists and its standard folders do not. Seeding used to be gated on
+   * `nodes.size === 0`, so such a store was never repaired: Files opened on an empty
+   * home, clicking a place in the sidebar did nothing, and every file the user asked
+   * for landed on a path that did not exist (ENOENT).
+   */
+  it('repairs an incomplete store instead of leaving the user without a home tree', async () => {
+    const stored = (path: string, type: 'file' | 'dir', text?: string): Record<string, unknown> => ({
+      path,
+      name: path.slice(path.lastIndexOf('/') + 1),
+      type,
+      size: text ? text.length : 0,
+      mode: type === 'dir' ? 0o755 : 0o644,
+      mtime: Date.now(),
+      ctime: Date.now(),
+      ...(text === undefined ? {} : { data: new TextEncoder().encode(text) }),
+    });
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open('faisal-vfs', 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('nodes')) db.createObjectStore('nodes', { keyPath: 'path' });
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction('nodes', 'readwrite');
+        const store = tx.objectStore('nodes');
+        // A partial tree with one file of the user's own, which must survive untouched.
+        store.put(stored('/home/user', 'dir'));
+        store.put(stored('/home/user/Documents', 'dir'));
+        store.put(stored('/home/user/Documents/welcome.txt', 'file', 'نص المستخدم'));
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => { db.close(); reject(tx.error); };
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    const vfs = await createVFS(createBus());
+
+    // The folders the sidebar and the desktop surface navigate to now exist.
+    for (const dir of ['Desktop', 'Documents', 'Downloads', 'Music', 'Pictures']) {
+      expect(await vfs.exists(`/home/user/${dir}`), dir).toBe(true);
+    }
+    // System files are restored too, and the user's own file is never overwritten.
+    expect(await vfs.exists('/etc/os-release')).toBe(true);
+    expect(await vfs.readText('/home/user/Documents/welcome.txt')).toBe('نص المستخدم');
+    // Running the repair twice stays idempotent.
+    const again = await createVFS(createBus());
+    expect(await again.readText('/home/user/Documents/welcome.txt')).toBe('نص المستخدم');
+  });
+
   describe('basic operations', () => {
     it('stat/exists/readdir', async () => {
       const vfs = await createVFS(createBus());
