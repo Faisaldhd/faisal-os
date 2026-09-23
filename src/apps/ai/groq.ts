@@ -46,11 +46,16 @@ export class GroqError extends Error {
   }
 }
 
-const systemPrompt = (model: string) =>
+const systemPrompt = (model: string, agent: boolean) =>
   'You are Faisal AI, the assistant built into Fai$al OS, a desktop that runs in the web browser. ' +
   `You run on GroqCloud using the model "${model}"; say so if asked what model you are. ` +
   'Reply in the language the user writes in (Arabic or English). ' +
-  'If you can search the web, do so for anything current or that you are unsure of, and cite your sources. ' +
+  (agent
+    ? 'You are an agent inside Fai$al OS: use your tools to look at and act on its files, apps, windows, terminal and settings ' +
+      'instead of telling the user how to do it. The home folder is /home/user (Documents, Pictures, …). ' +
+      'Look before you change things (list or read first). Changes ask the user for confirmation; ' +
+      'if they decline, do not retry unless they ask. Finish with a short summary of what you did. '
+    : 'If you can search the web, do so for anything current or that you are unsure of, and cite your sources. ') +
   'Keep answers clear and well organized; use Markdown for lists, code and headings.';
 
 async function fail(res: Response): Promise<never> {
@@ -152,7 +157,7 @@ export async function runGroqTurn(
       body: JSON.stringify({
         model,
         stream: true,
-        messages: [{ role: 'system', content: systemPrompt(model) }, ...history],
+        messages: [{ role: 'system', content: systemPrompt(model, !!tools) }, ...history],
         ...(tools && {
           tools: tools.tools.specs.map((s) => ({
             type: 'function',

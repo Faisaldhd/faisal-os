@@ -112,7 +112,7 @@ function launch(ctx: AppContext): void {
   let apiKey = read(KEY_STORAGE);
   let models: string[] = [];
   let model = read(MODEL_STORAGE);
-  const tools = createToolBox(ctx.sys);
+  const toolbox = createToolBox(ctx.sys);
   let history: ChatTurn[] = [];
   let abort: AbortController | null = null;
   win.onClose(() => abort?.abort());
@@ -313,7 +313,7 @@ function launch(ctx: AppContext): void {
             tools.append(line);
             scroll();
           },
-        }, abort.signal, supportsTools(model) ? { tools, confirm, onCall, onResult } : undefined);
+        }, abort.signal, supportsTools(model) ? { tools: toolbox, confirm, onCall, onResult } : undefined);
         if (frame) cancelAnimationFrame(frame);
         paint();
         if (res.truncated) body.append(el('p', 'faisal-ai-typing', t('ai.truncated')));
