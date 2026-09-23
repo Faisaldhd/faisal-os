@@ -3,8 +3,8 @@ import { renderIcon } from './icon';
 import { t } from '../kernel/i18n';
 import { isKey } from './keys';
 import { showContextMenu, wireContextMenu } from './contextmenu';
+import { isCoarsePointer, shouldFillScreen, watchPointerKind } from './device';
 
-const NARROW_BREAKPOINT = 700;
 const CASCADE_STEP = 28;
 const CASCADE_MAX = 8;
 /** Always-on-top windows use a z-index tier well above the normal stack. */
@@ -87,7 +87,11 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
     width: surface.clientWidth || window.innerWidth,
     height: surface.clientHeight || window.innerHeight,
   });
-  const isNarrow = () => surfaceSize().width < NARROW_BREAKPOINT;
+  /**
+   * One policy for "this device gets full-screen windows": narrow surface OR a coarse
+   * (touch) pointer. See `device.ts`; `NARROW_BREAKPOINT` lives there and is not duplicated.
+   */
+  const fillScreen = () => shouldFillScreen({ width: surfaceSize().width, coarse: isCoarsePointer() });
 
   function readRect(el: HTMLElement): Rect {
     return {
@@ -286,7 +290,9 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
 
     el.append(titlebar, content);
 
-    if (resizable) {
+    if (resizable && !isCoarsePointer()) {
+      // Touch: no resize grips at all — a 6px edge is not grabbable with a finger, and the
+      // policy above already fills the screen on those devices (grips are live-audited too).
       for (const dir of ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']) {
         const grip = document.createElement('div');
         grip.className = `faisal-resize-handle faisal-resize-${dir}`;
@@ -429,7 +435,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
         const s = surface.getBoundingClientRect();
         const x = ev.clientX - s.left;
         const y = ev.clientY - s.top;
-        snapTo = isNarrow() ? null
+        snapTo = fillScreen() ? null
           : y <= SNAP_EDGE ? 'max'
           : x <= SNAP_EDGE ? 'left'
           : x >= s.width - SNAP_EDGE ? 'right'
@@ -463,7 +469,8 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
     }
 
     function startResize(startEv: PointerEvent, dir: string) {
-      if (rec.maximized) return;
+      // Maximized windows are never resized, and neither is anything on a touch pointer.
+      if (rec.maximized || isCoarsePointer()) return;
       startEv.stopPropagation();
       focusWindow(id);
       if (rec.snapped) { rec.snapped = null; el.classList.remove('is-snapped'); changed(id); }
@@ -511,7 +518,10 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
       window.addEventListener('pointercancel', onUp);
     }
 
-    if (isNarrow()) setMaximized(rec, true, true);
+    // Narrow surface or touch pointer: the window opens filled, exactly as the old
+    // narrow-only rule did (still flagged autoMaximized, so restore/snap/maximize are unchanged).
+    const startFill = shouldFillScreen({ width: surfaceSize().width, coarse: isCoarsePointer() });
+    if (startFill) setMaximized(rec, true, true);
     else if (saved?.maximized) setMaximized(rec, true);
 
     focusWindow(id);
@@ -542,21 +552,27 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
     desktopShown = visible.length ? visible : null;
   }
 
-  // Keep windows usable when the browser window or phone orientation changes.
-  let resizeRaf = 0;
-  window.addEventListener('resize', () => {
-    if (resizeRaf) return;
-    resizeRaf = requestAnimationFrame(() => {
-      resizeRaf = 0;
-      const narrow = isNarrow();
+  // Keep windows usable when the browser window, the phone orientation or the pointer kind
+  // changes (e.g. a tablet that gains a mouse). The callback ignores the coarse flag: the
+  // policy reads the live matchMedia state itself, so this is exactly the resize relayout.
+  // wm.ts has no teardown hook (createWindowManager owns listeners for the shell's lifetime,
+  // like the `resize` listener below), so this subscription is never released either.
+  let fillRaf = 0;
+  function relayout() {
+    if (fillRaf) return;
+    fillRaf = requestAnimationFrame(() => {
+      fillRaf = 0;
+      const fill = fillScreen();
       for (const rec of wins.values()) {
-        if (narrow && !rec.maximized) setMaximized(rec, true, true);
-        else if (!narrow && rec.autoMaximized) setMaximized(rec, false);
+        if (fill && !rec.maximized) setMaximized(rec, true, true);
+        else if (!fill && rec.autoMaximized) setMaximized(rec, false);
         else if (rec.snapped && !rec.maximized) writeRect(rec.el, snapRect(rec.snapped));
         else if (!rec.maximized) writeRect(rec.el, clampRect(readRect(rec.el), rec.minWidth, rec.minHeight));
       }
     });
-  });
+  }
+  window.addEventListener('resize', relayout);
+  watchPointerKind(() => relayout());
 
   window.addEventListener('keydown', (ev) => {
     if (ev.isComposing) return;
@@ -588,7 +604,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
         break;
       case 'ArrowLeft':
       case 'ArrowRight': {
-        if (isNarrow()) return;
+        if (fillScreen()) return; // no half-screen snapping where windows fill the surface
         ev.preventDefault();
         // Arrow keys are physical: Left always means the left half, even in RTL.
         const side = ev.key === 'ArrowLeft' ? 'left' : 'right';

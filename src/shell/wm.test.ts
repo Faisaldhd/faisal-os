@@ -1,10 +1,47 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createWindowManager } from './wm';
 import { createBus } from '../kernel/bus';
 import type { EventBus, WindowOptions } from '../kernel/types';
 
 function opts(title = 'Test'): WindowOptions {
   return { appId: 'org.faisal.Test', title, icon: '<svg viewBox="0 0 24 24"></svg>' };
+}
+
+/**
+ * jsdom has no matchMedia, so the shell behaves as a fine-pointer device by default.
+ * `stubPointer` simulates the (pointer: coarse) media query for the touch-policy tests;
+ * `stubPointerChange` also lets a test flip the pointer kind at runtime.
+ */
+function stubPointer(coarse: boolean): void {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({ matches: coarse && query === '(pointer: coarse)', media: query, addEventListener: () => {} }),
+  });
+}
+
+function stubPointerChange(): { emit: (coarse: boolean) => void; liveListeners: () => number } {
+  const listeners = new Set<() => void>();
+  const state = { coarse: false };
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      get matches() { return state.coarse && query === '(pointer: coarse)'; },
+      media: query,
+      addEventListener: (_: 'change', l: () => void) => { listeners.add(l); },
+      removeEventListener: (_: 'change', l: () => void) => { listeners.delete(l); },
+    }),
+  });
+  return {
+    emit: (coarse) => { state.coarse = coarse; listeners.forEach((l) => l()); },
+    liveListeners: () => listeners.size,
+  };
+}
+
+function restoreMatchMedia(original: PropertyDescriptor | undefined) {
+  if (original) Object.defineProperty(window, 'matchMedia', original);
+  else delete (window as { matchMedia?: unknown }).matchMedia;
 }
 
 describe('window manager', () => {
@@ -142,5 +179,66 @@ describe('window manager', () => {
     other.setCloseGuard(() => false);
     other.close(); // programmatic close is never blocked
     expect(wm.get(other.id)).toBeUndefined();
+  });
+});
+
+// Device policy wiring (Phase 6). jsdom has no matchMedia, so without a stub the shell is a
+// fine-pointer device and these tests would silently pass; each one stubs the media query.
+describe('window manager on a coarse (touch) pointer', () => {
+  const original = Object.getOwnPropertyDescriptor(window, 'matchMedia');
+  let root: HTMLElement;
+  let bus: EventBus;
+
+  beforeEach(() => {
+    root = document.createElement('div');
+    document.body.append(root);
+    bus = createBus();
+  });
+  afterEach(() => restoreMatchMedia(original));
+
+  const elFor = (win: { content: HTMLElement }): HTMLElement =>
+    [...root.querySelectorAll<HTMLElement>('.faisal-window')].find((w) => w.contains(win.content))!;
+
+  it('fills the screen on a coarse pointer even when the surface is desktop-wide', () => {
+    const fine = createWindowManager(root, bus);
+    const floating = fine.open(opts('Fine'));
+    expect(window.innerWidth).toBeGreaterThanOrEqual(700); // the surface itself is not narrow
+    expect(elFor(floating).classList.contains('is-maximized')).toBe(false);
+
+    stubPointer(true);
+    const touch = createWindowManager(root, bus);
+    const filled = touch.open(opts('Touch'));
+    expect(elFor(filled).classList.contains('is-maximized')).toBe(true);
+  });
+
+  it('creates zero resize grips for a window opened on a coarse pointer', () => {
+    stubPointer(true);
+    const wm = createWindowManager(root, bus);
+    const win = wm.open(opts('Touch'));
+    expect(elFor(win).querySelectorAll('.faisal-resize-handle')).toHaveLength(0);
+  });
+
+  it('still creates the eight resize grips for a fine pointer', () => {
+    stubPointer(false);
+    const wm = createWindowManager(root, bus);
+    const win = wm.open(opts('Mouse'));
+    expect(elFor(win).querySelectorAll('.faisal-resize-handle')).toHaveLength(8);
+  });
+
+  it('adapts when the pointer kind changes: a pointerless tablet opens floating', async () => {
+    const media = stubPointerChange();
+    const wm = createWindowManager(root, bus);
+    expect(media.liveListeners()).toBe(1); // watchPointerKind is registered
+
+    const win = wm.open(opts('Tablet'));
+    expect(elFor(win).classList.contains('is-maximized')).toBe(false);
+
+    media.emit(true); // a finger touches the screen: windows must fill it
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    expect(elFor(win).classList.contains('is-maximized')).toBe(true);
+
+    media.emit(false); // the mouse comes back: auto-maximize is undone
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    expect(elFor(win).classList.contains('is-maximized')).toBe(false);
   });
 });
