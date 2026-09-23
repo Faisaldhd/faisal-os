@@ -14,8 +14,12 @@
  *  • Nothing about the OS is ever handed to the frame: no postMessage in either
  *    direction, no contentWindow access, no reading its DOM, no eval / new
  *    Function. All user-visible text is built with createElement/textContent.
- *  • A refusal (X-Frame-Options / frame-ancestors) is respected, explained and
- *    offered externally. We never detect-and-bypass it and never proxy content.
+ *  • A refusal (X-Frame-Options / frame-ancestors) is respected by default and
+ *    explained, with the external tab offered. The ONE thing that can bypass it
+ *    is the owner's own OPT-IN local proxy (./local-proxy.ts +
+ *    tools/local-proxy.mjs): never enabled by default, never enabled silently,
+ *    and never offered at all unless the tool is already running on 127.0.0.1.
+ *    The cards live in ./proxy-panel.ts.
  */
 import type { AppContext, AppModule } from '../../kernel/types';
 import { t } from '../../kernel/i18n';
@@ -32,11 +36,51 @@ import {
   type HistoryState,
 } from './history';
 import { decideOutcome, isLoading, planNavigation, type EmbedAttempt } from './outcome';
+import { createSearchLauncher } from './searchApp';
+import {
+  DEFAULT_PROXY_PORT,
+  NO_PROXY_STORAGE,
+  buildProxyUrl,
+  buildProxyViewUrl,
+  probeLocalProxy,
+  proxyBaseUrl,
+  proxyStorageOrNull,
+  readProxyPort,
+  readProxyToken,
+  requestProxyTicket,
+  writeProxyPort,
+  writeProxyToken,
+  type ProxyProbe,
+  type ProxyStorage,
+  type ProxyTicketFailure,
+} from './local-proxy';
+import {
+  buildProxyBar,
+  buildProxyFallbackAction,
+  buildProxyModePicker,
+  buildRawLoading,
+  buildRawWarning,
+  buildReaderError,
+  buildReaderLoading,
+  buildReaderPanel,
+  buildTokenPanel,
+  initialProxyState,
+  markProxyEnabled,
+  proxyIsActive,
+  proxyTargetOf,
+  targetIsObviouslyPrivate,
+  type ProxyMode,
+  type ProxyPanelHost,
+  type ProxyUiState,
+} from './proxy-panel';
+import { htmlToText } from './reader';
 import {
   NO_STORAGE,
+  applyUrlTransform,
   localStorageOrNull,
   saveLastUrl,
   savedUrl,
+  webAppKind,
   webAppManifest,
   webAppWindowTitle,
   type WebAppDef,
@@ -44,6 +88,8 @@ import {
 } from './registry';
 import './strings';
 import './web.css';
+
+/* PROXY_PANEL: proxy flow lives in ./proxy-panel.ts; imports added additively. */
 
 /* ───────────────────────────── toolbar icons ───────────────────────────── */
 
@@ -103,6 +149,24 @@ interface WebRuntime {
   def: WebAppDef;
   /** Defaults to the browser's real localStorage (see registry.localStorageOrNull). */
   storage: WebStorage;
+  /**
+   * The proxy's own store. Defaults to the real localStorage. Injected so a test
+   * can prove that a WRONG token writes nothing at all.
+   */
+  proxyStorage?: ProxyStorage;
+  /**
+   * The proxy availability probe. Defaults to ./local-proxy.ts `probeLocalProxy`
+   * against `proxyBaseUrl`. Injected so a test can decide, WITHOUT any network,
+   * whether the third fallback action appears.
+   */
+  probe?: () => Promise<ProxyProbe>;
+  /**
+   * Verifies a typed token against the local proxy. Defaults to a real /fetch
+   * call on the proxy base.
+   */
+  verifyToken?: (token: string) => Promise<boolean>;
+  /** The fetch reader mode uses. Injected in tests. */
+  proxyFetch?: typeof fetch;
 }
 
 /** Opens the requested URL in a real browser tab — the only sanctioned escape hatch. */
@@ -125,19 +189,29 @@ function launchWith(def: WebAppDef, runtime?: Partial<WebRuntime>) {
     // localStorage, not sys.settings: this app has no `settings` permission and
     // must not ask for one just to remember its own last URL.
     const storage = runtime?.storage ?? localStorageOrNull() ?? NO_STORAGE;
-    launchWebApp(def, ctx, storage);
+    launchWebApp(def, ctx, storage, runtime);
   };
 }
 
 /**
  * Lazy-loaded module factory: the registry hands each def here from src/main.ts,
- * so one chunk serves every site in the registry.
+ * so one chunk serves every site in the registry — and the one `kind: 'search'`
+ * def gets the native search window from ./searchApp.ts instead. Both live in
+ * this same chunk, so nothing extra is ever downloaded.
  */
 export function createWebAppModule(def: WebAppDef, runtime?: Partial<WebRuntime>): AppModule {
+  if (webAppKind(def) === 'search') {
+    return { manifest: webAppManifest(def), launch: createSearchLauncher(def, runtime) };
+  }
   return { manifest: webAppManifest(def), launch: launchWith(def, runtime) };
 }
 
-export function launchWebApp(def: WebAppDef, ctx: AppContext, storage: WebStorage): void {
+export function launchWebApp(
+  def: WebAppDef,
+  ctx: AppContext,
+  storage: WebStorage,
+  runtime?: Partial<WebRuntime>,
+): void {
   const { window: win } = ctx;
   win.content.textContent = '';
 
@@ -166,6 +240,72 @@ export function launchWebApp(def: WebAppDef, ctx: AppContext, storage: WebStorag
   /** The one and only iframe in the window; null while a refusal card is shown. */
   let frame: HTMLIFrameElement | null = null;
 
+  /* ───────────────────────── the opt-in local proxy ─────────────────────────
+   * Inert until BOTH hold: (a) the owner's tool answered the probe, and (b) the
+   * owner clicked the proxy action and picked a sub-mode in THIS window.
+   * `proxy.mode === null` means "not proxying", whatever the stored
+   * `faisal.web.proxy.enabled` flag happens to say — so the flag can never
+   * switch a window on by itself.
+   */
+  const proxyStorage: ProxyStorage = runtime?.proxyStorage ?? proxyStorageOrNull() ?? NO_PROXY_STORAGE;
+  const proxyPort = readProxyPort(proxyStorage);
+  const proxyBase = proxyBaseUrl(proxyPort);
+  /** The probe result; null until it answers. */
+  let proxyProbe: ProxyProbe | null = null;
+  /** The per-window proxy state (mode is what actually turns proxying on). */
+  let proxy: ProxyUiState = initialProxyState(proxyStorage);
+  /** Bumped by every proxy render so a stale /fetch reply is dropped. */
+  let proxySeq = 0;
+  /** The target the open token/mode panel is about. */
+  let proxyTarget: string | null = null;
+  function currentTargetUrl(): string {
+    return proxyTargetOf(plan.displayUrl ?? currentUrl(history) ?? null, def.url);
+  }
+
+  /**
+   * Ask the owner's proxy whether it is running. A failure is simply "not
+   * available": the proxy action stays hidden and NOTHING falls back to a direct
+   * embed. The probe sends no token and requests no page.
+   */
+  function refreshProxyProbe(): void {
+    const probe = runtime?.probe ?? (() => probeLocalProxy(proxyBase));
+    void Promise.resolve()
+      .then(probe)
+      .catch(() => ({ available: false, version: null, auth: null }) as ProxyProbe)
+      .then((result) => {
+        proxyProbe = result && typeof result === 'object' ? result : null;
+        renderFrame();
+      });
+  }
+
+  /**
+   * Verify a typed token with a /fetch call that is DESIGNED to answer 401 when
+   * the token is wrong. Nothing is written before this resolves true — a failed
+   * token must leave the store exactly as it was.
+   */
+  async function verifyProxyToken(token: string): Promise<boolean> {
+    if (runtime?.verifyToken) return runtime.verifyToken(token);
+    const fetcher = runtime?.proxyFetch ?? globalThis.fetch;
+    if (typeof fetcher !== 'function') return false;
+    // /health needs no token, so a token can only be proven against /fetch.
+    let probeUrl: string;
+    try {
+      probeUrl = buildProxyUrl(proxyBase, 'https://example.com/', 'reader');
+    } catch {
+      return false;
+    }
+    try {
+      const res = await fetcher(probeUrl, {
+        method: 'GET',
+        headers: { 'x-faisal-proxy-token': token },
+        cache: 'no-store',
+      });
+      return res.status !== 401 && res.status !== 403;
+    } catch {
+      return false;
+    }
+  }
+
   function clearTimer(): void {
     if (timer !== null) { clearTimeout(timer); timer = null; }
   }
@@ -184,14 +324,293 @@ export function launchWebApp(def: WebAppDef, ctx: AppContext, storage: WebStorag
     ui.openExternal.disabled = !url;
   }
 
+  /* ── proxy flow ── */
+
+  const proxyHost: ProxyPanelHost = {
+    // The proxy action: a token is asked for only when the running tool wants one.
+    openProxy: () => {
+      proxyTarget = currentTargetUrl();
+      proxy.error = null;
+      const stored = readProxyToken(proxyStorage);
+      if (proxyProbe?.auth === 'none' || stored) {
+        proxy.panel = 'modes';
+      } else {
+        proxy.panel = 'token';
+      }
+      renderFrame();
+    },
+    chooseMode: () => {
+      proxyTarget = currentTargetUrl();
+      proxy.panel = 'modes';
+      proxy.error = null;
+      renderFrame();
+    },
+    setMode: (mode: ProxyMode) => {
+      // THE ONE PLACE the proxy is switched on: an explicit click in this window.
+      proxy.mode = mode;
+      proxy.panel = 'none';
+      proxy.error = null;
+      proxy.enabled = true;
+      markProxyEnabled(proxyStorage, true);
+      writeProxyPort(proxyStorage, proxyPort);
+      signal = 'loaded';
+      renderFrame();
+    },
+    stop: () => {
+      proxy = { enabled: false, mode: null, panel: 'none', error: null };
+      proxyProbe = null;
+      proxySeq += 1;
+      proxyTarget = null;
+      markProxyEnabled(proxyStorage, false);
+      signal = 'loaded';
+      renderFrame();
+      refreshProxyProbe();
+    },
+    cancel: () => {
+      proxy.panel = 'none';
+      proxy.error = null;
+      proxyTarget = null;
+      renderFrame();
+    },
+    openExternal: (url: string) => openExternally(url),
+    setError: (message: string | null) => { proxy.error = message; },
+  };
+
+  /** The proxy action: a token is asked for only when the tool requires one. */
+  function openProxy(): void {
+    proxyTarget = currentTargetUrl();
+    proxy.error = null;
+    const stored = readProxyToken(proxyStorage);
+    if (proxyProbe?.auth === 'none' || stored) {
+      proxy.panel = 'modes';
+    } else {
+      proxy.panel = 'token';
+    }
+    renderFrame();
+  }
+
+  function submitProxyToken(raw: string): void {
+    const token = raw.trim();
+    proxyTarget = proxyTarget ?? currentTargetUrl();
+    if (!token) {
+      proxy.error = t('web.proxyTokenRejected');
+      renderFrame();
+      return;
+    }
+    // Capture the sequence BEFORE rendering: renderFrame() bumps it, and a
+    // stale-check against the post-render value would drop every reply.
+    const seq = proxySeq;
+    renderFrame();
+    void verifyProxyToken(token)
+      .then((ok) => {
+        if (seq !== proxySeq) return;
+        // WRONG (or unusable) TOKEN: store NOTHING and say so plainly.
+        if (!ok || !writeProxyToken(proxyStorage, token)) {
+          proxy.error = t('web.proxyTokenRejected');
+          renderFrame();
+          return;
+        }
+        // Only a VERIFIED token is ever written, and only to our own store.
+        proxy.error = null;
+        proxy.panel = 'modes';
+        renderFrame();
+      })
+      .catch(() => {
+        if (seq !== proxySeq) return;
+        proxy.error = t('web.proxyTokenRejected');
+        renderFrame();
+      });
+  }
+
+  /** Reader mode: the proxy returns TEXT, WE extract it, WE render the blocks. */
+  function renderProxyReader(seq: number): void {
+    const target = currentTargetUrl();
+    ui.body.append(buildProxyBar('reader', target, proxyHost));
+
+    if (targetIsObviouslyPrivate(target)) {
+      // Obvious mistake (an intranet address, a non-http scheme): refuse locally,
+      // send NOTHING. The proxy would refuse it too, this just saves the round trip.
+      ui.body.append(buildReaderError(t('web.proxyBlockedTarget'), target, () => renderFrame(), proxyHost));
+      syncChrome();
+      return;
+    }
+
+    ui.body.append(buildReaderLoading());
+
+    let url: string;
+    try {
+      url = buildProxyUrl(proxyBase, target, 'reader');
+    } catch {
+      ui.body.textContent = '';
+      ui.body.append(buildProxyBar('reader', target, proxyHost));
+      ui.body.append(buildReaderError(t('web.proxyBlockedTarget'), target, () => renderFrame(), proxyHost));
+      syncChrome();
+      return;
+    }
+
+    const fetcher = runtime?.proxyFetch ?? globalThis.fetch;
+    const token = readProxyToken(proxyStorage);
+    const headers: Record<string, string> = {};
+    // The token goes to the proxy base and NOWHERE else — never into `url`, so
+    // it cannot end up in an iframe src, a history entry, a title or a log.
+    if (token) headers['x-faisal-proxy-token'] = token;
+
+    void Promise.resolve()
+      .then(() => fetcher(url, { method: 'GET', headers, cache: 'no-store' }))
+      .then(async (res) => {
+        if (seq !== proxySeq) return null;
+        if (!res.ok) throw new Error(`proxy status ${res.status}`);
+        return res.text();
+      })
+      .then((text) => {
+        if (seq !== proxySeq || typeof text !== 'string') return;
+        const extracted = htmlToText(text);
+        ui.body.textContent = '';
+        ui.body.append(buildProxyBar('reader', target, proxyHost));
+        // title/blocks are untrusted page text; proxy-panel writes them with
+        // textContent only, so there is no markup path from the site to the OS.
+        ui.body.append(buildReaderPanel(extracted.title, extracted.blocks, target, proxyHost));
+        syncChrome();
+      })
+      .catch(() => {
+        if (seq !== proxySeq) return;
+        ui.body.textContent = '';
+        ui.body.append(buildProxyBar('reader', target, proxyHost));
+        ui.body.append(buildReaderError(t('web.proxyReaderError'), target, () => renderFrame(), proxyHost));
+        syncChrome();
+      });
+  }
+
+  /** The bilingual sentence for one failed ticket request. */
+  function rawTicketError(reason: ProxyTicketFailure): string {
+    if (reason === 'unauthorized') return t('web.proxyRawTicketUnauthorized');
+    if (reason === 'unreachable') return t('web.proxyRawTicketUnreachable', { port: proxyPort });
+    if (reason === 'refused') return t('web.proxyRawTicketRefused');
+    return t('web.proxyRawTicketMalformed');
+  }
+
+  /** The permanent chrome of raw mode: badge, honest warning, then `extra`. */
+  function paintRawShell(target: string, extra: HTMLElement | null): void {
+    ui.body.textContent = '';
+    ui.body.append(buildProxyBar('raw', target, proxyHost));
+    ui.body.append(buildRawWarning());
+    if (extra) ui.body.append(extra);
+    syncChrome();
+  }
+
+  /**
+   * Raw embed: best effort, and the ONE path that cannot authenticate with a
+   * header. An <iframe> sends no `x-faisal-proxy-token` at all, so the frame is
+   * never given the token: we first ask the proxy for a SINGLE-USE ticket with
+   * an ordinary `fetch` (token in the header, exactly like reader mode), and only
+   * once that ticket exists do we create the frame, pointed at
+   * `/view?ticket=<hex>`. The proxy deletes the ticket BEFORE its upstream fetch,
+   * so it is already dead by the time the framed page's own scripts run — that,
+   * and nothing else, is what makes this src safe to leak. The sequence guard is
+   * checked after the round trip, so a slow ticket can never paint into a newer
+   * navigation. There is no fallback path that puts a token in a URL, and no
+   * frame is ever created for a request that failed: a failure renders a card.
+   */
+  function renderProxyRaw(seq: number): void {
+    const target = currentTargetUrl();
+
+    if (targetIsObviouslyPrivate(target)) {
+      // Obvious mistake (an intranet address, a non-http scheme): refuse locally
+      // and send NOTHING, exactly like reader mode. The proxy would refuse it
+      // too; this only saves a round trip and shows the honest reason.
+      paintRawShell(target, buildReaderError(t('web.proxyBlockedTarget'), target, () => renderFrame(), proxyHost));
+      return;
+    }
+
+    // The badge and the honest warning are on screen from the first moment,
+    // before any request: the loading state below replaces nothing.
+    paintRawShell(target, null);
+    ui.body.append(buildRawLoading());
+
+    const token = readProxyToken(proxyStorage);
+    const fetcher = runtime?.proxyFetch ?? globalThis.fetch;
+    const failed = (reason: ProxyTicketFailure): void => {
+      if (seq !== proxySeq) return;
+      paintRawShell(target, buildReaderError(rawTicketError(reason), target, () => renderFrame(), proxyHost));
+    };
+
+    // requestProxyTicket() never rejects; the catch below is belt-and-braces so
+    // that no outcome whatsoever can leave the loading state stuck on screen.
+    void requestProxyTicket(proxyBase, target, 'raw', token, fetcher)
+      .then((result) => {
+        if (seq !== proxySeq) return;
+        if (!result.ok) {
+          failed(result.reason);
+          return;
+        }
+        let url: string;
+        try {
+          url = buildProxyViewUrl(proxyBase, result.ticket);
+        } catch {
+          failed('malformed');
+          return;
+        }
+
+        paintRawShell(target, null);
+        const stage = document.createElement('div');
+        stage.className = 'faisal-web-stage';
+        const iframe = document.createElement('iframe');
+        iframe.className = 'faisal-web-frame faisal-web-proxy-frame';
+        iframe.setAttribute('sandbox', IFRAME_SANDBOX);
+        iframe.setAttribute('allow', IFRAME_ALLOW);
+        iframe.setAttribute('referrerpolicy', 'no-referrer');
+        iframe.loading = 'eager';
+        // The src carries ONLY the single-use ticket: no token, no target URL and
+        // no mode. One leaked URL buys exactly one already-spent fetch.
+        iframe.src = url;
+        stage.append(iframe);
+        frame = iframe;
+        ui.body.append(stage);
+        syncChrome();
+      })
+      .catch(() => failed('malformed'));
+  }
+
   /* ── the frame ── */
   function renderFrame(): void {
     clearTimer();
     ui.body.textContent = '';
     frame = null;
 
+    // A proxy card is the current view: it wins over the fallback card.
+    if (proxyIsActive(proxy)) {
+      proxySeq += 1;
+      if (proxy.mode === 'raw') renderProxyRaw(proxySeq);
+      else renderProxyReader(proxySeq);
+      syncChrome();
+      return;
+    }
+    if (proxy.panel === 'token') {
+      ui.body.append(buildTokenPanel(
+        proxyProbe?.auth ?? null,
+        proxy.error,
+        (token) => submitProxyToken(token),
+        proxyHost,
+      ));
+      syncChrome();
+      return;
+    }
+    if (proxy.panel === 'modes') {
+      ui.body.append(buildProxyModePicker(proxy.error, proxyHost));
+      syncChrome();
+      return;
+    }
+
     const state = decideOutcome(currentPlan());
     if (state.kind === 'refused') {
+      // An empty embedUrl with no refusal is the def's own transform declining the
+      // input (`transformUrl` returned ''): a YouTube channel where a video was
+      // expected, say. It gets its own honest card with the same external offer.
+      if (!plan.refusal && !plan.embedUrl) {
+        ui.body.append(buildUnusableInputCard());
+        syncChrome();
+        return;
+      }
       ui.body.append(buildRefusal(plan.refusal ?? 'empty'));
       syncChrome();
       return;
@@ -306,6 +725,12 @@ export function launchWebApp(def: WebAppDef, ctx: AppContext, storage: WebStorag
       retry.addEventListener('click', () => { signal = 'pending'; renderFrame(); });
       actions.append(retry);
     }
+    // THIRD ACTION, and only while the owner's own proxy answers the probe. When
+    // the tool is not running this is simply absent: no button, no attempt, and
+    // no silent fallback to a direct embed.
+    if (proxyProbe?.available === true) {
+      actions.append(buildProxyFallbackAction(proxyHost));
+    }
 
     card.append(title, body, urlLine, actions);
     return card;
@@ -357,6 +782,36 @@ export function launchWebApp(def: WebAppDef, ctx: AppContext, storage: WebStorag
     return card;
   }
 
+  /**
+   * Shown when the def's own `transformUrl` declined the input — it is not a
+   * refusal by the site, it is "this app has nothing to open here". The text
+   * names the app, never the site, and stays true whatever the app is.
+   */
+  function buildUnusableInputCard(): HTMLElement {
+    const card = document.createElement('div');
+    card.className = 'faisal-web-fallback';
+    const title = document.createElement('div');
+    title.className = 'faisal-web-fallback-title';
+    title.textContent = t('web.unusableInputTitle');
+    const body = document.createElement('div');
+    body.className = 'faisal-web-fallback-body';
+    body.textContent = t('web.unusableInputBody', { site: def.title[ctx.sys.locale()] });
+    const urlLine = document.createElement('div');
+    urlLine.className = 'faisal-web-fallback-url';
+    urlLine.dir = 'ltr';
+    urlLine.textContent = plan.displayUrl ?? '';
+    const actions = document.createElement('div');
+    actions.className = 'faisal-web-fallback-actions';
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.className = 'faisal-web-btn is-plain';
+    back.textContent = t('web.backToHome');
+    back.addEventListener('click', () => navigate(def.url));
+    actions.append(back, buildOpenButton(t('web.openExternal')));
+    card.append(title, body, urlLine, actions);
+    return card;
+  }
+
   function buildNotice(text: string, heading?: string): HTMLElement {
     const bar = document.createElement('div');
     bar.className = 'faisal-web-notice';
@@ -371,7 +826,30 @@ export function launchWebApp(def: WebAppDef, ctx: AppContext, storage: WebStorag
 
   /* ── navigation ── */
   function navigate(raw: string): void {
-    const next = planNavigation(raw, ctx.sys.locale());
+    // A fresh address leaves proxy mode: the escape hatch is per attempt and per
+    // page, and must be re-chosen. Nothing about it survives a navigation.
+    proxy = { enabled: proxy.enabled, mode: null, panel: 'none', error: null };
+    proxySeq += 1;
+    proxyTarget = null;
+
+    // The def's own input rule (`transformUrl`), applied before the shared URL
+    // policy. This is what lets a "player" app accept a bare video id: the def
+    // normalises it, the policy below then treats the result like any address.
+    // The shared window stays site-agnostic — it only knows a def may decline
+    // input by returning ''.
+    const transformed = applyUrlTransform(def, raw.trim());
+    if (!transformed.trim()) {
+      // The def cannot use this input (e.g. a YouTube channel where a video id was
+      // expected). Say so honestly and offer the tab; never frame a page that
+      // never agreed to be framed, and never invent a workaround.
+      plan = { embedUrl: null, displayUrl: raw.trim(), rewrittenFrom: null, searchFor: null, refusal: null };
+      signal = 'loaded';
+      attempt = 'registry';
+      renderFrame();
+      return;
+    }
+
+    const next = planNavigation(transformed, ctx.sys.locale());
     plan = next;
     signal = next.refusal ? 'loaded' : 'pending';
     // A fresh address means a fresh decision: the escape hatch is per attempt.
@@ -403,8 +881,11 @@ export function launchWebApp(def: WebAppDef, ctx: AppContext, storage: WebStorag
   ui.openExternal.addEventListener('click', () => {
     openExternally(plan.displayUrl ?? currentUrl(history) ?? def.url);
   });
-  // A form means Enter and the Go button share one code path.
+  // A form means Enter and the Go button share one code path — but ONLY for the
+  // address form. Other forms in the window (the proxy token form) own their own
+  // submit events; handling them here would navigate away and destroy their card.
   ui.root.addEventListener('submit', (ev) => {
+    if (ev.target !== ui.address.form) return;
     ev.preventDefault();
     navigate(ui.address.value);
   });
@@ -419,6 +900,9 @@ export function launchWebApp(def: WebAppDef, ctx: AppContext, storage: WebStorag
   plan = planNavigation(startUrl, ctx.sys.locale());
   syncChrome();
   renderFrame();
+  // Ask whether the owner's proxy is running. Purely additive: until it answers,
+  // nothing in the window mentions the proxy at all.
+  refreshProxyProbe();
 }
 
 /** Toolbar + content shell. Deliberately site-agnostic: nothing from `def` leaks into the DOM. */
