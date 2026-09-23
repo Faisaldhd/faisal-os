@@ -559,6 +559,26 @@ body {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
 
+/* Embedded web apps: a labelled group under the main app grid (Activities only,
+ * never the dock — see dock.ts). The grid inside reuses `.faisal-app-grid`. */
+.faisal-overview-web {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: min(900px, 96vw);
+}
+.faisal-overview-web[hidden] { display: none; }
+.faisal-overview-heading {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
 .faisal-dock {
   flex: none;
   display: flex;
@@ -604,6 +624,15 @@ body {
   z-index: 400;
   pointer-events: none;
 }
+
+/*
+ * A window the user maximized owns the bottom edge: the dock leaves the layout (it is a real
+ * flex row, not an overlay) so the window can fill the screen, and it comes back on restore.
+ * Toggled by the window manager (`wm.ts`: syncMaximizedDock). The Activities overview keeps
+ * its own dock, so the launchers stay one Super-key tap away.
+ */
+.faisal-desktop.has-maximized-window .faisal-dock-bar { display: none; }
+
 .faisal-dock-pinned {
   margin: 0;
   max-width: 100%;

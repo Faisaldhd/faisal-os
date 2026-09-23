@@ -1,0 +1,257 @@
+/*
+ * Fai$al OS — shared Web App window styles.
+ *
+ * Layout contract: the toolbar is a fixed-height row (which may wrap to two
+ * rows on a narrow/touch screen) and the body fills everything else. Nothing
+ * here may overflow the window horizontally, and the iframe is always 100% of
+ * the body — a framed site can never push the OS layout around.
+ * Logical properties + --faisal-* tokens only, following src/shell/theme.css.
+ */
+
+.faisal-web {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  inline-size: 100%;
+  min-block-size: 0;
+  min-inline-size: 0;
+  background: var(--faisal-bg, #f5f4f1);
+  color: var(--faisal-fg, #1a1d26);
+  font-family: var(--faisal-font, -apple-system, "Segoe UI", "Noto Sans Arabic", sans-serif);
+  font-size: 13px;
+}
+
+/* ── toolbar ─────────────────────────────────────────────────────────── */
+
+.faisal-web-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  background: var(--faisal-surface, #fff);
+  border-block-end: 1px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+}
+
+.faisal-web-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 32px;
+  block-size: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--faisal-radius-sm, 6px);
+  background: transparent;
+  color: var(--faisal-fg, #1a1d26);
+  font: inherit;
+  cursor: pointer;
+}
+.faisal-web-btn:hover:not(:disabled) { background: var(--faisal-surface-2, #ecebe6); }
+.faisal-web-btn:disabled { opacity: 0.35; cursor: default; }
+.faisal-web-btn svg { inline-size: 17px; block-size: 17px; }
+.faisal-web-btn.is-plain {
+  inline-size: auto;
+  padding: 8px 16px;
+  border: 1px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+  background: var(--faisal-surface-2, #ecebe6);
+}
+
+/* back/forward glyphs follow the reading direction; mirror them in RTL. */
+[dir="rtl"] .faisal-web-nav svg { transform: scaleX(-1); }
+
+.faisal-web-addressform {
+  /* Grows to fill whatever room is left, but never shrinks below a usable
+   * width — below that the flex line wraps and the field takes its own row. */
+  flex: 1 1 200px;
+  min-inline-size: 140px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.faisal-web-address {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+  background: var(--faisal-surface-2, #ecebe6);
+  color: inherit;
+  font: inherit;
+}
+.faisal-web-address:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8f6412);
+  outline-offset: 1px;
+  background: var(--faisal-surface, #fff);
+}
+
+.faisal-web-go {
+  flex: none;
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--faisal-accent, #8f6412);
+  color: var(--faisal-accent-fg, #fff);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.faisal-web-go:hover { filter: brightness(1.08); }
+
+.faisal-web-btn:focus-visible,
+.faisal-web-go:focus-visible,
+.faisal-web-open:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8f6412);
+  outline-offset: 2px;
+}
+
+/* ── body + frame ────────────────────────────────────────────────────── */
+
+.faisal-web-body {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  /* The frame scrolls itself; the window never scrolls sideways. */
+  overflow: hidden;
+}
+
+.faisal-web-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+
+.faisal-web-frame {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  border: none;
+  background: #fff;
+}
+
+.faisal-web-loading {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--faisal-surface, #fff) 88%, transparent);
+  box-shadow: 0 6px 18px var(--faisal-shadow, rgba(11, 21, 48, 0.26));
+  color: var(--faisal-fg-muted, #565b67);
+  font-size: 12.5px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.faisal-web-spinner {
+  inline-size: 16px;
+  block-size: 16px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+  border-block-start-color: var(--faisal-accent, #8f6412);
+  animation: faisal-web-spin 0.8s linear infinite;
+}
+@keyframes faisal-web-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .faisal-web-spinner { animation: none; }
+}
+
+/* ── notices (rewrite / search / up-front embed warning) ─────────────── */
+
+.faisal-web-notice {
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--faisal-accent, #8f6412) 10%, var(--faisal-surface, #fff));
+  border-block-end: 1px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+  color: var(--faisal-fg, #1a1d26);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* ── refusal / fallback panel ────────────────────────────────────────── */
+
+.faisal-web-fallback {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow-y: auto;
+  align-self: center;
+  inline-size: min(460px, calc(100% - 32px));
+  margin: 40px auto;
+  padding: 26px 24px;
+  text-align: center;
+  background: var(--faisal-surface, #fff);
+  border: 1px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+  border-radius: var(--faisal-radius, 10px);
+  box-shadow: 0 8px 24px var(--faisal-shadow, rgba(11, 21, 48, 0.26));
+}
+.faisal-web-fallback.is-refusal { box-shadow: none; }
+
+.faisal-web-fallback-title {
+  font-size: 15px;
+  font-weight: 700;
+  margin-block-end: 10px;
+}
+.faisal-web-fallback-body {
+  color: var(--faisal-fg-muted, #565b67);
+  line-height: 1.7;
+  margin-block-end: 14px;
+}
+.faisal-web-fallback-url {
+  font-family: var(--faisal-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--faisal-fg-muted, #565b67);
+  overflow-wrap: anywhere;
+  margin-block-end: 18px;
+}
+.faisal-web-fallback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.faisal-web-open {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 999px;
+  background: var(--faisal-accent, #8f6412);
+  color: var(--faisal-accent-fg, #fff);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.faisal-web-open:hover { filter: brightness(1.08); }
+
+/* ── narrow window / touch ───────────────────────────────────────────── */
+
+/* The window is the container being sized (see .faisal-window-content in
+ * theme.css), so a narrow window reflows even on a wide screen. At ~390px the
+ * toolbar becomes the brief's two rows: nav buttons + external on the first,
+ * the address field full width beneath. */
+@container faisal-window (max-width: 460px) {
+  .faisal-web-toolbar { gap: 4px; padding: 6px 8px; }
+  .faisal-web-addressform { flex: 1 1 100%; order: 10; min-inline-size: 0; }
+}
+
+/* Touch: every control is at least 44x44 (WCAG 2.5.5), which is also what makes
+ * the toolbar wrap into two rows at 390px instead of squeezing the field. */
+@media (pointer: coarse) {
+  .faisal-web-btn { inline-size: 44px; block-size: 44px; }
+  .faisal-web-btn.is-plain { inline-size: auto; min-block-size: 44px; }
+  .faisal-web-address { min-block-size: 44px; padding-block: 10px; }
+  .faisal-web-go { min-block-size: 44px; padding-inline: 20px; }
+  .faisal-web-open { min-block-size: 44px; }
+  .faisal-web-fallback { margin-block: 18px; padding: 20px 16px; }
+}

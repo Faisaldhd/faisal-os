@@ -81,7 +81,7 @@ type InstallState = { removed: string[]; added: string[] };
 const KNOWN_PERMISSIONS = new Set<Permission>([
   'fs:home', 'fs:read-all', 'fs:system', 'notifications', 'settings', 'apps:manage', 'system:monitor', 'network',
 ]);
-const KNOWN_CATEGORIES = new Set<AppCategory>(['system', 'utilities', 'accessories', 'media', 'development']);
+const KNOWN_CATEGORIES = new Set<AppCategory>(['system', 'utilities', 'accessories', 'media', 'development', 'web']);
 
 /**
  * Rejects malformed manifests at registration, so a typo or an unknown permission fails

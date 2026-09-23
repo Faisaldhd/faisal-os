@@ -131,7 +131,8 @@ export type Permission =
   | 'system:monitor' // رؤية التطبيقات المفتوحة وإغلاقها (مراقب النظام)
   | 'network';
 
-export type AppCategory = 'system' | 'utilities' | 'accessories' | 'media' | 'development';
+/** 'web' = an external website packaged as an OS app (see src/apps/web/registry.ts). */
+export type AppCategory = 'system' | 'utilities' | 'accessories' | 'media' | 'development' | 'web';
 
 export interface AppManifest {
   id: string;                      // "org.faisal.Files"

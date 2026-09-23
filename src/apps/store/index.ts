@@ -26,6 +26,7 @@ const CATEGORY_KEY: Record<CategoryFilter, string> = {
   accessories: 'store.categoryAccessories',
   media: 'store.categoryMedia',
   development: 'store.categoryDevelopment',
+  web: 'store.categoryWeb',
 };
 
 function prefersReducedMotion(): boolean {
