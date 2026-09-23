@@ -8,9 +8,9 @@ import './claude.css';
 
 defineStrings('claude', {
   ar: {
-    title: 'Claude',
-    setupTitle: 'مرحباً بك في Claude',
-    setupBody: 'Claude يتصل مباشرة بـ Anthropic API باستخدام مفتاحك الخاص، ويقدر يبحث في الإنترنت ويقرأ الروابط.',
+    title: 'Faisal AI',
+    setupTitle: 'مرحباً بك في Faisal AI',
+    setupBody: 'Faisal AI يعمل بنموذج Claude من Anthropic باستخدام مفتاحك الخاص، ويقدر يبحث في الإنترنت ويقرأ الروابط.',
     setupGet: 'احصل على مفتاح من',
     keyPlaceholder: 'sk-ant-…',
     save: 'حفظ والبدء',
@@ -25,7 +25,7 @@ defineStrings('claude', {
     searching: 'يبحث في الويب: {q}',
     fetching: 'يقرأ الصفحة: {q}',
     sources: 'المصادر',
-    refused: 'لم يتمكن Claude من الرد على هذا الطلب. جرّب صياغة مختلفة.',
+    refused: 'لم يتمكن Faisal AI من الرد على هذا الطلب. جرّب صياغة مختلفة.',
     truncated: '(توقف الرد قبل اكتماله)',
     stopped: '(أوقفت الرد)',
     errAuth: 'المفتاح غير صحيح أو منتهي. احذفه وأدخل مفتاحاً جديداً.',
@@ -34,9 +34,9 @@ defineStrings('claude', {
     errGeneric: 'حدث خطأ: {msg}',
   },
   en: {
-    title: 'Claude',
-    setupTitle: 'Welcome to Claude',
-    setupBody: 'Claude talks to the Anthropic API directly with your own key, and can search the web and read links.',
+    title: 'Faisal AI',
+    setupTitle: 'Welcome to Faisal AI',
+    setupBody: 'Faisal AI runs on Claude from Anthropic with your own API key, and can search the web and read links.',
     setupGet: 'Get a key from',
     keyPlaceholder: 'sk-ant-…',
     save: 'Save and start',
@@ -51,7 +51,7 @@ defineStrings('claude', {
     searching: 'Searching the web: {q}',
     fetching: 'Reading page: {q}',
     sources: 'Sources',
-    refused: 'Claude could not respond to this request. Try rephrasing it.',
+    refused: 'Faisal AI could not respond to this request. Try rephrasing it.',
     truncated: '(The reply was cut off)',
     stopped: '(You stopped the reply)',
     errAuth: 'The key is invalid or expired. Remove it and enter a new one.',
@@ -127,7 +127,7 @@ function launch(ctx: AppContext): void {
     const bar = el('div', 'faisal-claude-bar');
     const newBtn = el('button', undefined, t('claude.newChat'));
     const keyBtn = el('button', undefined, t('claude.removeKey'));
-    bar.append(el('span', undefined, 'Claude Opus 5'), el('span', 'grow'), newBtn, keyBtn);
+    bar.append(el('span', undefined, 'Faisal AI · Claude Opus 5'), el('span', 'grow'), newBtn, keyBtn);
 
     const log = el('div', 'faisal-claude-log');
     const input = el('div', 'faisal-claude-input');
@@ -275,7 +275,7 @@ async function errorText(err: unknown): Promise<string> {
 const app: AppModule = {
   manifest: {
     id: 'org.faisal.Claude',
-    name: { ar: 'Claude', en: 'Claude' },
+    name: { ar: 'Faisal AI', en: 'Faisal AI' },
     description: { ar: 'مساعد ذكي يبحث في الإنترنت ويقرأ الروابط', en: 'An AI assistant that can search the web and read links' },
     icon: ICON_CLAUDE,
     permissions: ['network'],
