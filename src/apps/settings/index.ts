@@ -8,6 +8,7 @@ import { brandLockup } from '../../shell/splash';
 import { shellConfirm } from '../../shell/dialog';
 import { RESTORE_KEY } from '../../shell/session';
 import { OS_VERSION } from '../../kernel/version';
+import { nativeWeb, type UpdateState } from '../../shell/native-web';
 import {
   AI_PROVIDERS, clearedKeys, clearPrivacyItem, readPrivacyInventory,
   type ClearTarget, type PrivacyInventory,
@@ -556,7 +557,66 @@ function launch(ctx: AppContext) {
     } catch { done(); }
   }
 
+  /** Desktop build: stops the About page's live update-status subscription. */
+  let stopUpdateWatch: (() => void) | null = null;
+  win.onClose(() => stopUpdateWatch?.());
+
+  /**
+   * Desktop build only: the installed app's version and its auto-update
+   * state (electron/main.cjs), with a manual check and restart-to-install.
+   */
+  function desktopRows(): HTMLElement[] {
+    const bridge = nativeWeb();
+    if (!bridge) return [];
+
+    const appRow = row('settings.about.appVersionLabel');
+    const appValue = document.createElement('span');
+    appValue.className = 'faisal-about-version';
+    appValue.dir = 'ltr';
+    appRow.control.append(appValue);
+
+    const updRow = row('settings.about.updatesLabel');
+    const status = document.createElement('div');
+    status.className = 'faisal-settings-row-desc';
+    status.setAttribute('role', 'status');
+    const bar = document.createElement('progress');
+    bar.className = 'faisal-about-progress';
+    bar.max = 100;
+    updRow.row.querySelector('.faisal-settings-row-label')?.after(status, bar);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'faisal-toggle-btn';
+    updRow.control.append(btn);
+
+    let state: UpdateState = { status: 'idle' };
+    const show = (next: UpdateState) => {
+      state = next;
+      const version = next.version ?? '';
+      status.textContent = t(`settings.about.update.${next.status}`, { version, percent: String(next.percent ?? 0) });
+      bar.hidden = next.status !== 'downloading';
+      bar.value = next.percent ?? 0;
+      btn.hidden = next.status === 'dev';
+      btn.disabled = next.status === 'checking' || next.status === 'downloading';
+      btn.textContent = t(next.status === 'ready' ? 'settings.about.update.install' : 'settings.about.update.check');
+    };
+    btn.addEventListener('click', () => {
+      if (state.status === 'ready') void bridge.installUpdate();
+      else void bridge.checkForUpdates();
+    });
+
+    show(state);
+    stopUpdateWatch = bridge.onUpdateStatus(show);
+    void bridge.appInfo().then((info) => {
+      appValue.textContent = info.version;
+      show(info.update);
+    }).catch(() => { /* bridge unavailable: rows stay as rendered */ });
+
+    return [appRow.row, updRow.row];
+  }
+
   function renderAbout() {
+    stopUpdateWatch?.();
+    stopUpdateWatch = null;
     panel.textContent = '';
     const h2 = document.createElement('h2');
     h2.textContent = t('settings.nav.about');
@@ -578,7 +638,8 @@ function launch(ctx: AppContext) {
     tagline.textContent = t('settings.about.tagline');
     block.append(mark, wordmarks, name, arName, tagline);
 
-    const versionRow = row('settings.about.versionLabel');
+    // On desktop the app has its own version too, so name this one precisely.
+    const versionRow = row(nativeWeb() ? 'settings.about.osVersionLabel' : 'settings.about.versionLabel');
     const versionValue = document.createElement('span');
     versionValue.className = 'faisal-about-version';
     versionValue.dir = 'ltr';
@@ -590,7 +651,7 @@ function launch(ctx: AppContext) {
     ua.className = 'faisal-about-ua';
     ua.textContent = navigator.userAgent;
 
-    panel.append(block, group(versionRow.row, uaRow.row), ua);
+    panel.append(block, group(versionRow.row, ...desktopRows(), uaRow.row), ua);
   }
 
   wrap.append(nav, panel);

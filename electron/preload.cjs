@@ -16,6 +16,19 @@ contextBridge.exposeInMainWorld('faisalDesktop', {
    * `fromId` is the guest's webContents id, so each Browser window only
    * handles popups from its own tabs. Returns an unsubscribe function.
    */
+  /** { version, update } — the installed app version and the current update state. */
+  appInfo: () => ipcRenderer.invoke('faisal:app-info'),
+  checkForUpdates: () => ipcRenderer.invoke('faisal:update-check'),
+  /** Restarts into a downloaded update (no-op unless one is ready). */
+  installUpdate: () => ipcRenderer.invoke('faisal:update-install'),
+  /** Subscribes to update state changes. Returns an unsubscribe function. */
+  onUpdateStatus: (callback) => {
+    const listener = (_event, state) => {
+      if (state && typeof state.status === 'string') callback(state);
+    };
+    ipcRenderer.on('faisal:update-status', listener);
+    return () => ipcRenderer.removeListener('faisal:update-status', listener);
+  },
   onOpenTab: (callback) => {
     const listener = (_event, payload) => {
       if (payload && typeof payload.url === 'string') callback(payload.url, Number(payload.fromId));

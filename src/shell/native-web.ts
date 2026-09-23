@@ -12,10 +12,22 @@
  * load http(s); nothing set here can loosen that.
  */
 
+/** Auto-update state from electron/main.cjs; `dev` means running from source (never updates). */
+export interface UpdateState {
+  status: 'dev' | 'idle' | 'checking' | 'latest' | 'downloading' | 'ready' | 'error';
+  version?: string;
+  percent?: number;
+  message?: string;
+}
+
 interface DesktopBridge {
   readonly isDesktop: true;
   openExternal(url: string): Promise<void>;
   onOpenTab(callback: (url: string, fromId: number) => void): () => void;
+  appInfo(): Promise<{ version: string; update: UpdateState }>;
+  checkForUpdates(): Promise<void>;
+  installUpdate(): Promise<void>;
+  onUpdateStatus(callback: (state: UpdateState) => void): () => void;
 }
 
 /** The subset of Electron's WebviewTag the apps use. */

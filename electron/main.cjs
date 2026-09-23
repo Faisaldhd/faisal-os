@@ -136,14 +136,46 @@ function createWindow() {
  */
 const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;
 
+/**
+ * What the About page shows. status: dev (running from source) | idle |
+ * checking | latest | downloading | ready | error.
+ */
+let updateState = { status: app.isPackaged ? 'idle' : 'dev' };
+let updater = null;
+
+function setUpdateState(next) {
+  updateState = next;
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.webContents.isDestroyed()) win.webContents.send('faisal:update-status', updateState);
+  }
+}
+
+function checkForUpdates() {
+  if (!updater) return;
+  // A finished download stays ready; re-checking would only hide the restart button.
+  if (updateState.status === 'ready' || updateState.status === 'downloading') return;
+  updater.checkForUpdates().catch((err) => {
+    console.warn('[update]', err?.message ?? err);
+    setUpdateState({ status: 'error', message: String(err?.message ?? err) });
+  });
+}
+
 function setupAutoUpdate() {
   if (!app.isPackaged) return;
   const { autoUpdater } = require('electron-updater');
+  updater = autoUpdater;
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
 
+  autoUpdater.on('checking-for-update', () => setUpdateState({ status: 'checking' }));
+  autoUpdater.on('update-not-available', () => setUpdateState({ status: 'latest' }));
+  autoUpdater.on('update-available', (info) => setUpdateState({ status: 'downloading', version: info.version, percent: 0 }));
+  autoUpdater.on('download-progress', (p) =>
+    setUpdateState({ status: 'downloading', version: updateState.version, percent: Math.round(p.percent) }));
+
   let prompted = false;
   autoUpdater.on('update-downloaded', async (info) => {
+    setUpdateState({ status: 'ready', version: info.version });
     if (prompted) return;
     prompted = true;
     const ar = app.getLocale().startsWith('ar');
@@ -160,12 +192,20 @@ function setupAutoUpdate() {
     });
     if (response === 0) autoUpdater.quitAndInstall();
   });
-  autoUpdater.on('error', (err) => console.warn('[update]', err?.message ?? err));
+  autoUpdater.on('error', (err) => {
+    console.warn('[update]', err?.message ?? err);
+    setUpdateState({ status: 'error', message: String(err?.message ?? err) });
+  });
 
-  const check = () => autoUpdater.checkForUpdates().catch((err) => console.warn('[update]', err?.message ?? err));
-  check();
-  setInterval(check, UPDATE_EVERY_MS);
+  checkForUpdates();
+  setInterval(checkForUpdates, UPDATE_EVERY_MS);
 }
+
+ipcMain.handle('faisal:app-info', () => ({ version: app.getVersion(), update: updateState }));
+ipcMain.handle('faisal:update-check', () => checkForUpdates());
+ipcMain.handle('faisal:update-install', () => {
+  if (updater && updateState.status === 'ready') updater.quitAndInstall();
+});
 
 ipcMain.handle('faisal:open-external', (_event, url) => {
   if (typeof url === 'string' && isWebUrl(url)) return shell.openExternal(url);
