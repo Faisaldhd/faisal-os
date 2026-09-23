@@ -7,7 +7,7 @@ import { ACCENTS, BRAND_ACCENT_ID, applyTheme, applyAccent, type ThemeMode } fro
 const ICON_SYSTEM =
   '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4" fill="currentColor"/><path d="M4 20c1.2-4.2 4.6-6 8-6s6.8 1.8 8 6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>';
 
-export function mountTopbar(root: HTMLElement, sys: SystemAPI, onToggleOverview: () => void): HTMLElement {
+export function mountTopbar(root: HTMLElement, sys: SystemAPI, onToggleOverview: () => void, onScreenshot?: () => void): HTMLElement {
   const bar = document.createElement('header');
   bar.className = 'faisal-topbar';
 
@@ -175,7 +175,15 @@ export function mountTopbar(root: HTMLElement, sys: SystemAPI, onToggleOverview:
       closeMenu();
       void toggleFullscreen();
     });
-    aboutSection.append(fsBtn, aboutBtn);
+    const shotBtn = document.createElement('button');
+    shotBtn.type = 'button';
+    shotBtn.className = 'faisal-menu-item';
+    shotBtn.textContent = t('shell.menu.screenshot');
+    shotBtn.addEventListener('click', () => {
+      closeMenu();
+      onScreenshot?.();
+    });
+    aboutSection.append(shotBtn, fsBtn, aboutBtn);
     menu.append(aboutSection);
 
     return menu;
