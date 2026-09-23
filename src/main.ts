@@ -14,6 +14,11 @@ import terminalApp from './apps/terminal';                   // Track C
 import filesApp from './apps/files';                         // Track B
 import editorApp from './apps/editor';                       // Track B
 import settingsApp from './apps/settings';                   // Track A
+import calculatorApp from './apps/calculator';
+import imagesApp from './apps/images';
+import clockApp from './apps/clock';
+import monitorApp from './apps/monitor';
+import storeApp from './apps/store';
 
 async function boot() {
   const root = document.getElementById('faisal-root')!;
@@ -33,7 +38,7 @@ async function boot() {
     notify: (title, body) => bus.emit('notify', { title, body }),
   };
 
-  [terminalApp, filesApp, editorApp, settingsApp].forEach((a) => apps.register(a));
+  [filesApp, terminalApp, editorApp, calculatorApp, imagesApp, clockApp, monitorApp, storeApp, settingsApp].forEach((a) => apps.register(a));
   mountShell(root, sys);
   bus.emit('system:ready', {});
 }

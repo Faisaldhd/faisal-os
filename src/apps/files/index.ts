@@ -766,6 +766,8 @@ const app: AppModule = {
     description: { ar: 'استعرض وأدر ملفاتك', en: 'Browse and manage your files' },
     icon: ICON_FILES,
     permissions: ['fs:home'],
+    category: 'system',
+    core: true,
     singleInstance: false,
   },
   launch,

@@ -17,6 +17,8 @@ defineStrings('shell', {
     'menu.language.ar': 'العربية',
     'menu.language.en': 'English',
     'menu.about': 'حول Fai$al OS',
+    'menu.fullscreen': 'ملء الشاشة (يفعّل زر الويندوز)',
+    'menu.exitFullscreen': 'الخروج من ملء الشاشة',
     'notif.dismiss': 'إغلاق الإشعار',
   },
   en: {
@@ -35,6 +37,8 @@ defineStrings('shell', {
     'menu.language.ar': 'العربية',
     'menu.language.en': 'English',
     'menu.about': 'About Fai$al OS',
+    'menu.fullscreen': 'Full screen (enables the Windows key)',
+    'menu.exitFullscreen': 'Exit full screen',
     'notif.dismiss': 'Dismiss notification',
   },
 });

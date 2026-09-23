@@ -1,0 +1,261 @@
+.faisal-calc {
+  display: flex;
+  block-size: 100%;
+  inline-size: 100%;
+  background: var(--faisal-bg, #f4f4f4);
+  color: var(--faisal-fg, #1e1e1e);
+  font-family: var(--faisal-font, sans-serif);
+  overflow: hidden;
+}
+
+.faisal-calc-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+/* ── top toolbar ───────────────────────────────────────────────────── */
+
+.faisal-calc-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-block-end: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  background: var(--faisal-surface, #fff);
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.faisal-calc-seg {
+  display: inline-flex;
+  border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  border-radius: var(--faisal-radius-sm, 6px);
+  overflow: hidden;
+}
+
+.faisal-calc-seg button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+
+.faisal-calc-seg button + button { border-inline-start: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13)); }
+.faisal-calc-seg button.is-active { background: var(--faisal-accent, #8F6412); color: var(--faisal-accent-fg, #fff); }
+.faisal-calc-seg button:hover:not(.is-active) { background: var(--faisal-surface-2, #ebebeb); }
+
+.faisal-calc-spacer { flex: 1 1 auto; }
+
+.faisal-calc-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 5px 8px;
+  border-radius: var(--faisal-radius-sm, 6px);
+  border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.faisal-calc-toggle.is-active { background: var(--faisal-surface-2, #ebebeb); }
+
+/* ── function strip (advanced mode) ────────────────────────────────── */
+
+.faisal-calc-fnrow {
+  display: none;
+  flex: 0 0 auto;
+  gap: 5px;
+  padding: 5px 8px;
+  overflow-x: auto;
+  background: var(--faisal-surface-2, #ebebeb);
+  border-block-end: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+}
+
+.faisal-calc-fnrow.is-visible { display: flex; }
+
+.faisal-calc-fnkey {
+  flex: 0 0 auto;
+  border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  border-radius: var(--faisal-radius-sm, 6px);
+  background: var(--faisal-surface, #fff);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.faisal-calc-fnkey:hover { background: var(--faisal-surface-3, #dedcd4); }
+
+/* ── display ────────────────────────────────────────────────────────── */
+
+.faisal-calc-display {
+  flex: 0 0 auto;
+  padding: 10px 16px 8px;
+  background: var(--faisal-surface, #fff);
+  border-block-end: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  text-align: end;
+  min-block-size: 62px;
+}
+
+.faisal-calc-expr {
+  direction: ltr;
+  unicode-bidi: plaintext;
+  font-size: 13px;
+  color: var(--faisal-fg-muted, #777);
+  min-block-size: 16px;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-family: var(--faisal-font-mono, monospace);
+}
+
+.faisal-calc-result {
+  direction: ltr;
+  font-family: var(--faisal-font-mono, monospace);
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-x: auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.faisal-calc-result.is-error { color: var(--faisal-danger, #c01c28); font-size: 20px; }
+
+/* ── button grid ────────────────────────────────────────────────────── */
+
+.faisal-calc-pad {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  min-block-size: 0;
+  overflow: auto;
+}
+
+.faisal-calc-row {
+  display: flex;
+  gap: 4px;
+  flex: 1 1 0;
+  min-block-size: 30px;
+}
+
+.faisal-calc-key {
+  flex: 1 1 0;
+  border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  border-radius: var(--faisal-radius-sm, 6px);
+  background: var(--faisal-surface, #fff);
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+.faisal-calc-key:hover { background: var(--faisal-surface-2, #ebebeb); }
+.faisal-calc-key:active { background: var(--faisal-surface-3, #dedcd4); }
+
+.faisal-calc-key.is-op { color: var(--faisal-accent, #8F6412); font-weight: 600; }
+.faisal-calc-key.is-fn { font-size: 13px; color: var(--faisal-fg-muted, #777); }
+.faisal-calc-key.is-equals {
+  background: var(--faisal-accent, #8F6412);
+  color: var(--faisal-accent-fg, #fff);
+  border-color: transparent;
+  flex: 1 1 0;
+}
+.faisal-calc-key.is-equals:hover { filter: brightness(1.06); }
+.faisal-calc-key.is-wide { flex: 2 1 0; }
+
+/* ── history sidebar ────────────────────────────────────────────────── */
+
+.faisal-calc-history {
+  flex: 0 0 220px;
+  border-inline-start: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  background: var(--faisal-surface, #fff);
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.faisal-calc-history-head {
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--faisal-fg-muted, #777);
+  border-block-end: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.faisal-calc-history-clear {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 12px;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.faisal-calc-history-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.faisal-calc-history-empty {
+  padding: 10px;
+  font-size: 12px;
+  color: var(--faisal-fg-muted, #777);
+  text-align: center;
+}
+
+.faisal-calc-history-item {
+  display: block;
+  inline-size: 100%;
+  text-align: start;
+  background: transparent;
+  border: none;
+  border-radius: var(--faisal-radius-sm, 6px);
+  padding: 6px 8px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.faisal-calc-history-item:hover { background: var(--faisal-surface-2, #ebebeb); }
+
+.faisal-calc-history-expr {
+  direction: ltr;
+  font-family: var(--faisal-font-mono, monospace);
+  font-size: 11px;
+  color: var(--faisal-fg-muted, #777);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.faisal-calc-history-result {
+  direction: ltr;
+  font-family: var(--faisal-font-mono, monospace);
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .faisal-calc-history { display: none; }
+}

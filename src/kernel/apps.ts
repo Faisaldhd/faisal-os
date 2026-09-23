@@ -71,9 +71,31 @@ function scopeWM(wm: WindowManager, appId: string): WindowManager {
   };
 }
 
+const INSTALL_KEY = 'apps.installState';
+type InstallState = { removed: string[]; added: string[] };
+
 export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
   const apps = new Map<string, AppModule>();
-  const running = new Map<string, WindowHandle[]>();
+  const running = new Map<string, { win: WindowHandle; startedAt: number }[]>();
+
+  const state = (): InstallState => {
+    const raw = getSys().settings.get<Partial<InstallState>>(INSTALL_KEY, {});
+    const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
+    return { removed: ids(raw.removed), added: ids(raw.added) };
+  };
+  const saveState = (st: InstallState) => {
+    const sys = getSys();
+    sys.settings.set(INSTALL_KEY, st);
+    sys.bus.emit('apps:changed', {});
+  };
+  const isInstalled = (m: AppManifest, st = state()) =>
+    !!m.core || (m.defaultInstalled === false ? st.added.includes(m.id) : !st.removed.includes(m.id));
+  const manifestOf = (id: string) => {
+    const a = apps.get(id);
+    if (!a) throw new Error(`Unknown app: ${id}`);
+    return a.manifest;
+  };
+  const windowsOf = (id: string) => (running.get(id) ?? []).map((r) => r.win);
 
   const registry: AppRegistry = {
     register(app) {
@@ -81,44 +103,91 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
       apps.set(app.manifest.id, Object.freeze({ ...app, manifest: Object.freeze({ ...app.manifest }) }));
     },
     list(): AppManifest[] {
-      return [...apps.values()].map((a) => a.manifest);
+      const st = state();
+      return [...apps.values()].map((a) => a.manifest).filter((m) => isInstalled(m, st));
+    },
+    catalog() {
+      const st = state();
+      return [...apps.values()].map((a) => ({ ...a.manifest, installed: isInstalled(a.manifest, st) }));
+    },
+    install(appId) {
+      const m = manifestOf(appId);
+      const st = state();
+      if (isInstalled(m, st)) return;
+      saveState({
+        removed: st.removed.filter((x) => x !== appId),
+        added: m.defaultInstalled === false ? [...st.added, appId] : st.added,
+      });
+    },
+    uninstall(appId) {
+      const m = manifestOf(appId);
+      if (m.core) throw new Error(`Cannot remove core app: ${appId}`);
+      const st = state();
+      if (!isInstalled(m, st)) return;
+      windowsOf(appId).forEach((w) => w.close());
+      saveState({
+        removed: m.defaultInstalled === false ? st.removed : [...st.removed, appId],
+        added: st.added.filter((x) => x !== appId),
+      });
+    },
+    running() {
+      return [...running.entries()].flatMap(([appId, rs]) =>
+        rs.map((r) => ({ appId, windowId: r.win.id, startedAt: r.startedAt })));
+    },
+    closeWindow(windowId) {
+      for (const rs of running.values()) rs.find((r) => r.win.id === windowId)?.win.close();
     },
     appForFile(path) {
       const ext = path.slice(path.lastIndexOf('.')).toLowerCase();
-      return [...apps.values()].find((a) => a.manifest.opens?.includes(ext))?.manifest;
+      return registry.list().find((m) => m.opens?.includes(ext));
     },
     async launch(appId, args = []) {
       const app = apps.get(appId);
       if (!app) throw new Error(`Unknown app: ${appId}`);
+      if (!isInstalled(app.manifest)) throw new Error(`App not installed: ${appId}`);
       const sys = getSys();
       const open = running.get(appId) ?? [];
-      if (app.manifest.singleInstance && open.length) { open[0].focus(); return open[0]; }
+      if (app.manifest.singleInstance && open.length) { open[0].win.focus(); return open[0].win; }
 
       const win = sys.wm.open({
         appId,
         title: app.manifest.name[sys.locale()],
         icon: app.manifest.icon,
       });
-      running.set(appId, [...open, win]);
+      running.set(appId, [...open, { win, startedAt: Date.now() }]);
       win.onClose(() => {
-        running.set(appId, (running.get(appId) ?? []).filter((w) => w !== win));
+        running.set(appId, (running.get(appId) ?? []).filter((r) => r.win !== win));
         sys.bus.emit('app:closed', { appId, windowId: win.id });
       });
 
       const perms = app.manifest.permissions;
       const vfs = scopeVFS(sys.vfs, perms);
+      const denied = (what: string) => () => { throw new Error(`EACCES: ${what}`); };
       const scoped: SystemAPI = Object.freeze({
         vfs,
         bus: scopeBus(sys.bus, fsAccess(perms).canRead),
         wm: scopeWM(sys.wm, appId),
         apps: Object.freeze({
           list: registry.list,
+          catalog: registry.catalog,
           appForFile: registry.appForFile,
           launch: registry.launch,
-          register: () => { throw new Error('EACCES: apps cannot register apps'); },
+          register: denied('apps cannot register apps'),
+          install: perms.includes('apps:manage') ? registry.install : denied('apps:manage'),
+          uninstall: perms.includes('apps:manage') ? registry.uninstall : denied('apps:manage'),
+          running: perms.includes('system:monitor') ? registry.running : denied('system:monitor'),
+          closeWindow: perms.includes('system:monitor') ? registry.closeWindow : denied('system:monitor'),
         }),
-        settings: perms.includes('settings') ? sys.settings
-          : Object.freeze({ get: sys.settings.get, set: () => { throw new Error('EACCES: settings'); } }),
+        // 'apps.*' keys are kernel-owned (install state): only reachable through apps:manage.
+        settings: perms.includes('settings')
+          ? Object.freeze({
+            get: sys.settings.get,
+            set: (k: string, v: unknown) => {
+              if (k.startsWith('apps.')) throw new Error('EACCES: kernel-owned setting');
+              sys.settings.set(k, v);
+            },
+          })
+          : Object.freeze({ get: sys.settings.get, set: denied('settings') }),
         locale: sys.locale,
         t: sys.t,
         notify: perms.includes('notifications') ? sys.notify : () => {},
