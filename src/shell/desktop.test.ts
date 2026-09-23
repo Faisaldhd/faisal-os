@@ -136,3 +136,15 @@ describe('dash (dock favourites)', () => {
     expect(getDashIds(sys)).toEqual(['org.faisal.Files']);
   });
 });
+
+import { sessionToRestore } from './session';
+
+describe('sessionToRestore', () => {
+  it('keeps installed app ids in order and drops junk', () => {
+    expect(sessionToRestore(['a', 'x', 3, 'b', 'a'], ['a', 'b'])).toEqual(['a', 'b', 'a']);
+    expect(sessionToRestore('nope', ['a'])).toEqual([]);
+  });
+  it('caps how many windows are reopened', () => {
+    expect(sessionToRestore(Array(30).fill('a'), ['a'])).toHaveLength(12);
+  });
+});

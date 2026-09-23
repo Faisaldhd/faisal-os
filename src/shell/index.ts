@@ -10,6 +10,7 @@ import { mountScreenshot } from './screenshot';
 import { mountNotifications } from './notifications';
 import { mountSplash } from './splash';
 import { mountDesktop } from './desktop';
+import { mountSession } from './session';
 
 export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   wireAppearance(sys.bus, sys.settings);
@@ -36,4 +37,15 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
     if ((ev.key === 'Meta' || ev.key === 'OS') && superAlone) { superAlone = false; ev.preventDefault(); overview.toggle(); }
   });
   window.addEventListener('blur', () => { superAlone = false; });
+
+  // Ctrl+Alt+T opens a terminal, as on most Linux desktops.
+  window.addEventListener('keydown', (ev) => {
+    if (ev.ctrlKey && ev.altKey && !ev.shiftKey && ev.code === 'KeyT') {
+      ev.preventDefault();
+      overview.close();
+      void sys.apps.launch('org.faisal.Terminal').catch(() => {});
+    }
+  });
+
+  mountSession(sys);
 }
