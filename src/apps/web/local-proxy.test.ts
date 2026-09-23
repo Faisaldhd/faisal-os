@@ -401,7 +401,7 @@ describe('probeLocalProxy', () => {
       json: async () => ({ ok: true, version: '1.0.0', auth: 'token-required' }),
     }));
     const result = await probeLocalProxy(base, PROBE_TIMEOUT_MS, fetchImpl as unknown as typeof fetch);
-    expect(result).toEqual({ available: true, version: '1.0.0', auth: 'token-required' });
+    expect(result).toEqual({ available: true, version: '1.0.0', auth: 'token-required', kind: 'local', modes: ['reader', 'raw'] });
   });
 
   it('asks /health and sends NO token header (that endpoint carries no page data)', async () => {

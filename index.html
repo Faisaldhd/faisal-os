@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <!-- CSP صارمة: لا eval، لا سكربتات خارجية. wasm-unsafe-eval مطلوب فقط لمحاكي v86. المضيفون المسموحان لتطبيق Faisal AI فقط: api.groq.com و api.deepseek.com. api.wikimedia.org مسموح لتطبيق البحث داخل النظام (واجهة REST مفتوحة، بلا مفتاح، بلا كوكيز).
+  <!-- CSP صارمة: لا eval، لا سكربتات خارجية. wasm-unsafe-eval مطلوب فقط لمحاكي v86. المضيفون المسموحان لتطبيق Faisal AI فقط: api.groq.com و api.deepseek.com. faisal-os.pages.dev هو وسيط المالك السحابي (قراءة فقط، برمز سري)، يحتاجه الرابط الاحتياطي على GitHub Pages. api.wikimedia.org مسموح لتطبيق البحث داخل النظام (واجهة REST مفتوحة، بلا مفتاح، بلا كوكيز).
        يُسمح بـ http للعناوين المحلية (127.0.0.1 و localhost) وحدها، لأن حاوية المتصفح المُبثّ التي يشغّلها المستخدم بنفسه تعمل على جهازه؛ أي عنوان بعيد يجب أن يكون https. -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: https://api.groq.com https://api.deepseek.com https://api.wikimedia.org http://127.0.0.1:* http://localhost:*; worker-src 'self' blob:; frame-src https: http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'none'; form-action 'none'" />
+        content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: https://api.groq.com https://api.deepseek.com https://api.wikimedia.org https://faisal-os.pages.dev http://127.0.0.1:* http://localhost:*; worker-src 'self' blob:; frame-src https: http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <title>Fai$al OS</title>
   <meta name="theme-color" content="#16264F" />
   <link rel="manifest" href="./manifest.webmanifest" />

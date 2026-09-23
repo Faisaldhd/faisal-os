@@ -80,6 +80,18 @@ export interface ProxyPanelHost {
   openExternal(url: string): void;
   /** Replace the panel error text (already translated). */
   setError(message: string | null): void;
+  /** Which proxy is answering: the local tool (default) or the cloud one. */
+  kind?(): 'local' | 'cloud';
+  /** The sub-modes that proxy serves (default: both). */
+  modes?(): ProxyMode[];
+}
+
+/**
+ * The copy that differs for the cloud proxy lives under `<key>Cloud`; every
+ * other string is shared. Always goes through `t`, so both tables stay checked.
+ */
+function pt(key: string, host?: ProxyPanelHost): string {
+  return host?.kind?.() === 'cloud' ? t(`${key}Cloud`) : t(key);
 }
 
 /* ─────────────────────────────── shared pieces ─────────────────────────────── */
@@ -105,11 +117,11 @@ export function buildProxyBar(
 
   const badge = document.createElement('span');
   badge.className = 'faisal-web-proxy-badge';
-  badge.textContent = t(mode === 'raw' ? 'web.proxyBadgeRaw' : 'web.proxyBadgeReader');
+  badge.textContent = mode === 'raw' ? t('web.proxyBadgeRaw') : pt('web.proxyBadgeReader', host);
 
   const note = document.createElement('span');
   note.className = 'faisal-web-proxy-note';
-  note.textContent = t('web.proxyHint');
+  note.textContent = pt('web.proxyHint', host);
 
   const open = plainButton(t('web.proxyOpenOriginal'), 'faisal-web-btn is-plain', () => {
     host.openExternal(targetUrl);
@@ -144,7 +156,7 @@ export function buildTargetWarning(): HTMLElement {
  * reported a reachable proxy — see ./index.ts.
  */
 export function buildProxyFallbackAction(host: ProxyPanelHost): HTMLButtonElement {
-  return plainButton(t('web.proxyAction'), 'faisal-web-btn is-plain faisal-web-proxy-open', () => {
+  return plainButton(pt('web.proxyAction', host), 'faisal-web-btn is-plain faisal-web-proxy-open', () => {
     // NOT chooseMode(): the window decides whether a token is needed first, and
     // that decision must not be bypassable from the DOM.
     host.openProxy();
@@ -173,14 +185,14 @@ export function buildTokenPanel(
 
   const body = document.createElement('div');
   body.className = 'faisal-web-fallback-body';
-  body.textContent = auth === 'none' ? t('web.proxyHint') : t('web.proxyTokenNeeded');
+  body.textContent = auth === 'none' ? pt('web.proxyHint', host) : pt('web.proxyTokenNeeded', host);
 
   const form = document.createElement('form');
   form.className = 'faisal-web-proxy-token';
 
   const label = document.createElement('label');
   label.htmlFor = 'faisal-web-proxy-token';
-  label.textContent = t('web.proxyTokenLabel');
+  label.textContent = pt('web.proxyTokenLabel', host);
 
   const input = document.createElement('input');
   input.id = 'faisal-web-proxy-token';
@@ -188,8 +200,8 @@ export function buildTokenPanel(
   input.autocomplete = 'off';
   input.spellcheck = false;
   input.className = 'faisal-web-proxy-tokeninput';
-  input.placeholder = t('web.proxyTokenPlaceholder');
-  input.setAttribute('aria-label', t('web.proxyTokenLabel'));
+  input.placeholder = pt('web.proxyTokenPlaceholder', host);
+  input.setAttribute('aria-label', pt('web.proxyTokenLabel', host));
 
   const actions = document.createElement('div');
   actions.className = 'faisal-web-fallback-actions';
@@ -240,7 +252,7 @@ export function buildProxyModePicker(error: string | null, host: ProxyPanelHost)
 
   const body = document.createElement('div');
   body.className = 'faisal-web-fallback-body';
-  body.textContent = t('web.proxyHint');
+  body.textContent = pt('web.proxyHint', host);
 
   const choices = document.createElement('div');
   choices.className = 'faisal-web-proxy-modes';
@@ -265,7 +277,9 @@ export function buildProxyModePicker(error: string | null, host: ProxyPanelHost)
   rawHint.className = 'faisal-web-proxy-modehint';
   rawHint.textContent = t('web.proxyModeRawHint');
 
-  choices.append(reader, readerHint, raw, rawHint);
+  choices.append(reader, readerHint);
+  // The cloud proxy is reader-only: a raw page would run on the OS's own origin.
+  if ((host.modes?.() ?? ['reader', 'raw']).includes('raw')) choices.append(raw, rawHint);
 
   const actions = document.createElement('div');
   actions.className = 'faisal-web-fallback-actions';
@@ -317,7 +331,7 @@ export function buildReaderPanel(
   if (!blocks.length) {
     const empty = document.createElement('p');
     empty.className = 'faisal-web-reader-block faisal-web-reader-empty';
-    empty.textContent = t('web.proxyReaderEmpty');
+    empty.textContent = pt('web.proxyReaderEmpty', host);
     inner.append(empty);
   } else {
     for (const block of blocks) {
@@ -380,7 +394,7 @@ export function buildReaderError(
 
   const title = document.createElement('div');
   title.className = 'faisal-web-fallback-title';
-  title.textContent = t('web.proxyTitle');
+  title.textContent = pt('web.proxyTitle', host);
 
   const body = document.createElement('div');
   body.className = 'faisal-web-fallback-body';

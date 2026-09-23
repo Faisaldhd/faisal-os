@@ -33,7 +33,10 @@ self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin || !url.pathname.startsWith(new URL(self.registration.scope).pathname)) return;
+  const scopePath = new URL(self.registration.scope).pathname;
+  if (url.origin !== self.location.origin || !url.pathname.startsWith(scopePath)) return;
+  // The owner's cloud proxy (functions/proxy): live, token-gated, never cached.
+  if (url.pathname.startsWith(`${scopePath}proxy/`)) return;
 
   if (req.mode === 'navigate') {
     // Fresh page when online (it may point at a new version); cached page offline.

@@ -59,6 +59,17 @@ defineStrings('web', {
     proxyReaderError: 'تعذّر جلب الصفحة عبر الوسيط. تحقّق من أن الوسيط ما زال يعمل، ثم أعد المحاولة.',
     proxyBlockedTarget: 'الوسيط يرفض هذا العنوان: عنوان محلي أو خاص أو بروتوكول غير مدعوم. لم يُرسل أي طلب.',
     proxyTitle: 'وسيط محلي',
+    // the owner's cloud proxy (reader only) — الوسيط السحابي الخاص
+    proxyActionCloud: 'القراءة عبر وسيطك السحابي',
+    proxyHintCloud: 'وسيطك السحابي الخاص على Cloudflare: يجلب نص الصفحة ويعرضه داخل النظام بوضع القراءة. يعمل برمزك السري فقط.',
+    proxyTokenLabelCloud: 'ألصق الرمز السري الذي وضعته في Cloudflare (FAISAL_PROXY_TOKEN)',
+    proxyTokenPlaceholderCloud: 'الرمز السري',
+    proxyTokenNeededCloud: 'هذا وسيطك السحابي ويطلب رمزك السري. يُحفظ في هذا المتصفح فقط ولا يُرسل إلا إلى وسيطك.',
+    proxyTokenRejectedCloud: 'الرمز غير صحيح. لم يُحفظ أي شيء. راجع قيمة FAISAL_PROXY_TOKEN في إعدادات Cloudflare.',
+    proxyBadgeReaderCloud: 'الوسيط السحابي — قراءة',
+    proxyReaderErrorCloud: 'تعذّر جلب الصفحة عبر الوسيط السحابي. قد يكون الموقع رفض الطلب؛ أعد المحاولة أو افتح الأصل.',
+    proxyReaderEmptyCloud: 'لم يُعثر على نص في هذه الصفحة (غالباً تطبيق JavaScript). افتح الأصل.',
+    proxyTitleCloud: 'وسيط سحابي',
 
     // ── in-OS search app (src/apps/web/searchApp.ts) ──
     placeholder: 'ابحث…',
@@ -156,6 +167,17 @@ defineStrings('web', {
     proxyReaderError: 'Could not fetch the page through the proxy. Check that it is still running, then retry.',
     proxyBlockedTarget: 'The proxy refuses this address: a local or private address, or an unsupported scheme. No request was sent.',
     proxyTitle: "Local proxy",
+    // the owner's cloud proxy (reader only)
+    proxyActionCloud: 'Read through my cloud proxy',
+    proxyHintCloud: 'Your own proxy on Cloudflare: it fetches the page text and shows it inside the OS in reader mode. It works only with your secret token.',
+    proxyTokenLabelCloud: 'Paste the secret you set in Cloudflare (FAISAL_PROXY_TOKEN)',
+    proxyTokenPlaceholderCloud: 'Secret token',
+    proxyTokenNeededCloud: 'This is your cloud proxy and it asks for your secret. It is kept in this browser only and sent only to your proxy.',
+    proxyTokenRejectedCloud: 'Wrong token. Nothing was stored. Check FAISAL_PROXY_TOKEN in your Cloudflare settings.',
+    proxyBadgeReaderCloud: 'Cloud proxy — reader',
+    proxyReaderErrorCloud: 'Could not fetch the page through the cloud proxy. The site may have refused it; retry or open the original.',
+    proxyReaderEmptyCloud: 'No text was found on this page (it is probably a JavaScript app). Open the original.',
+    proxyTitleCloud: 'Cloud proxy',
 
     // in-OS search app (src/apps/web/searchApp.ts)
     placeholder: "Search…",

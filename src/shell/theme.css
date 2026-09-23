@@ -1443,6 +1443,16 @@ body {
 /* ───────────────────────── Notification center ───────────────────────── */
 
 .faisal-topbar-clock { position: relative; font-weight: 600; }
+.faisal-topbar-clock .faisal-topbar-date { margin-inline-end: 0.6em; }
+
+/* Narrow phones (~320–480px): the bar keeps the time only, and the side buttons keep
+ * their width instead of being squeezed under the clock. */
+@media (max-width: 480px) {
+  .faisal-topbar-clock .faisal-topbar-date { display: none; }
+  .faisal-topbar-side { flex-shrink: 0; }
+  .faisal-topbar-center { min-width: 0; padding-inline: 4px; }
+  .faisal-topbar-btn { padding-inline: 10px; }
+}
 .faisal-notif-dot {
   position: absolute;
   inset-block-start: 8px;

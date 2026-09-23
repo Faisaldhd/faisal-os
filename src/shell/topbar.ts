@@ -44,6 +44,12 @@ export function mountTopbar(
   clockBtn.setAttribute('aria-haspopup', 'dialog');
   clockBtn.setAttribute('aria-expanded', 'false');
   const clock = document.createElement('span');
+  // Date and time are separate so a narrow phone can drop the date (theme.css).
+  const clockDate = document.createElement('span');
+  clockDate.className = 'faisal-topbar-date';
+  const clockTime = document.createElement('span');
+  clockTime.className = 'faisal-topbar-time';
+  clock.append(clockDate, clockTime);
   const unreadDot = document.createElement('span');
   unreadDot.className = 'faisal-notif-dot';
   unreadDot.hidden = true;
@@ -86,7 +92,10 @@ export function mountTopbar(
     const locale = sys.locale() === 'ar' ? 'ar-EG-u-nu-latn' : 'en-US';
     const timeFmt = new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' });
     const dateFmt = new Intl.DateTimeFormat(locale, { weekday: 'short', month: 'short', day: 'numeric' });
-    clock.textContent = `${dateFmt.format(now)}  ${timeFmt.format(now)}`;
+    clockDate.textContent = dateFmt.format(now);
+    clockTime.textContent = timeFmt.format(now);
+    // The full date stays available to screen readers and on hover when it is hidden.
+    clockBtn.title = `${dateFmt.format(now)} ${timeFmt.format(now)}`;
   }
   // Tick on the minute boundary, so the time never lags behind the real clock.
   const tick = () => {
