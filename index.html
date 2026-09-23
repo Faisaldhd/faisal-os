@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- CSP صارمة: لا eval، لا سكربتات خارجية. wasm-unsafe-eval مطلوب فقط لمحاكي v86. api.anthropic.com و generativelanguage.googleapis.com لتطبيق Faisal AI فقط. -->
+  <!-- CSP صارمة: لا eval، لا سكربتات خارجية. wasm-unsafe-eval مطلوب فقط لمحاكي v86. api.groq.com لتطبيق Faisal AI فقط. -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: https://api.anthropic.com https://generativelanguage.googleapis.com; worker-src 'self' blob:; frame-src https:; object-src 'none'; base-uri 'none'; form-action 'none'" />
+        content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: https://api.groq.com; worker-src 'self' blob:; frame-src https:; object-src 'none'; base-uri 'none'; form-action 'none'" />
   <title>Fai$al OS</title>
   <meta name="theme-color" content="#16264F" />
   <link rel="manifest" href="./manifest.webmanifest" />

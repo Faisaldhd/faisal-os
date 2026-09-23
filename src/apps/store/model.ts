@@ -48,7 +48,7 @@ export const FALLBACK_DESCRIPTIONS: Record<string, LocalizedText> = {
   'org.faisal.Files': { ar: 'استعرض وأدر ملفاتك ومجلداتك', en: 'Browse and manage your files and folders' },
   'org.faisal.Terminal': { ar: 'سطر أوامر شبيه بـ bash، ولينكس حقيقي عبر v86', en: 'A bash-like command line, plus real Linux via v86' },
   'org.faisal.TextEditor': { ar: 'محرر نصوص بسيط لملفاتك', en: 'A simple text editor for your files' },
-  'org.faisal.Claude': { ar: 'مساعد ذكي يبحث في الإنترنت ويقرأ الروابط', en: 'An AI assistant that can search the web and read links' },
+  'org.faisal.Claude': { ar: 'مساعد ذكي سريع عبر GroqCloud يبحث في الإنترنت', en: 'A fast AI assistant on GroqCloud that can search the web' },
   'org.faisal.Calculator': { ar: 'آلة حاسبة سريعة للعمليات اليومية', en: 'A quick calculator for everyday sums' },
   'org.faisal.ImageViewer': { ar: 'تصفح صورك وعرضها', en: 'Browse and view your pictures' },
   'org.faisal.Clock': { ar: 'الوقت والتنبيهات والمؤقتات', en: 'Time, alarms and timers' },

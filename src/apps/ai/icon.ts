@@ -1,7 +1,7 @@
 import { tile, GOLD } from '../../brand/icons';
 
-/** Claude — gold eight-point spark on royal navy, echoing the desktop's girih stars. */
-export const ICON_CLAUDE = tile(
+/** Faisal AI — gold eight-point spark on royal navy, echoing the desktop's girih stars. */
+export const ICON_AI = tile(
   ['#2C4686', '#0E1A3A'],
   '#8FA6E0',
   '<g transform="translate(32 32)">' +
