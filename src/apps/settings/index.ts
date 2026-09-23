@@ -513,7 +513,9 @@ function launch(ctx: AppContext) {
     };
 
     const rows: HTMLElement[] = [statusRow.row];
-    const actionsRow = row(sync.status().enabled ? 'settings.sync.manage' : 'settings.sync.connect', sync.status().enabled ? 'settings.sync.manageDesc' : 'settings.sync.connectDesc');
+    const actionsRow = row('settings.sync.connect', 'settings.sync.connectDesc');
+    const actionsLabel = actionsRow.row.querySelector<HTMLElement>('.faisal-settings-row-label');
+    const actionsDesc = actionsRow.row.querySelector<HTMLElement>('.faisal-settings-row-desc');
     const controls = document.createElement('div');
     controls.className = 'faisal-settings-sync-controls';
     actionsRow.control.append(controls);
@@ -522,6 +524,9 @@ function launch(ctx: AppContext) {
     const paint = () => {
       const s = sync.status();
       statusValue.textContent = describe(s);
+      // The row title follows the live state (it can change while the panel is open).
+      if (actionsLabel) actionsLabel.textContent = t(s.enabled ? 'settings.sync.manage' : 'settings.sync.connect');
+      if (actionsDesc) actionsDesc.textContent = t(s.enabled ? 'settings.sync.manageDesc' : 'settings.sync.connectDesc');
       controls.textContent = '';
       if (s.enabled) {
         const now = document.createElement('button');
