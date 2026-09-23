@@ -21,6 +21,18 @@ export function setLocale(loc: Locale): void {
   document.documentElement.dir = loc === 'ar' ? 'rtl' : 'ltr';
 }
 
+/**
+ * Every key registered for a locale, sorted — for tests and diagnostics.
+ *
+ * Read-only and additive: it exists so a test can prove that a namespace really
+ * has the same keys in Arabic and English. `t()` alone cannot show that, because
+ * it silently falls back (`ar → en → key`), which is the right runtime behaviour
+ * and the exact reason a missing Arabic or English string ships unnoticed.
+ */
+export function registeredKeys(locale: Locale): string[] {
+  return Object.keys(tables[locale]).sort();
+}
+
 export function getLocale(): Locale { return current; }
 
 export function t(key: string, vars?: Record<string, string | number>): string {
