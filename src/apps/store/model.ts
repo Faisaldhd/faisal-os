@@ -13,7 +13,7 @@ export interface LocalizedText {
   en: string;
 }
 
-export const CATEGORIES: CategoryFilter[] = ['all', 'system', 'utilities', 'accessories', 'media', 'development'];
+export const CATEGORIES: CategoryFilter[] = ['all', 'system', 'utilities', 'accessories', 'media', 'development', 'web'];
 
 /** Plain-language explanation of what each permission lets an app do. */
 export const PERMISSION_DESCRIPTIONS: Record<Permission, LocalizedText> = {

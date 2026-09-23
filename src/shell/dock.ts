@@ -30,6 +30,11 @@ export function mountDock(root: HTMLElement, sys: SystemAPI): HTMLElement {
     for (const id of ids) {
       const app = byId.get(id);
       if (!app) continue;
+      // Web apps (category 'web') are deliberately kept OUT of the dock: there is
+      // one per wired site, they would crowd out the real launchers on a phone,
+      // and the Activities overview has a dedicated "Web Apps" group for them.
+      // Everything else keeps the previous dock behaviour unchanged.
+      if (app.category === 'web') continue;
       const btn = document.createElement('button');
       btn.type = 'button';
       const appWins = open.filter((w) => w.appId === app.id);

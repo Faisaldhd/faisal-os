@@ -83,7 +83,16 @@ describe('category filtering + search', () => {
 
   it('lists every filter category including "all"', () => {
     expect(CATEGORIES).toContain('all');
-    expect(CATEGORIES).toEqual(expect.arrayContaining(['system', 'utilities', 'accessories', 'media', 'development']));
+    expect(CATEGORIES).toEqual(expect.arrayContaining(['system', 'utilities', 'accessories', 'media', 'development', 'web']));
+  });
+
+  it('filters the "web" category, so embedded web apps have a chip', () => {
+    const catalog = [
+      entry({ id: 'w', name: { ar: 'ويكيبيديا', en: 'Wikipedia' }, category: 'web' }),
+      entry({ id: 'u', name: { ar: 'أدوات', en: 'Utilities' }, category: 'utilities' }),
+    ];
+    expect(filterCatalog(catalog, { category: 'web', query: '', locale: 'en' }).map((e) => e.id)).toEqual(['w']);
+    expect(filterCatalog(catalog, { category: 'utilities', query: '', locale: 'en' }).map((e) => e.id)).toEqual(['u']);
   });
 
   it('filters by category', () => {

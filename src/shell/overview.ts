@@ -34,12 +34,26 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
   const appGrid = document.createElement('div');
   appGrid.className = 'faisal-app-grid';
 
+  /**
+   * Embedded web apps (category 'web') get their own labelled group below the
+   * main grid instead of being mixed into it. Everything else keeps using
+   * `appGrid` exactly as before.
+   */
+  const webSection = document.createElement('div');
+  webSection.className = 'faisal-overview-web';
+  const webHeading = document.createElement('h2');
+  webHeading.className = 'faisal-overview-heading';
+  webHeading.textContent = t('shell.overview.webApps');
+  const webGrid = document.createElement('div');
+  webGrid.className = 'faisal-app-grid';
+  webSection.append(webHeading, webGrid);
+
   const empty = document.createElement('div');
   empty.className = 'faisal-overview-empty';
   empty.textContent = t('shell.overview.empty');
   empty.hidden = true;
 
-  body.append(winSection, appGrid, empty);
+  body.append(winSection, appGrid, webSection, empty);
 
   const dock = document.createElement('div');
   dock.className = 'faisal-dock';
@@ -49,7 +63,9 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
 
   let open = false;
   let filtered: AppManifest[] = [];
+  let webFiltered: AppManifest[] = [];
   let selected = 0;
+  let webSelected = 0;
 
   function matches(app: AppManifest, query: string): boolean {
     if (!query) return true;
@@ -84,30 +100,45 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
 
   function renderApps() {
     const query = search.value.trim();
-    filtered = sys.apps.list().filter((a) => matches(a, query));
+    const all = sys.apps.list().filter((a) => matches(a, query));
+    // The main grid is untouched for every app that is not a web app.
+    filtered = all.filter((a) => a.category !== 'web');
+    webFiltered = all.filter((a) => a.category === 'web');
     selected = 0;
+    webSelected = 0;
     appGrid.textContent = '';
-    empty.hidden = filtered.length > 0;
+    webGrid.textContent = '';
+    webSection.hidden = webFiltered.length === 0;
+    empty.hidden = filtered.length > 0 || webFiltered.length > 0;
+
     filtered.forEach((app, i) => {
-      const tile = document.createElement('button');
-      tile.type = 'button';
-      tile.className = 'faisal-app-tile' + (i === selected ? ' is-selected' : '');
-      const iconWrap = document.createElement('span');
-      iconWrap.className = 'faisal-app-icon';
-      iconWrap.append(renderIcon(app.icon));
-      const label = document.createElement('span');
-      label.className = 'faisal-app-tile-label';
-      label.textContent = app.name[sys.locale()];
-      tile.append(iconWrap, label);
-      tile.addEventListener('click', () => {
-        sys.apps.launch(app.id);
-        close();
-      });
-      wireContextMenu(tile, (x, y) => {
-        showContextMenu(x, y, appTileMenuItems(sys, app, { onChange: renderApps, onLaunch: close }), { invoker: tile });
-      });
-      appGrid.append(tile);
+      appGrid.append(makeTile(app, i === selected, () => select(i), renderApps));
     });
+    webFiltered.forEach((app, i) => {
+      webGrid.append(makeTile(app, i === webSelected, () => selectWeb(i), renderApps));
+    });
+  }
+
+  /** One launcher tile. `onSelect` only moves the highlight; a click launches. */
+  function makeTile(app: AppManifest, isSelected: boolean, onSelect: () => void, onChange: () => void): HTMLElement {
+    const tile = document.createElement('button');
+    tile.type = 'button';
+    tile.className = 'faisal-app-tile' + (isSelected ? ' is-selected' : '');
+    const iconWrap = document.createElement('span');
+    iconWrap.className = 'faisal-app-icon';
+    iconWrap.append(renderIcon(app.icon));
+    const label = document.createElement('span');
+    label.className = 'faisal-app-tile-label';
+    label.textContent = app.name[sys.locale()];
+    tile.append(iconWrap, label);
+    tile.addEventListener('click', () => {
+      sys.apps.launch(app.id);
+      close();
+    });
+    wireContextMenu(tile, (x, y) => {
+      showContextMenu(x, y, appTileMenuItems(sys, app, { onChange, onLaunch: close }), { invoker: tile });
+    });
+    return tile;
   }
 
   function renderDock() {
@@ -117,6 +148,8 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
     for (const id of dashIds) {
       const app = byId.get(id);
       if (!app) continue;
+      // Same rule as the pinned dock: web apps live in the "Web Apps" group.
+      if (app.category === 'web') continue;
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'faisal-dock-btn';
@@ -151,25 +184,39 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
     [...appGrid.children].forEach((tile, i) => tile.classList.toggle('is-selected', i === selected));
     (appGrid.children[selected] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' });
   }
+  /** Same highlight rules for the web-app group, which sits below the main grid. */
+  function selectWeb(index: number) {
+    webSelected = Math.max(0, Math.min(webFiltered.length - 1, index));
+    [...webGrid.children].forEach((tile, i) => tile.classList.toggle('is-selected', i === webSelected));
+    (webGrid.children[webSelected] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' });
+  }
+  /** The keyboard walks the main grid while it has results, then the web group. */
+  function inWebGroup(): boolean { return filtered.length === 0 && webFiltered.length > 0; }
+  function activeList(): AppManifest[] { return inWebGroup() ? webFiltered : filtered; }
+  function activeIndex(): number { return inWebGroup() ? webSelected : selected; }
+  function move(index: number): void { if (inWebGroup()) selectWeb(index); else select(index); }
   function columns(): number {
-    const tiles = [...appGrid.children] as HTMLElement[];
+    const tiles = [...(inWebGroup() ? webGrid : appGrid).children] as HTMLElement[];
     const top = tiles[0]?.offsetTop;
     const n = tiles.findIndex((tile) => tile.offsetTop !== top);
     return n > 0 ? n : Math.max(1, tiles.length);
   }
   search.addEventListener('keydown', (ev) => {
-    const rtl = getComputedStyle(appGrid).direction === 'rtl';
+    const rtl = getComputedStyle(inWebGroup() ? webGrid : appGrid).direction === 'rtl';
     switch (ev.key) {
-      case 'Enter':
-        if (filtered[selected]) { void sys.apps.launch(filtered[selected].id); close(); }
+      case 'Enter': {
+        const list = activeList();
+        const hit = list[activeIndex()];
+        if (hit) { void sys.apps.launch(hit.id); close(); }
         break;
+      }
       case 'Escape':
         close();
         break;
-      case 'ArrowRight': ev.preventDefault(); select(selected + (rtl ? -1 : 1)); break;
-      case 'ArrowLeft': ev.preventDefault(); select(selected + (rtl ? 1 : -1)); break;
-      case 'ArrowDown': ev.preventDefault(); select(selected + columns()); break;
-      case 'ArrowUp': ev.preventDefault(); select(selected - columns()); break;
+      case 'ArrowRight': ev.preventDefault(); move(activeIndex() + (rtl ? -1 : 1)); break;
+      case 'ArrowLeft': ev.preventDefault(); move(activeIndex() + (rtl ? 1 : -1)); break;
+      case 'ArrowDown': ev.preventDefault(); move(activeIndex() + columns()); break;
+      case 'ArrowUp': ev.preventDefault(); move(activeIndex() - columns()); break;
     }
   });
 
