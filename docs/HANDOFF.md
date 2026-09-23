@@ -63,6 +63,11 @@ so the framed page never sees a live secret.
 4. The streamed browser and the local proxy have never been run against a live container from
    this environment (no Docker, no browser): both need the owner's own run, exactly as their
    docs describe.
+5. Settings -> Privacy clears one `faisal.web.<id>.url` key per wired site (now all nineteen of
+   them), but not the other keys this branch added to that namespace: `faisal.web.search.*`
+   (provider, query, and any Google Programmable Search key) and `faisal.web.proxy.*` (token,
+   port, enabled). The proxy token is a bearer credential, so a "clear app keys" entry is the
+   honest follow-up.
 
 ## Environment facts a future session must know
 - Vite and Vitest need a full-access file policy: under a confined sandbox they die with
@@ -74,7 +79,7 @@ so the framed page never sees a live secret.
   `src/shell/index.ts` dirty, and blocked rebases.
 - Verification standard used throughout: no commit without a line-by-line review, no visible
   change without a real browser check, and no security claim without a measurement.
-- Gates on the tree at the time of writing: 33 test files / 730 tests, typecheck clean.
+- Gates on the tree at the time of writing: 33 test files / 774 tests, typecheck clean, build OK.
 
 ## Review verdicts already recorded (read-only, 2026-09-23)
 
