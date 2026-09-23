@@ -12,7 +12,7 @@ import {
   type TitleEvent,
   type WebviewElement,
 } from '../../shell/native-web';
-import { loadBookmarks, saveBookmarks, loadEngine, saveEngine } from './model';
+import { loadBookmarks, saveBookmarks, loadEngine, saveEngine, adoptDesktopGoogleOnce } from './model';
 import {
   resolveAddressInput,
   isAllowedFrameUrl,
@@ -137,7 +137,7 @@ function launch(ctx: AppContext): void {
     engineSelect.append(o);
   }
   // Desktop: Google is the default, since every engine loads in-tab there.
-  let engine: SearchEngine = loadEngine(native ? 'google' : 'wikipedia');
+  let engine: SearchEngine = native ? adoptDesktopGoogleOnce(loadEngine('google')) : loadEngine('wikipedia');
   engineSelect.value = engine;
   engineSelect.addEventListener('change', () => {
     engine = (engineSelect.value as SearchEngine) ?? 'wikipedia';
