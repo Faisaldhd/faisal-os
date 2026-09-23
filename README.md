@@ -43,12 +43,7 @@ npm run desktop:build   # ملف تثبيت في release/ (Windows: NSIS، macOS
 
 النسخة المثبّتة تفحص [GitHub Releases](https://github.com/Faisaldhd/faisal-os/releases) عند التشغيل وكل 6 ساعات، وتنزّل الإصدار الجديد في الخلفية ثم تسأل: «إعادة التشغيل الآن» أو «لاحقًا» (يُثبَّت عند الإغلاق). يعمل على Windows وLinux؛ على macOS يتطلب التحديث التلقائي توقيعًا رقميًا من Apple، فهناك يُنزَّل الإصدار الجديد يدويًا.
 
-لإصدار نسخة جديدة:
-
-```bash
-npm version patch          # يرفع الإصدار في package.json وينشئ الوسم v1.0.1
-git push --follow-tags     # سير العمل desktop-release.yml يبني Windows/Linux/macOS وينشر الإصدار
-```
+**الإصدار تلقائي:** كل دمج في `main` (منك أو من أي وكيل) يشغّل `desktop-release.yml`، فيبني Windows/Linux/macOS ويشغّل الاختبارات وينشر إصدارًا جديدًا برقم يزيد تلقائيًا (v1.0.1 ← v1.0.2 …)، ثم تلتقطه النسخ المثبّتة. تعديلات ملفات Markdown وحدها لا تُصدر نسخة. لبدء سلسلة جديدة غيّر `major.minor` في `package.json` (مثل 1.1.0). ويمكن تشغيله يدويًا من تبويب Actions.
 
 ## What it is
 
