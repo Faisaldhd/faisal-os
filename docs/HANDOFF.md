@@ -3,7 +3,7 @@
 Written at the end of a long autonomous session. ASCII only on purpose (a PowerShell write
 once corrupted a UTF-8 CSS file; keep handoff edits ASCII or use the edit tool).
 
-Live site: https://faisaldhd.github.io/faisal-os/  (repo name is lowercase `faisal-os`;
+Live site: https://faisal-os.pages.dev/ (mirror: https://faisaldhd.github.io/faisal-os/)  (repo name is lowercase `faisal-os`;
 `Faisal-OS` in the URL 404s). Pages uploads `dist` only, so nothing under `docs/` is served.
 
 ## Shipped and live on main (merged + deployed)

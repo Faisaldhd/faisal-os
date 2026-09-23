@@ -2,7 +2,7 @@
 
 A browser-based personal desktop OS inspired by Fedora/GNOME: Arabic-first (RTL) with full English support, built with Vite + TypeScript and plain DOM (no UI framework).
 
-**Live:** https://faisaldhd.github.io/faisal-os/ · **Code:** https://github.com/Faisaldhd/faisal-os
+**Live:** https://faisal-os.pages.dev/ (mirror: https://faisaldhd.github.io/faisal-os/) · **Code:** https://github.com/Faisaldhd/faisal-os
 
 This is a personal project by Faisal Saeed Al Shahrani. It is built for one user (its author) and documented honestly rather than marketed.
 
@@ -10,8 +10,8 @@ This is a personal project by Faisal Saeed Al Shahrani. It is built for one user
 
 **Fai$al OS** نظام سطح مكتب شخصي يعمل داخل المتصفح، مستوحى من فيدورا وGNOME، عربي أولًا (RTL) مع دعم كامل للإنجليزية. مشروع شخصي من تطوير فيصل سعيد الشهراني.
 
-- **الموقع المباشر:** <https://faisaldhd.github.io/faisal-os/> — يُنشر تلقائيًا عبر GitHub Actions عند كل دفع إلى الفرع `main`، بعد نجاح الاختبارات والبناء.
-- **رابط احتياطي:** <https://faisal-os.pages.dev/> — نفس النسخة على Cloudflare Pages، للشبكات التي لا تصل إلى GitHub Pages. يُبنى تلقائيًا من `main` مع كل دفع.
+- **الموقع المباشر:** <https://faisal-os.pages.dev/> — على Cloudflare Pages، يُبنى تلقائيًا من `main` مع كل دفع، ويعمل على الشبكات التي لا تصل إلى GitHub Pages.
+- **رابط احتياطي:** <https://faisaldhd.github.io/faisal-os/> — نفس النسخة على GitHub Pages، تُنشر عبر GitHub Actions بعد نجاح الاختبارات والبناء.
 - **الشيفرة:** <https://github.com/Faisaldhd/faisal-os>
 - **أبرز المزايا:** إحدى عشرة تطبيقًا مدمجًا لا يُحمَّل كودها إلا عند أول تشغيل، ومدير نوافذ كامل (سحب، تحجيم، التصاق بالحواف، تثبيت في الأعلى، حفظ الهندسة، استعادة الجلسة)، ونظام ملفات POSIX على IndexedDB بحصة 50 ميغابايت، وإشعارات مع سجل ووضع «عدم الإزعاج»، وسمتان داكنة وفاتحة مع لون تمييز، وطرفية فيها صدفة شبيهة بـ bash، وأمر `linux` يُقلع نواة لينكس 6.8 حقيقية مع BusyBox عبر محاكي v86.
 - **الأمن:** لا أسرار في المستودع، ولا قياس عن بعد، وسياسة CSP صارمة. راجع [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md)؛ التطبيقات اليوم تتشارك بيئة JavaScript نفسها مع النواة، فطبقة الصلاحيات حارس ضد الأخطاء لا صندوق رمل.
@@ -54,9 +54,9 @@ Two things make it more than a mock desktop: apps are real capability-scoped mod
 
 ### Live demo
 
-<https://faisaldhd.github.io/faisal-os/> — deployed by GitHub Actions on every push to `main` (`.github/workflows/pages.yml` runs `npm ci`, `npm test`, `npm run build`, then publishes `dist/` to GitHub Pages).
+<https://faisal-os.pages.dev/> — Cloudflare Pages builds it from `main` on every push (Git integration: `npm run build`, output `dist`, `NODE_VERSION=22`). It also works on networks that can't reach GitHub Pages.
 
-**Mirror:** <https://faisal-os.pages.dev/> — the same build on Cloudflare Pages, for networks that can't reach GitHub Pages. Cloudflare builds it from `main` on every push (Git integration: `npm run build`, output `dist`, `NODE_VERSION=22`).
+**Mirror:** <https://faisaldhd.github.io/faisal-os/> — the same build on GitHub Pages, deployed by GitHub Actions on every push to `main` (`.github/workflows/pages.yml` runs `npm ci`, `npm test`, `npm run build`, then publishes `dist/`).
 
 ### Screenshot
 
