@@ -311,6 +311,12 @@ describe('proxy response header surgery', () => {
   it('never sends a wildcard origin, and only echoes the exact allowlisted origins', () => {
     expect(allowedOrigin('https://faisaldhd.github.io')).toBe('https://faisaldhd.github.io');
     expect(allowedOrigin('https://faisaldhd.github.io/app/')).toBe('');
+    // The Cloudflare Pages deployment, and its own per-build preview subdomains.
+    expect(allowedOrigin('https://faisal-os.pages.dev')).toBe('https://faisal-os.pages.dev');
+    expect(allowedOrigin('https://abc123.faisal-os.pages.dev')).toBe('https://abc123.faisal-os.pages.dev');
+    expect(allowedOrigin('https://faisal-os.pages.dev.evil.example')).toBe('');
+    expect(allowedOrigin('https://other-project.pages.dev')).toBe('');
+    expect(allowedOrigin('https://evil-faisal-os.pages.dev')).toBe('');
     expect(allowedOrigin('http://localhost:3080')).toBe('http://localhost:3080');
     expect(allowedOrigin('http://127.0.0.1:5173')).toBe('http://127.0.0.1:5173');
     expect(allowedOrigin('https://evil.example')).toBe('');

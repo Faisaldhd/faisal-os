@@ -313,6 +313,18 @@ export async function validateTargetUrl(raw, opts = {}) {
 /* ──────────────────────────────── CORS allowlist ──────────────────────────────── */
 
 /**
+ * The published origins of the OS itself. Adding a host here is what lets a page
+ * served from it talk to this proxy at all; anything else gets no CORS header and
+ * the browser blocks the call. `faisal-os.pages.dev` is the Cloudflare Pages
+ * deployment, added after the owner moved there because GitHub Pages' address
+ * range became unreachable from his network.
+ */
+export const ALLOWED_APP_ORIGINS = [
+  'https://faisaldhd.github.io',
+  'https://faisal-os.pages.dev',
+];
+
+/**
  * The ONLY origins we ever echo back. Returns '' when the origin is not
  * allowed, and the caller then sends NO `access-control-allow-origin` header at
  * all — so a hostile page's fetch fails instead of silently reading the reply.
@@ -327,7 +339,11 @@ export function allowedOrigin(reqOrigin) {
     return '';
   }
   if (reqOrigin !== u.origin) return ''; // no trailing slash / path / junk
-  if (u.origin === 'https://faisaldhd.github.io') return u.origin;
+  if (ALLOWED_APP_ORIGINS.includes(u.origin)) return u.origin;
+  // Cloudflare Pages preview deployments get a per-build subdomain of the
+  // project's own pages.dev domain. Only this project's previews match, and the
+  // token is still required for anything real.
+  if (/^https:\/\/[a-z0-9-]+\.faisal-os\.pages\.dev$/.test(u.origin)) return u.origin;
   if ((u.protocol === 'http:' && u.hostname === 'localhost') || (u.protocol === 'http:' && u.hostname === '127.0.0.1')) {
     return /^\d+$/.test(u.port) ? u.origin : '';
   }
