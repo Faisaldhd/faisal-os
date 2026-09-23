@@ -12,6 +12,7 @@ import { mountNotifications } from './notifications';
 import { mountSplash } from './splash';
 import { mountDesktop } from './desktop';
 import { mountSession } from './session';
+import { mountLock } from './lock';
 
 export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   wireAppearance(sys.bus, sys.settings);
@@ -20,7 +21,14 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   mountDesktop(root, sys, sys.wm);
   const overview = mountOverview(root, sys, sys.wm);
   const screenshot = mountScreenshot(sys);
-  const topbar = mountTopbar(root, sys, () => overview.toggle(), () => screenshot.capture());
+  const lock = mountLock();
+  const topbar = mountTopbar(
+    root,
+    sys,
+    () => overview.toggle(),
+    () => screenshot.capture(),
+    () => ({ enabled: lock.isEnabled(), onLock: () => lock.lock(), onManage: () => lock.openManage() }),
+  );
   mountDock(root, sys);
   mountNotifications(root, sys, topbar.querySelector<HTMLButtonElement>('.faisal-topbar-clock'));
 
@@ -60,5 +68,21 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
     sys.wm.get(target)?.focus();
   });
 
+  // Ctrl+Alt+L locks the session. Guarded like the window manager's shortcuts: never while the
+  // user is typing (a terminal is a real textarea) and never mid-IME composition.
+  window.addEventListener('keydown', (ev) => {
+    if (!ev.ctrlKey || !ev.altKey || ev.shiftKey || !isKey(ev, 'L')) return;
+    const target = ev.target as HTMLElement | null;
+    const typing = !!target && (target.isContentEditable
+      || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT');
+    if (typing || ev.isComposing || lock.isLocked() || !lock.isEnabled()) return;
+    ev.preventDefault();
+    overview.close();
+    lock.lock();
+  });
+
   mountSession(sys);
+
+  // Boot gate: a configured password raises the curtain before anything becomes reachable.
+  if (lock.isEnabled()) lock.lock();
 }

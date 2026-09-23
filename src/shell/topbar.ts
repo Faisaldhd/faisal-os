@@ -7,7 +7,19 @@ import { ACCENTS, BRAND_ACCENT_ID, applyTheme, applyAccent, type ThemeMode } fro
 const ICON_SYSTEM =
   '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4" fill="currentColor"/><path d="M4 20c1.2-4.2 4.6-6 8-6s6.8 1.8 8 6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>';
 
-export function mountTopbar(root: HTMLElement, sys: SystemAPI, onToggleOverview: () => void, onScreenshot?: () => void): HTMLElement {
+export interface LockMenuHooks {
+  enabled: boolean;
+  onLock: () => void;
+  onManage: () => void;
+}
+
+export function mountTopbar(
+  root: HTMLElement,
+  sys: SystemAPI,
+  onToggleOverview: () => void,
+  onScreenshot?: () => void,
+  lock?: () => LockMenuHooks,
+): HTMLElement {
   const bar = document.createElement('header');
   bar.className = 'faisal-topbar';
 
@@ -167,6 +179,26 @@ export function mountTopbar(root: HTMLElement, sys: SystemAPI, onToggleOverview:
     });
     langSection.append(langRow);
     menu.append(langSection);
+
+    // Session lock: the entry point that sets a password, and the one that locks right now.
+    const lockHooks = lock?.();
+    const lockSection = document.createElement('div');
+    lockSection.className = 'faisal-menu-section';
+    if (lockHooks?.enabled) {
+      const lockBtn = document.createElement('button');
+      lockBtn.type = 'button';
+      lockBtn.className = 'faisal-menu-item';
+      lockBtn.textContent = t('shell.lock.now');
+      lockBtn.addEventListener('click', () => { closeMenu(); lockHooks.onLock(); });
+      lockSection.append(lockBtn);
+    }
+    const manageBtn = document.createElement('button');
+    manageBtn.type = 'button';
+    manageBtn.className = 'faisal-menu-item';
+    manageBtn.textContent = t(lockHooks?.enabled ? 'shell.lock.change' : 'shell.lock.setTitle');
+    manageBtn.addEventListener('click', () => { closeMenu(); lockHooks?.onManage(); });
+    lockSection.append(manageBtn);
+    menu.append(lockSection);
 
     // About
     const aboutSection = document.createElement('div');
