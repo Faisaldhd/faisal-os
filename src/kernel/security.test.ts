@@ -59,6 +59,7 @@ describe('app sandbox (kernel capabilities)', () => {
         const h: WindowHandle = {
           id: `w${wins.length}`, appId: o.appId, content: document.createElement('div'),
           setTitle() {}, focus() {}, close() {}, setCloseGuard() {}, onClose: () => () => {}, onResize: () => () => {},
+          requestClose: async () => {},
         };
         wins.push(h);
         return h;

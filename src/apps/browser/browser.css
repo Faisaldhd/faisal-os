@@ -38,7 +38,8 @@
   gap: 8px;
   max-inline-size: 200px;
   min-inline-size: 110px;
-  padding: 7px 8px 7px 10px;
+  padding-block: 7px;
+  padding-inline: 8px 10px;
   border: none;
   border-radius: 8px 8px 0 0;
   background: transparent;
@@ -274,7 +275,8 @@
   gap: 8px;
   max-inline-size: 480px;
   margin: 22px auto 0;
-  padding: 4px 6px 4px 16px;
+  padding-block: 4px;
+  padding-inline: 16px 6px;
   border-radius: 999px;
   background: var(--faisal-surface, #fff);
   border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
@@ -288,6 +290,11 @@
   color: inherit;
   font: inherit;
   outline: none;
+}
+/* The outline: none above is for the mouse case only; keyboard focus still needs a ring. */
+.faisal-browser-home-search-input:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8F6412);
+  outline-offset: 3px;
 }
 .faisal-browser-home-search-btn {
   flex: none;
@@ -331,6 +338,19 @@
   color: inherit;
 }
 .faisal-browser-tile:hover { border-color: var(--faisal-accent-2, #c9982f); transform: translateY(-1px); }
+/* Touch: no hover, so the border is the only hint that a tile is actionable. */
+@media (hover: none) {
+  .faisal-browser-tile { border-color: var(--faisal-accent-2, #c9982f); }
+}
+.faisal-browser-tile:focus-visible,
+.faisal-browser-tab:focus-visible,
+.faisal-browser-newtab:focus-visible,
+.faisal-browser-iconbtn:focus-visible,
+.faisal-browser-home-search-btn:focus-visible,
+.faisal-browser-blocked-open:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8F6412);
+  outline-offset: 2px;
+}
 .faisal-browser-tile-label { font-weight: 600; font-size: 13px; }
 .faisal-browser-tile-desc { font-size: 11.5px; color: var(--faisal-fg-muted, #565b67); margin-block-start: 4px; }
 .faisal-browser-tile-badge {

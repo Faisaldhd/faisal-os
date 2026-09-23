@@ -10,7 +10,14 @@ const PRECACHE = __PRECACHE__;
 const CACHE = `faisal-os-${VERSION}`;
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(PRECACHE)));
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    // Cache entry by entry: one 404 (a file removed between deploys) must never wedge the
+    // install forever, which would leave every visitor on the old version with no offline copy.
+    const results = await Promise.allSettled(PRECACHE.map((url) => cache.add(url)));
+    const failed = PRECACHE.filter((_, i) => results[i].status === 'rejected');
+    if (failed.length) console.warn('[sw] could not precache:', failed.join(', '));
+  })());
 });
 
 self.addEventListener('activate', (event) => {

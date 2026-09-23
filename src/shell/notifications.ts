@@ -184,6 +184,7 @@ export function mountNotifications(root: HTMLElement, sys: SystemAPI, anchor: HT
     panel = document.createElement('div');
     panel.className = 'faisal-notif-center';
     panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
     panel.setAttribute('aria-label', t('shell.notif.title'));
 
     const head = document.createElement('div');
@@ -217,8 +218,11 @@ export function mountNotifications(root: HTMLElement, sys: SystemAPI, anchor: HT
     unread = 0;
     syncDot();
     anchor.setAttribute('aria-expanded', 'true');
+    anchor.setAttribute('aria-haspopup', 'dialog');
     document.addEventListener('pointerdown', onOutside, true);
     document.addEventListener('keydown', onKey, true);
+    // Put the keyboard where the eye is; Escape returns it to the top bar.
+    clear.focus();
   }
 
   function close() {
@@ -236,7 +240,22 @@ export function mountNotifications(root: HTMLElement, sys: SystemAPI, anchor: HT
     close();
   }
   function onKey(ev: KeyboardEvent) {
-    if (ev.key === 'Escape') { ev.stopPropagation(); close(); anchor?.focus(); }
+    if (!panel) return;
+    if (ev.key === 'Escape') { ev.stopPropagation(); close(); anchor?.focus(); return; }
+    if (ev.key !== 'Tab') return;
+    // Keep Tab inside the open panel instead of walking the desktop behind it.
+    const focusable = panel.querySelectorAll<HTMLElement>('button, input, [tabindex]:not([tabindex="-1"])');
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    const inside = active instanceof Node && panel.contains(active);
+    if (ev.shiftKey) {
+      if (!inside || active === first) { ev.preventDefault(); last.focus(); }
+    } else if (!inside || active === last) {
+      ev.preventDefault();
+      first.focus();
+    }
   }
 
   anchor?.addEventListener('click', () => (panel ? close() : openPanel()));

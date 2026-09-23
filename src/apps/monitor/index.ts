@@ -22,8 +22,9 @@ defineStrings('monitor', {
     heap: 'ذاكرة JS',
     heapUnavailable: 'غير متاحة في هذا المتصفح',
     fps: 'استجابة الخيط الرئيسي (FPS)',
-    quotaUsage: 'استخدام التخزين مقابل الحصة',
+    vfsQuotaLabel: 'حد نظام ملفات Fai$al OS (VFS)',
     storageEstimate: 'تقدير تخزين المتصفح',
+    storageUnavailable: 'غير متاح في هذا المتصفح',
     refresh: 'تحديث',
     walking: 'جارٍ الفحص…',
   },
@@ -41,8 +42,9 @@ defineStrings('monitor', {
     heap: 'JS heap',
     heapUnavailable: 'Not available in this browser',
     fps: 'Main-thread responsiveness (FPS)',
-    quotaUsage: 'Storage used vs. quota',
+    vfsQuotaLabel: 'Fai$al OS VFS limit',
     storageEstimate: 'Browser storage estimate',
+    storageUnavailable: 'Not available in this browser',
     refresh: 'Refresh',
     walking: 'Scanning…',
   },
@@ -50,7 +52,10 @@ defineStrings('monitor', {
 
 type Tab = 'processes' | 'resources' | 'filesystems';
 
-const QUOTA_BYTES = 50 * 1024 * 1024;
+// Quota enforced by the Fai$al OS VFS layer itself (see src/vfs/index.ts),
+// NOT by the browser. The browser's own quota comes from
+// navigator.storage.estimate() and is displayed separately, labelled as such.
+const VFS_QUOTA_BYTES = 50 * 1024 * 1024;
 const HISTORY_LEN = 60;
 
 interface PerformanceMemory {
@@ -341,32 +346,43 @@ function launch(ctx: AppContext): void {
     const quotaRow = document.createElement('div');
     quotaRow.className = 'faisal-mon-fs-bar-row';
     const quotaLabel = document.createElement('span');
-    quotaLabel.textContent = t('monitor.quotaUsage');
+    quotaLabel.textContent = t('monitor.vfsQuotaLabel');
     const quotaVal = document.createElement('span');
-    quotaVal.textContent = `${formatBytes(totalUsed)} / ${formatBytes(QUOTA_BYTES)}`;
+    quotaVal.textContent = `${formatBytes(totalUsed)} / ${formatBytes(VFS_QUOTA_BYTES)}`;
     quotaRow.append(quotaLabel, quotaVal);
     const quotaTrack = document.createElement('div');
     quotaTrack.className = 'faisal-mon-fs-bar-track';
     const quotaFill = document.createElement('div');
-    const ratio = clampRatio(totalUsed, QUOTA_BYTES);
-    quotaFill.className = 'faisal-mon-fs-bar-fill' + (totalUsed > QUOTA_BYTES ? ' is-over' : '');
+    const ratio = clampRatio(totalUsed, VFS_QUOTA_BYTES);
+    quotaFill.className = 'faisal-mon-fs-bar-fill' + (totalUsed > VFS_QUOTA_BYTES ? ' is-over' : '');
     quotaFill.style.width = `${Math.round(ratio * 100)}%`;
     quotaTrack.appendChild(quotaFill);
     summary.append(quotaRow, quotaTrack);
 
+    // The browser's own reading is authoritative. Start from an explicit
+    // "not available" value and only replace it with numbers the browser
+    // actually reported — never with a placeholder or a zero.
+    const estRow = document.createElement('div');
+    estRow.className = 'faisal-mon-fs-bar-row';
+    const estLabel = document.createElement('span');
+    estLabel.textContent = t('monitor.storageEstimate');
+    const estVal = document.createElement('span');
+    estVal.textContent = t('monitor.storageUnavailable');
+    estRow.append(estLabel, estVal);
+    summary.appendChild(estRow);
+    fsRoot.appendChild(summary);
+
     if (typeof navigator !== 'undefined' && navigator.storage?.estimate) {
       try {
         const est = await navigator.storage.estimate();
-        const estRow = document.createElement('div');
-        estRow.className = 'faisal-mon-fs-bar-row';
-        estRow.style.marginBlockStart = '6px';
-        estRow.textContent = `${t('monitor.storageEstimate')}: ${formatBytes(est.usage ?? 0)} / ${formatBytes(est.quota ?? 0)}`;
-        summary.appendChild(estRow);
+        if (typeof est.usage === 'number' && typeof est.quota === 'number') {
+          estVal.textContent = `${formatBytes(est.usage)} / ${formatBytes(est.quota)}`;
+        }
       } catch {
-        // navigator.storage.estimate can reject in restricted contexts — skip silently
+        // navigator.storage.estimate can reject in restricted contexts —
+        // the explicit "not available" text stays on screen.
       }
     }
-    fsRoot.appendChild(summary);
 
     const list = document.createElement('div');
     list.className = 'faisal-mon-fs-list';

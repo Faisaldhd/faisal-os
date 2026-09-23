@@ -18,8 +18,6 @@ import './store.css';
 
 const ICON_BACK =
   '<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-const ICON_CHECK =
-  '<svg viewBox="0 0 24 24"><path d="M5 13l4 4 10-10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
 const CATEGORY_KEY: Record<CategoryFilter, string> = {
   all: 'store.categoryAll',
@@ -226,37 +224,18 @@ function launch(ctx: AppContext) {
   }
 
   function renderUpdates() {
-    const installed = sortedCatalog(sys.apps.catalog().filter((a) => a.installed), locale());
-
+    // Fai$al OS ships no package source and no remote version metadata, so a
+    // real update check is impossible. Say that plainly instead of claiming
+    // every app is up to date or printing a version that implies a comparison.
     const panel = document.createElement('div');
     panel.className = 'faisal-store-uptodate';
-    const icon = document.createElement('div');
-    icon.className = 'faisal-store-uptodate-icon';
-    icon.append(renderIcon(ICON_CHECK));
     const title = document.createElement('div');
     title.className = 'faisal-store-uptodate-title';
-    title.textContent = t('store.upToDateTitle');
+    title.textContent = t('store.builtInTitle');
     const desc = document.createElement('div');
-    desc.textContent = t('store.upToDateBody');
-    panel.append(icon, title, desc);
+    desc.textContent = t('store.builtInBody');
+    panel.append(title, desc);
     body.append(panel);
-
-    const list = document.createElement('div');
-    list.className = 'faisal-store-updates-list';
-    for (const entry of installed) {
-      const row = document.createElement('div');
-      row.className = 'faisal-store-updates-row';
-      row.append(makeIcon(entry.icon, 'faisal-store-card-icon'));
-      const name = document.createElement('div');
-      name.className = 'faisal-store-updates-row-name';
-      name.textContent = entry.name[locale()];
-      const version = document.createElement('div');
-      version.className = 'faisal-store-updates-row-version';
-      version.textContent = entry.version ?? '1.0.0';
-      row.append(name, version);
-      list.append(row);
-    }
-    body.append(list);
   }
 
   function renderPermissions(permissions: Permission[]) {
@@ -349,11 +328,16 @@ function launch(ctx: AppContext) {
     name.textContent = entry.name[locale()];
     const meta = document.createElement('div');
     meta.className = 'faisal-store-detail-meta';
-    const version = document.createElement('span');
-    version.textContent = `${t('store.versionLabel')}: ${entry.version ?? '1.0.0'}`;
+    // Only show a version the catalog actually carries; most apps have none,
+    // and inventing a fallback version would be fabricated data.
+    if (entry.version) {
+      const version = document.createElement('span');
+      version.textContent = `${t('store.versionLabel')}: ${entry.version}`;
+      meta.append(version);
+    }
     const cat = document.createElement('span');
     cat.textContent = `${t('store.categoryLabel')}: ${t(CATEGORY_KEY[(entry.category ?? 'system') as CategoryFilter] ?? 'store.categorySystem')}`;
-    meta.append(version, cat);
+    meta.append(cat);
     info.append(name, meta);
     head.append(info);
     container.append(head);

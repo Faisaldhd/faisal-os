@@ -165,6 +165,16 @@
 .faisal-calc-key:hover { background: var(--faisal-surface-2, #ebebeb); }
 .faisal-calc-key:active { background: var(--faisal-surface-3, #dedcd4); }
 
+.faisal-calc-seg button:focus-visible,
+.faisal-calc-toggle:focus-visible,
+.faisal-calc-fnkey:focus-visible,
+.faisal-calc-key:focus-visible,
+.faisal-calc-history-clear:focus-visible,
+.faisal-calc-history-item:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8F6412);
+  outline-offset: 2px;
+}
+
 .faisal-calc-key.is-op { color: var(--faisal-accent, #8F6412); font-weight: 600; }
 .faisal-calc-key.is-fn { font-size: 13px; color: var(--faisal-fg-muted, #777); }
 .faisal-calc-key.is-equals {

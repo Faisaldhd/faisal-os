@@ -1,7 +1,24 @@
 import type { EventBus, Stat, VFS } from '../kernel/types';
 import { VFSError } from '../kernel/types';
+import { defineStrings, t } from '../kernel/i18n';
+import { OS_VERSION } from '../kernel/version';
 import { basename, dirname, normalize } from '../kernel/path';
 import { createStorageBackend, type StorageBackend, type StoredNode } from './storage';
+
+defineStrings('vfs', {
+  ar: {
+    'volatile.title': 'التخزين غير دائم',
+    'volatile.body': 'تعذّر فتح تخزين المتصفح، لذا لن تُحفظ الملفات بعد إعادة تحميل الصفحة.',
+    'error.title': 'خطأ في التخزين',
+    'error.body': 'قد لا تُحفظ التغييرات بعد إعادة تحميل الصفحة.',
+  },
+  en: {
+    'volatile.title': 'Storage is not persistent',
+    'volatile.body': 'Browser storage could not be opened, so files will be lost when the page reloads.',
+    'error.title': 'Storage error',
+    'error.body': 'Changes may not be saved after a reload.',
+  },
+});
 
 const TOTAL_QUOTA = 50 * 1024 * 1024; // 50 MB
 const FILE_QUOTA = 20 * 1024 * 1024; // 20 MB per file
@@ -22,6 +39,15 @@ function toStat(n: Node): Stat {
 export async function createVFS(bus: EventBus): Promise<VFS> {
   const backend: StorageBackend = await createStorageBackend();
   const nodes = new Map<string, Node>();
+
+  // The shell is mounted after the VFS is created, so wait for it before telling the
+  // user that nothing they save will survive a reload.
+  if (!backend.persistent) {
+    const off = bus.on('system:ready', () => {
+      off();
+      bus.emit('notify', { title: t('vfs.volatile.title'), body: t('vfs.volatile.body') });
+    });
+  }
 
   const stored = await backend.loadAll();
   for (const s of stored) {
@@ -45,7 +71,7 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
     console.error('[vfs] persistence failed', err);
     if (!warned) {
       warned = true;
-      bus.emit('notify', { title: 'Storage error / خطأ في التخزين', body: 'Changes may not be saved after reload.' });
+      bus.emit('notify', { title: t('vfs.error.title'), body: t('vfs.error.body') });
     }
   };
   const persistNode = (n: Node) => { backend.put(toStored(n)).catch(onPersistError); };
@@ -187,6 +213,9 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
     async rename(from, to) {
       const src = normalize(from);
       const dst = normalize(to);
+      // Refused rather than silently treated as a no-op: the replace path would delete the
+      // record while keeping the node, so the file would vanish on the next reload.
+      if (src === dst) throw new VFSError('EINVAL', dst, 'cannot rename a path onto itself');
       if (src === '/') throw new VFSError('EINVAL', src, 'cannot rename root');
       const n = get(src);
 
@@ -276,7 +305,7 @@ async function seed(vfs: VFS): Promise<void> {
 
   const osRelease = [
     'NAME="Faisal OS"',
-    'VERSION="0.1.0"',
+    `VERSION="${OS_VERSION}"`,
     'ID=faisal',
     'ID_LIKE=fedora',
     'PRETTY_NAME="Faisal OS 0.1"',

@@ -10,4 +10,5 @@ export const manifest: AppManifest = {
   permissions: ['fs:home'],
   category: 'accessories',
   opens: ['.txt', '.md', '.json', '.js', '.ts', '.css', '.html', '.sh', '.conf', '.log'],
+  singleInstance: true,
 };

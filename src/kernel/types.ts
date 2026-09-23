@@ -13,6 +13,12 @@ export interface SystemEvents {
   'fs:change': { path: string; kind: 'create' | 'modify' | 'delete' | 'rename'; oldPath?: string };
   'app:launched': { appId: string; windowId: string };
   'app:closed': { appId: string; windowId: string };
+  /**
+   * A single-instance app that is already open was launched again (for example a second
+   * file opened from Files). Only that window reacts; the new args are handed to it
+   * instead of being dropped.
+   */
+  'app:activate': { appId: string; windowId: string; args: string[] };
   'window:focus': { windowId: string };
   /** A window was minimized, restored, maximized, snapped or closed. */
   'window:change': { windowId: string };
@@ -87,6 +93,12 @@ export interface WindowHandle {
   focus(): void;
   close(): void;
   onClose(cb: () => void): Unsubscribe;
+  /**
+   * Closes the window the way the user would: the app's close guard runs first, and the
+   * window stays open when it says no. System-initiated closes (uninstall, System Monitor)
+   * must use this rather than close(), which is unconditional.
+   */
+  requestClose(): Promise<void>;
   /**
    * Asked before the user closes the window (close button, menu, shortcut); return false
    * to keep it open, e.g. after "discard unsaved changes?". close() itself always closes.

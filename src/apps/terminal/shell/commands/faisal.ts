@@ -1,6 +1,7 @@
 import type { CommandContext, CommandSpec } from '../types';
 import { C, errText, padEnd, strWidth } from '../util';
 import { uptimeText } from './sys';
+import { OS_RELEASE } from '../../../../kernel/version';
 
 /**
  * Original Fai$al logo: the brand "$" — an S of two bowls, the vertical stroke,
@@ -141,7 +142,7 @@ function dnf(ctx: CommandContext): number {
     case 'list': {
       const w = Math.max(20, ...apps.map((a) => pkg(a.id).length)) + 2;
       let out = 'Installed Packages\n';
-      for (const a of apps) out += `${pkg(a.id).padEnd(w)}${'1.0.0-1.nr1'.padEnd(16)}@faisal-builtin\n`;
+      for (const a of apps) out += `${pkg(a.id).padEnd(w)}${OS_RELEASE.padEnd(16)}@faisal-builtin\n`;
       out += 'Available Packages\n(none yet: the Faisal package repository arrives in a later phase)\n';
       ctx.out(out);
       return 0;

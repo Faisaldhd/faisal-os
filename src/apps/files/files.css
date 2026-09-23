@@ -128,6 +128,15 @@
 .faisal-files-crumb:hover { background: var(--faisal-surface-2, #ebebeb); }
 .faisal-files-crumb:last-child { font-weight: 600; }
 
+.faisal-files-sidebar-item:focus-visible,
+.faisal-files-btn:focus-visible,
+.faisal-files-crumb:focus-visible,
+.faisal-files-list-header button:focus-visible,
+.faisal-files-menu-item:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8F6412);
+  outline-offset: 1px;
+}
+
 .faisal-files-crumb-sep {
   opacity: 0.5;
   padding-inline: 2px;
@@ -139,6 +148,12 @@
   padding: 8px;
   outline: none;
   position: relative;
+}
+
+/* Keyboard ring for the focusable item view (viewEl.tabIndex = 0); inside, so nothing shifts. */
+.faisal-files-view:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8F6412);
+  outline-offset: -2px;
 }
 
 .faisal-files-empty {

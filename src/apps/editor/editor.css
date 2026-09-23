@@ -34,6 +34,10 @@
 }
 
 .faisal-editor-btn:hover { background: var(--faisal-surface-2, #ebebeb); }
+.faisal-editor-btn:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8F6412);
+  outline-offset: 1px;
+}
 .faisal-editor-btn.is-active { background: var(--faisal-accent, #3c6eb4); color: var(--faisal-accent-fg, #fff); }
 .faisal-editor-btn.is-primary { background: var(--faisal-accent, #3c6eb4); color: var(--faisal-accent-fg, #fff); }
 
@@ -76,6 +80,12 @@
   color: inherit;
   white-space: pre;
   overflow: auto;
+}
+
+/* The textarea keeps `outline: none` for the mouse case; keyboard focus gets a visible ring. */
+.faisal-editor-textarea:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8F6412);
+  outline-offset: -2px;
 }
 
 .faisal-editor-textarea.is-wrap { white-space: pre-wrap; word-break: break-word; }

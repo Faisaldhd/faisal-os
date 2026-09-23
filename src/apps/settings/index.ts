@@ -7,10 +7,10 @@ import { BRAND, MARK_GLYPH_SVG } from '../../brand/logo';
 import { brandLockup } from '../../shell/splash';
 import { shellConfirm } from '../../shell/dialog';
 import { RESTORE_KEY } from '../../shell/session';
+import { OS_VERSION } from '../../kernel/version';
 import './strings';
 
 const OS_NAME = BRAND.product;
-const OS_VERSION = '0.1.0';
 
 const ICON_APPEARANCE =
   '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M12 3a9 9 0 000 18z" fill="currentColor"/></svg>';
@@ -40,6 +40,29 @@ function formatBytes(n: number): string {
   while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
   // LRI…PDI keeps "18 KB" in order inside Arabic text.
   return `\u2066${n < 10 && i ? n.toFixed(1) : Math.round(n)} ${units[i]}\u2069`;
+}
+
+/**
+ * Best-effort cleanup of the browser-managed storage Fai$al OS uses on top of
+ * localStorage and IndexedDB: its offline cache and its service worker.
+ * Every step is optional (older browsers and jsdom lack these APIs) and no
+ * step may throw — a failure here must never abort the reset.
+ */
+async function clearServiceWorkerAndCaches(): Promise<void> {
+  try {
+    const container = typeof navigator !== 'undefined' ? navigator.serviceWorker : undefined;
+    const registrations = await container?.getRegistrations?.();
+    if (registrations) {
+      await Promise.all(registrations.map((reg) => reg.unregister().catch(() => false)));
+    }
+  } catch { /* service workers unavailable — nothing to unregister */ }
+
+  try {
+    if (typeof caches !== 'undefined') {
+      const names = await caches.keys();
+      await Promise.all(names.map((name) => caches.delete(name).catch(() => false)));
+    }
+  } catch { /* cache storage unavailable or blocked — nothing to delete */ }
 }
 
 function row(labelKey: string, descKey?: string): { row: HTMLElement; control: HTMLElement } {
@@ -214,7 +237,12 @@ function launch(ctx: AppContext) {
     usage.textContent = '…';
     storageRow.control.append(usage);
     void (navigator.storage?.estimate?.() ?? Promise.reject(new Error('unsupported')))
-      .then((e) => { usage.textContent = t('settings.system.storageUsed', { used: formatBytes(e.usage ?? 0), quota: formatBytes(e.quota ?? 0) }); })
+      .then((est) => {
+        // Never invent a number: some browsers resolve the estimate with no usage/quota.
+        usage.textContent = typeof est.usage === 'number' && typeof est.quota === 'number'
+          ? t('settings.system.storageUsed', { used: formatBytes(est.usage), quota: formatBytes(est.quota) })
+          : t('settings.system.storageUnknown');
+      })
       .catch(() => { usage.textContent = t('settings.system.storageUnknown'); });
 
     const resetRow = row('settings.system.reset', 'settings.system.resetDesc');
@@ -234,6 +262,12 @@ function launch(ctx: AppContext) {
       try {
         for (const k of Object.keys(localStorage)) if (k.startsWith('faisal.')) localStorage.removeItem(k);
       } catch { /* storage unavailable: nothing to clear */ }
+      // Best-effort and time-boxed: a stalled unregister/delete must never
+      // stop the reload below.
+      await Promise.race([
+        clearServiceWorkerAndCaches(),
+        new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+      ]);
       const done = () => location.reload();
       try {
         const req = indexedDB.deleteDatabase('faisal-vfs');

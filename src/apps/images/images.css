@@ -34,6 +34,12 @@
   flex: none;
 }
 .faisal-img-btn:hover { background: var(--faisal-surface-3, #343d52); }
+.faisal-img-btn:focus-visible,
+.faisal-img-navbtn:focus-visible,
+.faisal-img-thumb:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring-invert, #F0CF7A);
+  outline-offset: 2px;
+}
 .faisal-img-btn:disabled { opacity: .35; cursor: default; background: transparent; }
 .faisal-img-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
@@ -84,6 +90,13 @@
   outline: none;
 }
 
+/* Stage is focusable (stage.tabIndex = 0), so it needs a ring that survives the outline: none above.
+ * Light ring: the stage sits on --faisal-brand-ink, not on a light surface. */
+.faisal-img-stage:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring-invert, #F0CF7A);
+  outline-offset: -2px;
+}
+
 .faisal-img-frame {
   position: relative;
   display: flex;
@@ -111,6 +124,14 @@
   z-index: 10;
   transition: opacity .15s ease;
   background: color-mix(in srgb, var(--faisal-surface-2, #283042) 88%, transparent);
+}
+
+/* Touch: there is no hover to reveal the fullscreen toolbar, so keep it visible. */
+@media (hover: none) {
+  .faisal-img.is-fullscreen .faisal-img-toolbar {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .faisal-img-navbtn {

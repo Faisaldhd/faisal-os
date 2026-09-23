@@ -145,6 +145,20 @@
   font-size: 12.5px;
 }
 
+/* The banner is a dark gradient, so it uses the light ring; the rest sit on --faisal-surface. */
+.faisal-store-banner:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring-invert, #F0CF7A);
+  outline-offset: -3px;
+}
+.faisal-store-tab:focus-visible,
+.faisal-store-chip:focus-visible,
+.faisal-store-card:focus-visible,
+.faisal-store-back:focus-visible,
+.faisal-store-btn:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8F6412);
+  outline-offset: 2px;
+}
+
 /* ── category chips ──────────────────────────────────────────────── */
 
 .faisal-store-chips {

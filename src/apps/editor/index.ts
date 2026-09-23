@@ -1,5 +1,5 @@
 import { manifest } from './manifest';
-import type { AppContext, AppModule } from '../../kernel/types';
+import type { AppContext, AppModule, SystemEvents } from '../../kernel/types';
 import { HOME, VFSError } from '../../kernel/types';
 import { basename, normalize } from '../../kernel/path';
 import { defineStrings, t } from '../../kernel/i18n';
@@ -33,6 +33,9 @@ defineStrings('editor', {
     discardBody: 'في «{name}» تغييرات لم تُحفظ، وستضيع إذا تابعت.',
     discard: 'تجاهل التغييرات',
     keep: 'متابعة التحرير',
+    externalReloaded: 'تم تحديث «{name}» من القرص',
+    externalChanged: 'تغيّر «{name}» على القرص ولديك تغييرات غير محفوظة؛ لم يُحدَّث المحرر.',
+    externalDeleted: 'حُذف «{name}» من القرص',
   },
   en: {
     title: 'Text Editor',
@@ -59,6 +62,9 @@ defineStrings('editor', {
     discardBody: '“{name}” has changes that haven’t been saved. They will be lost if you continue.',
     discard: 'Discard changes',
     keep: 'Keep editing',
+    externalReloaded: 'Reloaded “{name}” from disk',
+    externalChanged: '“{name}” changed on disk and you have unsaved changes; the editor was not updated.',
+    externalDeleted: '“{name}” was deleted on disk',
   },
 });
 
@@ -69,6 +75,12 @@ function launch(ctx: AppContext): void {
   let currentPath: string | null = null;
   let dirty = false;
   let wrap = false;
+  /** Path this editor is writing right now, so the echo of its own write is ignored. */
+  let selfWrite: string | null = null;
+  /** mtime of the bytes the buffer was last synced with (read or written by us). */
+  let syncedMtime = 0;
+  let unsubFs: (() => void) | null = null;
+  let unsubActivate: (() => void) | null = null;
 
   const root = document.createElement('div');
   root.className = 'faisal-editor';
@@ -183,16 +195,81 @@ function launch(ctx: AppContext): void {
     return err instanceof Error ? err.message : String(err);
   }
 
-  async function openFile(path: string) {
+  /** mtime of a path, or 0 when it cannot be read (missing / not permitted). */
+  async function readMtime(path: string): Promise<number> {
+    try { return (await vfs.stat(path)).mtime; } catch { return 0; }
+  }
+
+  /** Writes the buffer, flagging the write as our own so its fs:change echo is ignored. */
+  async function writeBuffer(path: string, text: string): Promise<void> {
+    selfWrite = path;
+    try {
+      await vfs.writeFile(path, text);
+    } finally {
+      selfWrite = null;
+    }
+    syncedMtime = await readMtime(path);
+  }
+
+  /** Re-reads the file into the buffer, keeping the caret inside the new text. */
+  async function reloadFromDisk(path: string, mtime: number): Promise<void> {
     try {
       const text = await vfs.readText(path);
-      currentPath = normalize(path);
+      const caret = textarea.selectionStart;
+      const focused = document.activeElement === textarea;
+      syncedMtime = mtime;
+      textarea.value = text;
+      if (focused) {
+        const at = Math.min(caret, text.length);
+        textarea.setSelectionRange(at, at);
+      }
+      setDirty(false);
+      updateGutter();
+      updateStatusLine();
+      showStatus(t('editor.externalReloaded', { name: basename(path) }));
+    } catch (err) {
+      showStatus(t('editor.errorGeneric', { message: errorMessage(err) }));
+    }
+  }
+
+  /**
+   * Someone else touched the open file. Our own writes are ignored (selfWrite / mtime);
+   * unsaved edits are never overwritten — the user only gets a notice.
+   */
+  async function onExternalChange(ev: SystemEvents['fs:change']): Promise<void> {
+    if (!currentPath || ev.path !== currentPath || selfWrite === currentPath) return;
+    const name = basename(currentPath);
+    if (ev.kind === 'delete') {
+      syncedMtime = 0;
+      showStatus(t('editor.externalDeleted', { name }));
+      return;
+    }
+    const mtime = await readMtime(ev.path);
+    if (!mtime) {
+      syncedMtime = 0;
+      showStatus(t('editor.externalDeleted', { name }));
+      return;
+    }
+    if (syncedMtime && mtime === syncedMtime) return; // already in sync with the disk
+    if (dirty) {
+      showStatus(t('editor.externalChanged', { name }));
+      return;
+    }
+    await reloadFromDisk(ev.path, mtime);
+  }
+
+  async function openFile(path: string) {
+    try {
+      const loaded = normalize(path);
+      const text = await vfs.readText(loaded);
+      currentPath = loaded;
       textarea.value = text;
       setDirty(false);
       statusPath.textContent = currentPath;
       updateGutter();
       updateStatusLine();
       showStatus('');
+      syncedMtime = await readMtime(loaded);
     } catch (err) {
       showStatus(t('editor.errorGeneric', { message: errorMessage(err) }));
     }
@@ -213,7 +290,31 @@ function launch(ctx: AppContext): void {
   // Leaving the page with unsaved text asks the browser to warn as well.
   const onBeforeUnload = (e: BeforeUnloadEvent) => { if (dirty) e.preventDefault(); };
   window.addEventListener('beforeunload', onBeforeUnload);
-  win.onClose(() => window.removeEventListener('beforeunload', onBeforeUnload));
+  win.onClose(() => {
+    window.removeEventListener('beforeunload', onBeforeUnload);
+    unsubFs?.();
+    unsubActivate?.();
+  });
+
+  // The file may change underneath us (terminal, files app, another process).
+  unsubFs = sys.bus.on('fs:change', (ev) => { void onExternalChange(ev); });
+
+  /**
+   * The editor is single-instance: opening another file from Files reaches this window
+   * (see 'app:activate'). Unsaved work still wins — the user is asked first.
+   */
+  async function onActivate(path: string): Promise<void> {
+    const target = normalize(path);
+    if (target === currentPath) return;
+    if (!(await confirmDiscard())) return;
+    await openFile(target);
+    textarea.focus();
+  }
+  unsubActivate = sys.bus.on('app:activate', (ev) => {
+    if (ev.windowId !== win.id) return;
+    const path = ev.args[0];
+    if (path) void onActivate(path);
+  });
 
   async function newFile() {
     if (!(await confirmDiscard())) return;
@@ -233,7 +334,7 @@ function launch(ctx: AppContext): void {
       return;
     }
     try {
-      await vfs.writeFile(currentPath, textarea.value);
+      await writeBuffer(currentPath, textarea.value);
       setDirty(false);
       showStatus(t('editor.savedStatus'));
     } catch (err) {
@@ -259,7 +360,7 @@ function launch(ctx: AppContext): void {
     if (!path) return;
     const dest = normalize(path);
     try {
-      await vfs.writeFile(dest, textarea.value);
+      await writeBuffer(dest, textarea.value);
       currentPath = dest;
       statusPath.textContent = currentPath;
       setDirty(false);

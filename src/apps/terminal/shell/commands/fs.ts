@@ -35,6 +35,8 @@ async function ls(ctx: CommandContext): Promise<number> {
           mode: modeString(st.type, st.mode),
           links: st.type === 'dir' ? '2' : '1',
           owner,
+          // Stat carries no group field: mirror the owner, like `stat`'s Gid column and `id` (gid=1000(user)).
+          group: owner,
           size: f.has('h') ? human(size) : String(size),
           date: lsDate(st.mtime),
           name: colorName(st, shown, tty),
@@ -48,7 +50,7 @@ async function ls(ctx: CommandContext): Promise<number> {
         s += `total ${f.has('h') ? human(blocks * 1024) : blocks}\n`;
       }
       for (const r of rows) {
-        s += `${r.mode}. ${padStart(r.links, lw)} ${r.owner.padEnd(ow)} ${r.owner.padEnd(ow)} ${padStart(r.size, sw)} ${r.date} ${r.name}\n`;
+        s += `${r.mode}. ${padStart(r.links, lw)} ${r.owner.padEnd(ow)} ${r.group.padEnd(ow)} ${padStart(r.size, sw)} ${r.date} ${r.name}\n`;
       }
       return s;
     }
