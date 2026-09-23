@@ -20,11 +20,15 @@ Live site: https://faisaldhd.github.io/faisal-os/  (repo name is lowercase `fais
 - #23 accessibility review branch (ARIA/token pass, clock calendar as a real grid), #24 handoff
   docs, #25 Browser app: honest fallback card instead of a blank grey frame for sites measured
   to refuse framing.
-- Other session, on main and NOT reviewed by me: the Vault app (AES-GCM/PBKDF2) and the
-  optional session lock. Treat both as unreviewed.
+- Other session, on main and NOT reviewed by me: the Vault app (AES-GCM/PBKDF2), the optional
+  session lock, and the Electron desktop build (PRs #26-#28: `electron/`, `src/shell/native-web.ts`,
+  a desktop Browser that loads any site natively because a webview is not subject to
+  X-Frame-Options). Treat all of it as unreviewed. Note the consequence: on the desktop build the
+  framing problem does not exist, so the proxy and the streamed browser matter mainly for the web
+  build.
 
-## In flight in this session (uncommitted when this was written)
-1. Web experience expansion: registry grown from 3 to 18 measured sites (blocked by measurement:
+Shipped in #29 (merged to main, deployed and verified live):
+1. Web experience expansion: registry grown from 3 to 19 measured entries (blocked by measurement:
    google, youtube, duckduckgo), a YouTube embed player that accepts any watch/shorts/youtu.be
    link, and a native in-OS search app with a keyless Wikipedia provider plus an optional Google
    Programmable Search provider. Measured evidence per host is in the task report; the owner
@@ -46,12 +50,16 @@ Live site: https://faisaldhd.github.io/faisal-os/  (repo name is lowercase `fais
    in `frame-src` and `connect-src`, plus `https://api.wikimedia.org` in `connect-src`. Remote
    origins stay https-only. Remote plain-http stream endpoints are refused by policy and the app
    says so instead of showing a blank frame.
+6. Privacy: the ids list had to grow with the registry, and the rebase surfaced a test on main
+   that pins it against `WIRED_WEB_APPS` — worth remembering as the pattern for any list that
+   mirrors an app.
 
-## Known open item found in review (not yet fixed at the time of writing)
-The proxy's raw mode could never work: `renderProxyRaw` put a token-free URL in an iframe `src`,
-while the server requires the token in a header, which an iframe cannot send. Fix in progress:
-a single-use 60 s ticket minted with the token and consumed by `/view` before the page loads,
-so the framed page never sees a live secret.
+Live verification of #29 (fetching the deployed chunks, not the local build): the served CSP meta
+carries `api.wikimedia.org` and loopback http in both directives and no googleapis; the entry
+chunk holds every new registry id (radio-garden, openstreetmap, google-calendar-embed,
+youtube-player, wikipedia-ar, archive-org); the `web` chunk holds the `/view?ticket=` flow, the
+proxy token key and the search provider keys; the `stream` chunk holds the neko Docker command
+and the Arabic badge.
 
 ## Next phases
 1. Phase 13: grep in a Worker with a timeout; sandbox third-party apps in an iframe with a
