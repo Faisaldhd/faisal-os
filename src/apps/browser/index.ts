@@ -495,8 +495,9 @@ function launch(ctx: AppContext): void {
     const resolved = resolveAddressInput(rawInput);
     if (resolved.kind === 'search') {
       if (!resolved.query) return;
+      // Desktop: every engine loads in-tab. Web: only Wikipedia can be framed.
       if (engine === 'wikipedia' || native) {
-        pushHistory(tab, buildSearchUrl(resolved.query, 'wikipedia', getLocale()));
+        pushHistory(tab, buildSearchUrl(resolved.query, engine, getLocale()));
       } else {
         window.open(buildSearchUrl(resolved.query, engine, getLocale()), '_blank', 'noopener,noreferrer');
         return; // active tab's own history is untouched
