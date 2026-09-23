@@ -1,10 +1,10 @@
+import { manifest } from './manifest';
 import type { AppContext, AppModule } from '../../kernel/types';
 import { HOME, VFSError } from '../../kernel/types';
 import { basename, normalize } from '../../kernel/path';
 import { defineStrings, t } from '../../kernel/i18n';
 import { promptDialog } from './dialog';
 import './editor.css';
-import { ICON_EDITOR } from '../../brand/icons';
 
 defineStrings('editor', {
   ar: {
@@ -329,15 +329,7 @@ function launch(ctx: AppContext): void {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.TextEditor',
-    name: { ar: 'محرر النصوص', en: 'Text Editor' },
-    description: { ar: 'محرر نصوص بسيط', en: 'A simple text editor' },
-    icon: ICON_EDITOR,
-    permissions: ['fs:home'],
-    category: 'accessories',
-    opens: ['.txt', '.md', '.json', '.js', '.ts', '.css', '.html', '.sh', '.conf', '.log'],
-  },
+  manifest,
   launch,
 };
 

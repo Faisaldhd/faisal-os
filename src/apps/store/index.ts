@@ -1,7 +1,7 @@
+import { manifest } from './manifest';
 import type { AppContext, AppModule, CatalogEntry, Locale, Permission } from '../../kernel/types';
 import { t } from '../../kernel/i18n';
 import { renderIcon } from '../../shell/icon';
-import { ICON_STORE } from './icon';
 import {
   CATEGORIES,
   describeApp,
@@ -457,18 +457,7 @@ function launch(ctx: AppContext) {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.Store',
-    name: { ar: 'المتجر', en: 'Store' },
-    description: { ar: 'ثبّت التطبيقات وأزلها', en: 'Install and remove apps' },
-    icon: ICON_STORE,
-    permissions: ['apps:manage', 'notifications'],
-    category: 'system',
-    version: '1.0.0',
-    core: true,
-    defaultInstalled: true,
-    singleInstance: true,
-  },
+  manifest,
   launch,
 };
 

@@ -1,8 +1,8 @@
+import { manifest } from './manifest';
 import type { AppContext, AppModule } from '../../kernel/types';
 import { t } from '../../kernel/i18n';
 import { renderIcon } from '../../shell/icon';
 import { ACCENTS, BRAND_ACCENT_ID, applyTheme, applyAccent, type ThemeMode } from '../../shell/appearance';
-import { ICON_SETTINGS } from '../../brand/icons';
 import { BRAND, MARK_GLYPH_SVG } from '../../brand/logo';
 import { brandLockup } from '../../shell/splash';
 import './strings';
@@ -200,16 +200,7 @@ function launch(ctx: AppContext) {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.Settings',
-    name: { ar: 'الإعدادات', en: 'Settings' },
-    description: { ar: 'تخصيص مظهر النظام ولغته', en: 'Customize system appearance and language' },
-    icon: ICON_SETTINGS,
-    permissions: ['settings'],
-    category: 'system',
-    core: true,
-    singleInstance: true,
-  },
+  manifest,
   launch,
 };
 

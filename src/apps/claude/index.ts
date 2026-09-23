@@ -1,3 +1,4 @@
+import { manifest } from './manifest';
 import type Anthropic from '@anthropic-ai/sdk';
 import type { AppContext, AppModule } from '../../kernel/types';
 import { defineStrings, t } from '../../kernel/i18n';
@@ -337,16 +338,7 @@ async function errorText(err: unknown): Promise<string> {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.Claude',
-    name: { ar: 'Faisal AI', en: 'Faisal AI' },
-    description: { ar: 'مساعد ذكي يبحث في الإنترنت ويقرأ الروابط', en: 'An AI assistant that can search the web and read links' },
-    icon: ICON_CLAUDE,
-    permissions: ['network'],
-    singleInstance: true,
-    category: 'utilities',
-    core: false,
-  },
+  manifest,
   launch,
 };
 

@@ -146,8 +146,14 @@ export interface AppModule {
   launch(ctx: AppContext): void | Promise<void>;
 }
 
+/** An app whose code is loaded on first launch; only the manifest is needed up front. */
+export interface LazyAppModule {
+  manifest: AppManifest;
+  load(): Promise<AppModule>;
+}
+
 export interface AppRegistry {
-  register(app: AppModule): void;
+  register(app: AppModule | LazyAppModule): void;
   /** التطبيقات المثبتة فقط (تظهر في المشغّل). */
   list(): AppManifest[];
   /** كل التطبيقات المتاحة مع حالة التثبيت. متاحة للجميع للقراءة. */

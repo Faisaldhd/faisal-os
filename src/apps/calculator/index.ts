@@ -1,7 +1,7 @@
+import { manifest } from './manifest';
 import type { AppContext, AppModule } from '../../kernel/types';
 import { defineStrings, t } from '../../kernel/i18n';
 import { calc, formatNumber, CalcError, type AngleMode } from './engine';
-import { ICON_CALCULATOR } from './icon';
 import './calculator.css';
 
 defineStrings('calculator', {
@@ -380,15 +380,7 @@ function launch(ctx: AppContext): void {
 }
 
 const app: AppModule = {
-  manifest: {
-    id: 'org.faisal.Calculator',
-    name: { ar: 'الآلة الحاسبة', en: 'Calculator' },
-    description: { ar: 'آلة حاسبة أساسية ومتقدمة', en: 'Basic and advanced calculator' },
-    icon: ICON_CALCULATOR,
-    permissions: [],
-    category: 'utilities',
-    core: false,
-  },
+  manifest,
   launch,
 };
 

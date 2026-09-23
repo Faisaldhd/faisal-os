@@ -1157,3 +1157,19 @@ body {
 .faisal-window.is-pinned {
   box-shadow: 0 0 0 1px var(--faisal-brand-mark-gold), 0 18px 50px var(--faisal-shadow);
 }
+
+/* App code still downloading (first launch of a lazily loaded app). */
+.faisal-window-content.is-loading::after {
+  content: "";
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  border: 3px solid var(--faisal-border);
+  border-top-color: var(--faisal-accent);
+  animation: faisal-spin 0.8s linear infinite;
+}
+@keyframes faisal-spin { to { transform: rotate(360deg); } }

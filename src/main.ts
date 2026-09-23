@@ -10,17 +10,7 @@ import type { Locale, SystemAPI } from './kernel/types';
 
 import { createVFS } from './vfs';                           // Track B
 import { createWindowManager, mountShell } from './shell';   // Track A
-import terminalApp from './apps/terminal';                   // Track C
-import filesApp from './apps/files';                         // Track B
-import editorApp from './apps/editor';                       // Track B
-import settingsApp from './apps/settings';                   // Track A
-import calculatorApp from './apps/calculator';
-import claudeApp from './apps/claude';
-import imagesApp from './apps/images';
-import clockApp from './apps/clock';
-import monitorApp from './apps/monitor';
-import storeApp from './apps/store';
-import browserApp from './apps/browser';
+import { BUILTIN_APPS } from './apps';
 
 async function boot() {
   const root = document.getElementById('faisal-root')!;
@@ -40,7 +30,7 @@ async function boot() {
     notify: (title, body) => bus.emit('notify', { title, body }),
   };
 
-  [filesApp, terminalApp, editorApp, browserApp, claudeApp, calculatorApp, imagesApp, clockApp, monitorApp, storeApp, settingsApp].forEach((a) => apps.register(a));
+  BUILTIN_APPS.forEach((a) => apps.register(a));
   mountShell(root, sys);
   bus.emit('system:ready', {});
 }
