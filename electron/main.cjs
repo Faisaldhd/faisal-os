@@ -74,6 +74,8 @@ function createWindow() {
     minHeight: 560,
     backgroundColor: '#16264F',
     title: 'Fai$al OS',
+    // Windows/macOS take the installer's icon; Linux window managers need it here.
+    icon: path.join(DIST, 'icons', 'icon-512.png'),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

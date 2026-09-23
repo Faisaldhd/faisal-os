@@ -58,7 +58,8 @@
         "releaseType": "release"
       }
     ],
-    "artifactName": "${name}-${version}-${os}-${arch}.${ext}"
+    "artifactName": "${name}-${version}-${os}-${arch}.${ext}",
+    "icon": "public/icons/icon-512.png"
   },
   "dependencies": {
     "electron-updater": "^6.8.9"
