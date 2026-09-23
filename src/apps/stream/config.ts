@@ -96,6 +96,23 @@ export const DOCKER_SELKIES_COMMAND = [
 ].join('\n');
 
 /**
+ * Windows / PowerShell forms of the same two commands.
+ *
+ * The `\` at the end of a line is a BASH continuation: PowerShell has no such
+ * thing, so pasting the commands above into a PowerShell window runs the first
+ * line only and then fails on every remaining line with "-p is not recognized".
+ * The owner's machine is Windows, which is how the two commands below came to
+ * exist. They are one line each on purpose — no continuation character at all —
+ * and the placeholders stay ASCII, because a shell command is not prose and an
+ * Arabic placeholder inside it is a second way to fail before Docker even runs.
+ */
+export const DOCKER_NEKO_COMMAND_WINDOWS =
+  'docker run -d --rm --name faisal-neko --shm-size=2g -p 127.0.0.1:8080:8080 -p 127.0.0.1:56000-56100:56000-56100/udp -e NEKO_WEBRTC_EPR=56000-56100 -e NEKO_WEBRTC_NAT1TO1=127.0.0.1 -e NEKO_MEMBER_MULTIUSER_USER_PASSWORD=<password> -e NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD=<adminpassword> ghcr.io/m1k1o/neko/chromium:latest';
+
+export const DOCKER_SELKIES_COMMAND_WINDOWS =
+  'docker run -d --name faisal-chromium --shm-size=1gb -p 127.0.0.1:3001:3001 -e PUID=1000 -e PGID=1000 -e TZ=UTC -e CUSTOM_USER=<user> -e PASSWORD=<password> -v faisal-chromium-config:/config lscr.io/linuxserver/chromium:latest';
+
+/**
  * A stored endpoint is only ever a URL we may point an <iframe> at, so the
  * check is an allowlist of two schemes and nothing else:
  *

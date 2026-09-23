@@ -7,7 +7,9 @@ import { manifest } from './manifest';
 import {
   DEFAULT_STREAM_URL,
   DOCKER_NEKO_COMMAND,
+  DOCKER_NEKO_COMMAND_WINDOWS,
   DOCKER_SELKIES_COMMAND,
+  DOCKER_SELKIES_COMMAND_WINDOWS,
   IFRAME_ALLOW,
   IFRAME_SANDBOX,
   PROBE_TIMEOUT_MS,
@@ -218,6 +220,29 @@ describe('frame policy constants', () => {
     expect(STREAM_DOC_URL).toMatch(/^https:\/\/github\.com\//);
     expect(STREAM_DOC_URL).toContain(STREAM_DOC_PATH);
     expect(STREAM_DOC_URL).not.toMatch(/^\./);
+  });
+
+  it('offers a PowerShell form that is genuinely one line and free of non-ASCII placeholders', () => {
+    // The owner's machine is Windows, and a bash continuation (`\` at the end of
+    // a line) is not a PowerShell continuation: pasting the bash block there runs
+    // one line and fails on the rest. These two commands must need no editing
+    // beyond the password, so: exactly one line, no continuation character, and
+    // no Arabic text in a shell command.
+    for (const command of [DOCKER_NEKO_COMMAND_WINDOWS, DOCKER_SELKIES_COMMAND_WINDOWS]) {
+      expect(command).not.toContain('\n');
+      expect(command).not.toContain('\\');
+      expect(command).not.toMatch(/[^\x00-\x7F]/);
+      expect(command.startsWith('docker run ')).toBe(true);
+    }
+    expect(DOCKER_NEKO_COMMAND_WINDOWS).toContain('ghcr.io/m1k1o/neko/chromium:latest');
+    expect(DOCKER_NEKO_COMMAND_WINDOWS).toContain('--shm-size=2g');
+    expect(DOCKER_NEKO_COMMAND_WINDOWS).toContain('<password>');
+    expect(DOCKER_SELKIES_COMMAND_WINDOWS).toContain('lscr.io/linuxserver/chromium:latest');
+    // Same container contract as the bash form, or the two drift apart.
+    for (const option of ['--shm-size=2g', '-p 127.0.0.1:8080:8080', '-p 127.0.0.1:56000-56100:56000-56100/udp', '-e NEKO_WEBRTC_EPR=56000-56100', '-e NEKO_WEBRTC_NAT1TO1=127.0.0.1']) {
+      expect(DOCKER_NEKO_COMMAND_WINDOWS).toContain(option);
+      expect(DOCKER_NEKO_COMMAND.replace(/\\\n\s+/g, ' ')).toContain(option);
+    }
   });
 });
 

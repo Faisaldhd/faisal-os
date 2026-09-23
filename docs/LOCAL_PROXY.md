@@ -27,6 +27,17 @@
 node tools/local-proxy.mjs --port 8787 --token <long-random-value>
 ```
 
+على ويندوز/PowerShell يعمل الأمر نفسه **كما هو** — لا يوجد هنا أي `\` في نهاية سطر، فلا مشكلة
+استمرار أسطر أصلاً — لكن يجب تشغيله من مجلد المستودع نفسه، والرمز بالحروف اللاتينية:
+
+```powershell
+cd D:\Faisal-OS
+node tools/local-proxy.mjs --port 8787 --token faisal-7f3a91c2d4e5b6a7
+```
+
+أو احذف `--token` تماماً فيولّد السكربت رمزاً عشوائياً **ويطبعه على الشاشة** لتنسخه إلى نافذة
+الويب عند طلبه. هذا الطرف لا يحتاج Docker ولا صلاحيات إدارية ولا أي تثبيت: Node وحده يكفي.
+
 | الخيار | المعنى |
 | --- | --- |
 | `--port 8787` | المنفذ على `127.0.0.1` فقط. لا يوجد خيار للربط على واجهة عامة: `--host` مرفوض ما لم يكن `127.0.0.1`، و`assertLoopbackHost()` يرفض أي شيء آخر. |
@@ -154,6 +165,18 @@ loopback interface and out from your own machine to the site you asked for.
 ```bash
 node tools/local-proxy.mjs --port 8787 --token <long-random-value>
 ```
+
+On Windows this is already PowerShell-safe — there is no line continuation to get wrong — but run
+it from the repository directory and keep the token ASCII:
+
+```powershell
+cd D:\Faisal-OS
+node tools/local-proxy.mjs --port 8787 --token faisal-7f3a91c2d4e5b6a7
+```
+
+Or drop `--token` entirely: the script then generates one and prints it for you to paste into the
+window when asked. This side needs no Docker, no administrator rights and no installation — Node
+alone is enough.
 
 | Option | Meaning |
 | --- | --- |

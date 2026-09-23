@@ -30,7 +30,9 @@ import { defineStrings, t } from '../../kernel/i18n';
 import { renderIcon } from '../../shell/icon';
 import {
   DOCKER_NEKO_COMMAND,
+  DOCKER_NEKO_COMMAND_WINDOWS,
   DOCKER_SELKIES_COMMAND,
+  DOCKER_SELKIES_COMMAND_WINDOWS,
   IFRAME_ALLOW,
   IFRAME_SANDBOX,
   NO_STORAGE,
@@ -88,6 +90,11 @@ defineStrings('stream', {
     dockerTitle: 'أمر التشغيل (Docker)',
     dockerNekoLabel: 'نيكو: WebRTC — الكروم الرسمي الحالي',
     dockerLiteLabel: 'بديل أخف للأجهزة الضعيفة: WebSocket',
+    dockerWindowsTitle: 'ويندوز / PowerShell — سطر واحد',
+    dockerWindowsNote:
+      'علامة \\ في نهاية السطر أعلاه خاصة بـbash ولا تعمل في PowerShell: لصق الأمر متعدد الأسطر هناك ينفّذ السطر الأول ثم يفشل في الباقي. الأمران التاليان سطر واحد لكلٍّ منهما، وانسخهما كما هما (استبدل <password> بكلمة مرور تختارها، بالإنجليزية لا بالعربية).',
+    dockerNekoWindowsLabel: 'نيكو (PowerShell، سطر واحد)',
+    dockerLiteWindowsLabel: 'البديل الأخف (PowerShell، سطر واحد)',
     dockerNote:
       'لا يوجد Docker على هذا الجهاز؟ الأمران أدناه يُشغَّلان على الجهاز أو الخادم الذي ستحتضن الحاوية فيه، لا داخل النظام.',
     passwordNote:
@@ -146,6 +153,11 @@ defineStrings('stream', {
     dockerTitle: 'Run it (Docker)',
     dockerNekoLabel: 'neko: WebRTC — the current official Chromium image',
     dockerLiteLabel: 'Lighter option for weak machines: WebSocket',
+    dockerWindowsTitle: 'Windows / PowerShell — one line each',
+    dockerWindowsNote:
+      'The trailing \\ in the commands above is bash syntax and does NOT work in PowerShell: pasting the block there runs the first line and then fails on every remaining line. The two commands below are one line each; copy them as they are and replace <password> with a password you choose (ASCII, not Arabic).',
+    dockerNekoWindowsLabel: 'neko (PowerShell, one line)',
+    dockerLiteWindowsLabel: 'The lighter option (PowerShell, one line)',
     dockerNote:
       'No Docker on this machine? Both commands below run on the machine or server that hosts the container, not inside this system.',
     passwordNote:
@@ -413,6 +425,13 @@ function launch(ctx: AppContext): void {
     wrap.append(commandBlock(t('stream.dockerNekoLabel'), DOCKER_NEKO_COMMAND));
     wrap.append(commandBlock(t('stream.dockerLiteLabel'), DOCKER_SELKIES_COMMAND));
     wrap.append(el('p', 'faisal-stream-p is-muted', t('stream.passwordNote')));
+    // Windows last: a bash line continuation is not a PowerShell line
+    // continuation, and pasting the block above into PowerShell fails on every
+    // line after the first ("-p is not recognized").
+    wrap.append(el('div', 'faisal-stream-blocktitle', t('stream.dockerWindowsTitle')));
+    wrap.append(el('p', 'faisal-stream-p is-muted', t('stream.dockerWindowsNote')));
+    wrap.append(commandBlock(t('stream.dockerNekoWindowsLabel'), DOCKER_NEKO_COMMAND_WINDOWS));
+    wrap.append(commandBlock(t('stream.dockerLiteWindowsLabel'), DOCKER_SELKIES_COMMAND_WINDOWS));
     return wrap;
   }
 

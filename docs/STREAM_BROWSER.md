@@ -47,6 +47,30 @@ docker run -d --rm --name faisal-neko \
 | `-e NEKO_WEBRTC_NAT1TO1=127.0.0.1` | يُخبر العميل بأن يصل إلى `127.0.0.1` — صحيح **فقط** لأن العميل والحاوية على الجهاز نفسه. على خادم بعيد: احذفه (يكتشف العنوان العام تلقائياً) أو ضع العنوان العام أو عنوان الشبكة المحلية الصحيح. تحذير التوثيق الرسمي: لا تضع `127.0.0.1` إذا كان العملاء على أجهزة أخرى، لأن كل عميل سيحاول الاتصال بـ localhost الخاص به ولن ينجح شيء. |
 | `NEKO_MEMBER_MULTIUSER_USER_PASSWORD` / `..._ADMIN_PASSWORD` | كلمتا مرور يختارهما المالك (مستخدم/مدير). هذه هي أسماء الإعدادات في الإصدار 3؛ في الإصدار 2 كانت `NEKO_PASSWORD` و`NEKO_PASSWORD_ADMIN`. **لا تُشغّل الحاوية بلا كلمة مرور.** |
 
+### على ويندوز (PowerShell): سطر واحد لكل أمر
+
+`\` في نهاية السطر أعلاه **خاص بـbash** ولا معنى له في PowerShell. لصق الأمر متعدد الأسطر في
+نافذة PowerShell ينفّذ السطر الأول فقط، ثم يفشل الباقي برسائل مثل
+`-p : The term '-p' is not recognized`. لذلك على ويندوز استخدم السطر الواحد التالي
+(واستبدل `<password>` و`<adminpassword>` بكلمات مرور تختارها، **بالإنجليزية**: نص عربي داخل
+أمر shell سبب ثانٍ للفشل قبل أن يعمل Docker أصلاً):
+
+```powershell
+docker run -d --rm --name faisal-neko --shm-size=2g -p 127.0.0.1:8080:8080 -p 127.0.0.1:56000-56100:56000-56100/udp -e NEKO_WEBRTC_EPR=56000-56100 -e NEKO_WEBRTC_NAT1TO1=127.0.0.1 -e NEKO_MEMBER_MULTIUSER_USER_PASSWORD=<password> -e NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD=<adminpassword> ghcr.io/m1k1o/neko/chromium:latest
+```
+
+وللبديل الأخف على ويندوز:
+
+```powershell
+docker run -d --name faisal-chromium --shm-size=1gb -p 127.0.0.1:3001:3001 -e PUID=1000 -e PGID=1000 -e TZ=UTC -e CUSTOM_USER=<user> -e PASSWORD=<password> -v faisal-chromium-config:/config lscr.io/linuxserver/chromium:latest
+```
+
+وإن ظهر `docker : The term 'docker' is not recognized`، فـDocker غير مثبَّت على الجهاز أصلاً
+(على ويندوز يحتاج Docker Desktop، وهو بدوره يحتاج WSL2: `wsl --install` من نافذة مسؤول ثم
+إعادة تشغيل). تحقّق بـ`docker --version` قبل أي شيء آخر. ومن لا يريد Docker إطلاقاً: تطبيق
+سطح المكتب في المستودع يحمّل المواقع داخل webview بلا قيود التأطير، والوسيط المحلي
+(`docs/LOCAL_PROXY.md`) يحتاج Node فقط.
+
 ### البديل الأخف للأجهزة الضعيفة (WebSocket بدل WebRTC)
 
 ```bash
@@ -250,6 +274,30 @@ Then open the **Streamed Browser** app in Fai$al OS on its default endpoint `htt
 | `--shm-size=2g` | **Required** for Chromium images: Docker's default `/dev/shm` is too small for Chromium, and without this you get a black screen or crashes. |
 | `-e NEKO_WEBRTC_NAT1TO1=127.0.0.1` | Tells the client to connect to `127.0.0.1` — correct **only** when the client and the container are on the same machine. On a remote server, remove it (the public address is auto-detected) or set the correct public/LAN address. Official warning: never use `127.0.0.1` there, because every client would then try its own localhost and nothing would connect. |
 | `NEKO_MEMBER_MULTIUSER_USER_PASSWORD` / `..._ADMIN_PASSWORD` | Passwords the owner chooses (user/admin). These are the version-3 setting names; version 2 used `NEKO_PASSWORD` and `NEKO_PASSWORD_ADMIN`. **Never run the container without a password.** |
+
+### On Windows (PowerShell): one line per command
+
+The trailing `\` in the block above is **bash syntax** and means nothing in PowerShell. Pasting
+the multi-line command into a PowerShell window runs the first line and then fails on the rest
+with errors like `-p : The term '-p' is not recognized`. On Windows use the single line below
+instead, replacing `<password>` and `<adminpassword>` with passwords you choose — **in ASCII**:
+Arabic text inside a shell command is a second way to fail before Docker even starts.
+
+```powershell
+docker run -d --rm --name faisal-neko --shm-size=2g -p 127.0.0.1:8080:8080 -p 127.0.0.1:56000-56100:56000-56100/udp -e NEKO_WEBRTC_EPR=56000-56100 -e NEKO_WEBRTC_NAT1TO1=127.0.0.1 -e NEKO_MEMBER_MULTIUSER_USER_PASSWORD=<password> -e NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD=<adminpassword> ghcr.io/m1k1o/neko/chromium:latest
+```
+
+And the lighter option on Windows:
+
+```powershell
+docker run -d --name faisal-chromium --shm-size=1gb -p 127.0.0.1:3001:3001 -e PUID=1000 -e PGID=1000 -e TZ=UTC -e CUSTOM_USER=<user> -e PASSWORD=<password> -v faisal-chromium-config:/config lscr.io/linuxserver/chromium:latest
+```
+
+If you see `docker : The term 'docker' is not recognized`, Docker is not installed at all. On
+Windows that means Docker Desktop, which itself needs WSL2 (`wsl --install` from an administrator
+window, then a reboot). Check `docker --version` first. And if you would rather not run Docker:
+the desktop build in this repository loads sites in a real webview with no framing restrictions,
+and the local proxy (`docs/LOCAL_PROXY.md`) needs nothing but Node.
 
 ### The lighter alternative for weak machines (WebSocket instead of WebRTC)
 
