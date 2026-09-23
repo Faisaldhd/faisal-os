@@ -1652,3 +1652,12 @@ body {
   .faisal-overview-body { padding-block: 12px calc(12px + env(safe-area-inset-bottom, 0px)); gap: 16px; }
   .faisal-win-thumb-body { height: 64px; }
 }
+.faisal-about-progress {
+  display: block;
+  inline-size: 100%;
+  max-inline-size: 260px;
+  block-size: 6px;
+  margin-block-start: 6px;
+  accent-color: var(--faisal-accent);
+}
+.faisal-about-progress[hidden] { display: none; }
