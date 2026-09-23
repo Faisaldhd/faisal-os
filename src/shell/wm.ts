@@ -62,6 +62,21 @@ function saveGeometry(all: Record<string, SavedGeometry>) {
   try { localStorage.setItem(GEOMETRY_KEY, JSON.stringify(all)); } catch { /* private mode: not remembered */ }
 }
 
+/**
+ * Pointer capture is best-effort, never a prerequisite: it throws NotFoundError when the
+ * pointer id has no active pointer (a pen/touch that was already released, a synthetic or
+ * assistive-technology event, an element replaced mid-gesture). An unguarded throw aborts
+ * the pointerdown handler before its move listeners are installed, so the window would
+ * silently refuse to move or resize and the error would surface as an uncaught exception.
+ */
+function capturePointer(el: Element, pointerId: number): void {
+  try { el.setPointerCapture(pointerId); } catch { /* gesture still works without capture */ }
+}
+
+function releasePointer(el: Element, pointerId: number): void {
+  try { el.releasePointerCapture(pointerId); } catch { /* nothing captured, or already released */ }
+}
+
 export function createWindowManager(root: HTMLElement, bus: EventBus): WindowManager {
   root.classList.add('faisal-desktop');
   const surface = document.createElement('div');
@@ -194,7 +209,32 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
       if (rec.snapped) writeRect(rec.el, snapRect(rec.snapped));
       else if (rec.restoreRect) writeRect(rec.el, clampRect(rec.restoreRect, rec.minWidth, rec.minHeight));
     }
+    syncMaximizedDock(); // final geometry first, so listeners read the settled rect
     changed(rec.handle.id);
+  }
+
+  /**
+   * The dock owns a real layout row at the bottom, so a maximized window can never reach the
+   * bottom edge while it sits there. This toggles a root class the shell's CSS reacts to (the
+   * dock leaves the layout) and re-fits every maximized window to the taller surface in the
+   * same tick, so the freed row is actually used.
+   *
+   * Only an explicit user maximize counts: the narrow-screen/touch auto-fill is not a choice
+   * about chrome, and hiding the launcher strip on a phone would strand the user.
+   *
+   * It emits nothing: the state change that flipped the row already emitted `window:change`,
+   * and geometry writes during a relayout are not events either. Apps still see their new size
+   * through the per-window ResizeObserver on their content element.
+   */
+  function syncMaximizedDock() {
+    const want = [...wins.values()].some((r) => r.maximized && !r.autoMaximized);
+    if (root.classList.contains('has-maximized-window') === want) return;
+    root.classList.toggle('has-maximized-window', want);
+    for (const rec of wins.values()) {
+      if (!rec.maximized) continue;
+      const { width, height } = surfaceSize(); // reading after the toggle flushes layout
+      writeRect(rec.el, { left: 0, top: 0, width, height });
+    }
   }
 
   function toggleMaximize(id: string) {
@@ -346,6 +386,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
         closeCbs.forEach((cb) => cb());
         changed(id);
         if (focusedId === id) focusTopmost();
+        syncMaximizedDock(); // closing the last maximized window brings the dock back
       },
       onClose: (cb) => { closeCbs.add(cb); return () => closeCbs.delete(cb); },
       setCloseGuard: (fn) => { guard = fn; },
@@ -409,7 +450,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
       let pending: PointerEvent | null = null;
       let raf = 0;
       let snapTo: Snap | null = null;
-      titlebar.setPointerCapture(startEv.pointerId);
+      capturePointer(titlebar, startEv.pointerId);
 
       const apply = () => {
         raf = 0;
@@ -453,7 +494,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
       };
       const onUp = (ev: PointerEvent) => {
         if (raf) { cancelAnimationFrame(raf); apply(); }
-        titlebar.releasePointerCapture(ev.pointerId);
+        releasePointer(titlebar, ev.pointerId);
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
         window.removeEventListener('pointercancel', onUp);
@@ -478,7 +519,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
       const startY = startEv.clientY;
       const o = readRect(el);
       const target = startEv.target as HTMLElement;
-      target.setPointerCapture(startEv.pointerId);
+      capturePointer(target, startEv.pointerId);
       // The handles are placed with logical CSS, so in RTL the "e" grip sits on the physical left.
       const phys = getComputedStyle(el).direction === 'rtl'
         ? dir.replace(/[ew]/g, (c) => (c === 'e' ? 'w' : 'e'))
@@ -507,7 +548,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
       };
       const onUp = (ev: PointerEvent) => {
         if (raf) { cancelAnimationFrame(raf); apply(); }
-        target.releasePointerCapture(ev.pointerId);
+        releasePointer(target, ev.pointerId);
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
         window.removeEventListener('pointercancel', onUp);
@@ -566,9 +607,15 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
       for (const rec of wins.values()) {
         if (fill && !rec.maximized) setMaximized(rec, true, true);
         else if (!fill && rec.autoMaximized) setMaximized(rec, false);
-        else if (rec.snapped && !rec.maximized) writeRect(rec.el, snapRect(rec.snapped));
-        else if (!rec.maximized) writeRect(rec.el, clampRect(readRect(rec.el), rec.minWidth, rec.minHeight));
+        else if (rec.maximized) {
+          // A maximized window tracks the surface. Without this it keeps whatever size it had
+          // when the viewport (or the dock's row) changed, and can end up overflowing.
+          const { width, height } = surfaceSize();
+          writeRect(rec.el, { left: 0, top: 0, width, height });
+        } else if (rec.snapped) writeRect(rec.el, snapRect(rec.snapped));
+        else writeRect(rec.el, clampRect(readRect(rec.el), rec.minWidth, rec.minHeight));
       }
+      syncMaximizedDock();
     });
   }
   window.addEventListener('resize', relayout);
