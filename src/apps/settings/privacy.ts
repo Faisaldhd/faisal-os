@@ -69,9 +69,16 @@ export const AI_KEY_STORAGE: Record<AiProviderId, string> = {
  * order. Duplicated from apps/web/registry.ts on purpose: the Settings app must
  * not import (and therefore load) another app, and apps/web must stay unaware of
  * Settings. `webUrlStorageKey` below produces exactly the key that file's
- * `lastUrlStorageKey(def)` writes, and a test pins both the ids and the shape.
+ * `lastUrlStorageKey(def)` writes, and a test pins both the ids and the shape —
+ * which is how the list below was caught still holding the original three sites
+ * after the registry grew to nineteen.
  */
-export const WEB_APP_IDS = ['google', 'youtube', 'wikipedia'] as const;
+export const WEB_APP_IDS = [
+  'google', 'youtube', 'youtube-player', 'search', 'wikipedia', 'wikipedia-ar',
+  'wiktionary', 'wikibooks', 'wikidata', 'commons', 'archive-org', 'openlibrary',
+  'gutenberg', 'radio-garden', 'vimeo', 'spotify-embed', 'openstreetmap',
+  'google-maps-embed', 'google-calendar-embed',
+] as const;
 
 export type WebAppId = (typeof WEB_APP_IDS)[number];
 
@@ -81,10 +88,13 @@ export function webUrlStorageKey(id: WebAppId): string {
 }
 
 /**
- * Every remembered-URL key, in a stable order. These three — and only these
- * three — are what the count reads and what the clear action deletes: nothing
- * enumerates localStorage, so a `faisal.web.*` key outside this list is never
- * shown and never removed from Settings.
+ * Every remembered-URL key, one per wired site, in a stable order. These — and
+ * only these — are what the count reads and what the clear action deletes:
+ * nothing enumerates localStorage, so a `faisal.web.*` key outside this list is
+ * never shown and never removed from Settings. Known gap, recorded rather than
+ * hidden: the Search app's provider and Google key (`faisal.web.search.*`) and
+ * the local proxy's token/port/flag (`faisal.web.proxy.*`) are app keys of that
+ * same namespace and are NOT cleared here yet.
  */
 export const WEB_URL_STORAGE_KEYS: readonly string[] = WEB_APP_IDS.map((id) => webUrlStorageKey(id));
 

@@ -4,12 +4,14 @@ import type { SystemAPI } from '../../kernel/types';
 import {
   WIRED_WEB_APPS,
   WEB_APP_NAMESPACE,
+  applyUrlTransform,
   lastUrlStorageKey,
   saveLastUrl,
   saveUrl,
   savedUrl,
   startingUrl,
   webAppId,
+  webAppKind,
   webAppManifest,
   webAppWindowTitle,
   type WebAppDef,
@@ -27,30 +29,98 @@ function memStorage(seed: Record<string, string> = {}): WebStorage & { map: Map<
 }
 
 const wikipedia = WIRED_WEB_APPS.find((d) => d.id === 'wikipedia')!;
+const byId = (id: string) => WIRED_WEB_APPS.find((d) => d.id === id);
 
-describe('wired web apps', () => {
-  it('ships the three agreed sites with the measured embed notes', () => {
-    const byId = new Map(WIRED_WEB_APPS.map((d) => [d.id, d] as const));
-    expect(byId.get('google')?.url).toBe('https://www.google.com/');
-    expect(byId.get('google')?.embedNote).toBe('blocked');
-    expect(byId.get('youtube')?.url).toBe('https://www.youtube.com/');
-    expect(byId.get('youtube')?.embedNote).toBe('blocked');
-    expect(byId.get('wikipedia')?.url).toBe('https://www.wikipedia.org/');
-    expect(byId.get('wikipedia')?.embedNote).toBe('allowed');
+/**
+ * The registry's two measured lists, kept here as the independent expectation the
+ * table is checked against. A site may only appear in `allowed` when it was
+ * measured to send NEITHER X-Frame-Options NOR a frame-ancestors rule that
+ * excludes us; both entries below are the sites we actually measured refusing.
+ *
+ * Measured 2026-09-23 with PowerShell `Invoke-WebRequest` (following redirects);
+ * the raw headers for every entry are recorded in the report and in the comment
+ * above WIRED_WEB_APPS.
+ */
+const MEASURED_BLOCKED = ['google', 'youtube'] as const;
+
+describe('wired web apps — the registry table as a whole', () => {
+  it('gives every def a unique id and a unique OS app id', () => {
+    const ids = WIRED_WEB_APPS.map((d) => d.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const appIds = WIRED_WEB_APPS.map(webAppId);
+    expect(new Set(appIds).size).toBe(appIds.length);
+  });
+
+  it('agrees with the measured verdicts: exactly google and youtube are blocked', () => {
+    const blocked = WIRED_WEB_APPS.filter((d) => d.embedNote === 'blocked').map((d) => d.id);
+    expect(blocked.sort()).toEqual([...MEASURED_BLOCKED].sort());
+    // Every other entry must carry the explicit 'allowed' note — no def is left
+    // without a measurement, because "unmeasured" and "allowed" are not the same.
+    for (const def of WIRED_WEB_APPS) {
+      if (def.id !== 'google' && def.id !== 'youtube') expect(def.embedNote, def.id).toBe('allowed');
+    }
+  });
+
+  it('keeps the three originally wired sites, with their measured notes unchanged', () => {
+    expect(byId('google')?.url).toBe('https://www.google.com/');
+    expect(byId('google')?.embedNote).toBe('blocked');
+    expect(byId('youtube')?.url).toBe('https://www.youtube.com/');
+    expect(byId('youtube')?.embedNote).toBe('blocked');
+    expect(byId('wikipedia')?.url).toBe('https://www.wikipedia.org/');
+    expect(byId('wikipedia')?.embedNote).toBe('allowed');
+  });
+
+  it('wires the sites this work measured as embeddable', () => {
+    // Each of these was measured to send no XFO and no frame-ancestors. Listing the
+    // ids (rather than counting) is what makes an accidental removal visible.
+    for (const id of [
+      'wikipedia-ar', 'wiktionary', 'wikibooks', 'wikidata', 'commons',
+      'archive-org', 'openlibrary', 'gutenberg', 'radio-garden',
+      'openstreetmap', 'google-maps-embed', 'google-calendar-embed',
+      'vimeo', 'spotify-embed',
+    ]) {
+      expect(byId(id), id).toBeDefined();
+      expect(byId(id)?.embedNote, id).toBe('allowed');
+    }
+  });
+
+  it('wires the two first-class apps this work added', () => {
+    expect(webAppKind(byId('youtube-player')!)).toBe('player');
+    expect(byId('youtube-player')?.embedNote).toBe('allowed');
+    expect(typeof byId('youtube-player')?.transformUrl).toBe('function');
+    expect(webAppKind(byId('search')!)).toBe('search');
   });
 
   it('gives every site a bilingual title, a description and an icon', () => {
     for (const def of WIRED_WEB_APPS) {
-      expect(def.title.ar.trim().length).toBeGreaterThan(0);
-      expect(def.title.en.trim().length).toBeGreaterThan(0);
-      expect(def.description?.ar.trim().length).toBeGreaterThan(0);
-      expect(def.description?.en.trim().length).toBeGreaterThan(0);
-      expect(def.icon).toContain('<svg');
+      expect(def.title.ar.trim().length, def.id).toBeGreaterThan(0);
+      expect(def.title.en.trim().length, def.id).toBeGreaterThan(0);
+      expect(def.description?.ar.trim().length, def.id).toBeGreaterThan(0);
+      expect(def.description?.en.trim().length, def.id).toBeGreaterThan(0);
+      expect(def.icon, def.id).toContain('<svg');
+      // The two languages must actually differ: an English title copied into the
+      // Arabic slot would pass a length check and still ship an English UI.
+      expect(def.title.ar, def.id).not.toBe(def.title.en);
     }
   });
 
-  it('uses https for every home URL', () => {
-    for (const def of WIRED_WEB_APPS) expect(def.url.startsWith('https://')).toBe(true);
+  it('uses https for every home URL and never frames the OS itself', () => {
+    for (const def of WIRED_WEB_APPS) {
+      expect(def.url.startsWith('https://'), def.id).toBe(true);
+      expect(new URL(def.url).protocol, def.id).toBe('https:');
+    }
+  });
+
+  it('defaults a def with no kind to "frame"', () => {
+    expect(webAppKind({ id: 'x', title: { ar: 'x', en: 'x' }, url: 'https://x.example/' })).toBe('frame');
+  });
+
+  it('leaves the input untouched for a def with no transform, and applies one when given', () => {
+    const plain: WebAppDef = { id: 'plain', title: { ar: 'x', en: 'x' }, url: 'https://x.example/' };
+    expect(applyUrlTransform(plain, 'anything at all')).toBe('anything at all');
+    expect(applyUrlTransform({ ...plain, transformUrl: (raw) => raw.toUpperCase() }, 'ab')).toBe('AB');
+    // A misbehaving transform is "declined", never a thrown error in the address bar.
+    expect(applyUrlTransform({ ...plain, transformUrl: () => { throw new Error('boom'); } }, 'ab')).toBe('');
   });
 });
 
@@ -73,13 +143,13 @@ describe('webAppManifest', () => {
   it('produces a category "web" manifest with the network permission, single instance', () => {
     for (const def of WIRED_WEB_APPS) {
       const m = webAppManifest(def);
-      expect(m.id).toBe(webAppId(def));
-      expect(m.category).toBe('web');
-      expect(m.permissions).toEqual(['network']);
-      expect(m.singleInstance).toBe(true);
-      expect(m.icon).toBe(def.icon);
-      expect(m.name.ar).toBe(def.title.ar);
-      expect(m.name.en).toBe(def.title.en);
+      expect(m.id, def.id).toBe(webAppId(def));
+      expect(m.category, def.id).toBe('web');
+      expect(m.permissions, def.id).toEqual(['network']);
+      expect(m.singleInstance, def.id).toBe(true);
+      expect(m.icon, def.id).toBe(def.icon);
+      expect(m.name.ar, def.id).toBe(def.title.ar);
+      expect(m.name.en, def.id).toBe(def.title.en);
     }
   });
 
@@ -104,7 +174,7 @@ describe('webAppManifest', () => {
     expect(m.icon).toContain('<svg');
   });
 
-  it('passes the kernel manifest validator (category "web" is a known category)', () => {
+  it('passes the kernel manifest validator for EVERY wired def', () => {
     let sys!: SystemAPI;
     const registry = createAppRegistry(() => sys);
     const bus = { on: () => () => {}, emit: () => {} };
@@ -118,9 +188,15 @@ describe('webAppManifest', () => {
       bus,
     } as unknown as SystemAPI;
     for (const def of WIRED_WEB_APPS) {
-      expect(() => registry.register({ manifest: webAppManifest(def), load: async () => ({ manifest: webAppManifest(def), launch() {} }) })).not.toThrow();
+      expect(
+        () => registry.register({ manifest: webAppManifest(def), load: async () => ({ manifest: webAppManifest(def), launch() {} }) }),
+        def.id,
+      ).not.toThrow();
     }
-    expect(registry.list().map((m) => m.category)).toEqual(['web', 'web', 'web']);
+    // Every registered app really is in the registry, one per def, all category web.
+    expect(registry.list()).toHaveLength(WIRED_WEB_APPS.length);
+    expect(registry.list().every((m) => m.category === 'web')).toBe(true);
+    expect(registry.list().map((m) => m.id).sort()).toEqual([...WIRED_WEB_APPS].map(webAppId).sort());
   });
 
   it('is an ordinary registry entry: installable and uninstallable like any other app', () => {
@@ -144,7 +220,7 @@ describe('webAppManifest', () => {
       });
     }
     // Nothing special: they are installed by default, removable, and re-installable.
-    expect(registry.list()).toHaveLength(3);
+    expect(registry.list()).toHaveLength(WIRED_WEB_APPS.length);
     expect(() => registry.uninstall('org.faisal.Web.wikipedia')).not.toThrow();
     expect(registry.list().map((m) => m.id)).not.toContain('org.faisal.Web.wikipedia');
     registry.install('org.faisal.Web.wikipedia');
@@ -170,6 +246,11 @@ describe('saved-URL helpers', () => {
     expect(lastUrlStorageKey(wikipedia)).toBe('faisal.web.wikipedia.url');
     expect(savedUrl(wikipedia, storage)).toBe('https://en.wikipedia.org/');
     expect(savedUrl(google, storage)).toBe('https://www.google.com/search?q=faisal');
+  });
+
+  it('gives every wired app its own storage key', () => {
+    const keys = WIRED_WEB_APPS.map(lastUrlStorageKey);
+    expect(new Set(keys).size).toBe(keys.length);
   });
 
   it('ignores corrupt, empty and non-string values instead of returning them', () => {

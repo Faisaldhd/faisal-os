@@ -10,8 +10,12 @@ import { WIRED_WEB_APPS, lastUrlStorageKey } from '../web/registry';
 
 const GROQ_KEY = 'faisal.groq.apiKey';
 const DEEPSEEK_KEY = 'faisal.deepseek.apiKey';
-/** The real keys apps/web writes, one per wired site. */
-const WEB_URL_KEYS = ['faisal.web.google.url', 'faisal.web.youtube.url', 'faisal.web.wikipedia.url'];
+/**
+ * The real keys apps/web writes, one per wired site — derived from the registry
+ * rather than copied, so growing the registry can never be absorbed by editing
+ * this line: the assertion below compares the Settings list against it.
+ */
+const WEB_URL_KEYS = WIRED_WEB_APPS.map((def) => lastUrlStorageKey(def));
 
 interface FakeStore extends WritableStorageLike {
   values: Record<string, string>;
