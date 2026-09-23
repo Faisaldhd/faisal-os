@@ -52,6 +52,7 @@ import {
   NO_PROXY_STORAGE,
   buildProxyUrl,
   buildProxyViewUrl,
+  cloudProxyBaseFor,
   probeLocalProxy,
   proxyBaseUrl,
   proxyStorageOrNull,
@@ -262,7 +263,10 @@ export function launchWebApp(
    */
   const proxyStorage: ProxyStorage = runtime?.proxyStorage ?? proxyStorageOrNull() ?? NO_PROXY_STORAGE;
   const proxyPort = readProxyPort(proxyStorage);
-  const proxyBase = proxyBaseUrl(proxyPort);
+  /** The owner's local tool first; else his token-gated cloud proxy (reader only). */
+  const localProxyBase = proxyBaseUrl(proxyPort);
+  const cloudProxyBase = native ? null : cloudProxyBaseFor(globalThis.location?.origin ?? '');
+  let proxyBase = localProxyBase;
   /** The probe result; null until it answers. */
   let proxyProbe: ProxyProbe | null = null;
   /** The per-window proxy state (mode is what actually turns proxying on). */
@@ -271,6 +275,10 @@ export function launchWebApp(
   let proxySeq = 0;
   /** The target the open token/mode panel is about. */
   let proxyTarget: string | null = null;
+  /** Copy that differs for the cloud proxy lives under `<key>Cloud`. */
+  function proxyText(key: string): string {
+    return proxyProbe?.kind === 'cloud' ? t(`${key}Cloud`) : t(key);
+  }
   function currentTargetUrl(): string {
     return proxyTargetOf(plan.displayUrl ?? currentUrl(history) ?? null, def.url);
   }
@@ -281,7 +289,16 @@ export function launchWebApp(
    * embed. The probe sends no token and requests no page.
    */
   function refreshProxyProbe(): void {
-    const probe = runtime?.probe ?? (() => probeLocalProxy(proxyBase));
+    const probe = runtime?.probe ?? (async (): Promise<ProxyProbe> => {
+      const local = await probeLocalProxy(localProxyBase);
+      if (local.available || !cloudProxyBase) {
+        proxyBase = localProxyBase;
+        return local;
+      }
+      const cloud = await probeLocalProxy(cloudProxyBase);
+      if (cloud.available) proxyBase = cloudProxyBase;
+      return cloud;
+    });
     void Promise.resolve()
       .then(probe)
       .catch(() => ({ available: false, version: null, auth: null }) as ProxyProbe)
@@ -366,7 +383,7 @@ export function launchWebApp(
       proxy.error = null;
       proxy.enabled = true;
       markProxyEnabled(proxyStorage, true);
-      writeProxyPort(proxyStorage, proxyPort);
+      if (proxyBase === localProxyBase) writeProxyPort(proxyStorage, proxyPort);
       signal = 'loaded';
       renderFrame();
     },
@@ -388,6 +405,8 @@ export function launchWebApp(
     },
     openExternal: (url: string) => openExternally(url),
     setError: (message: string | null) => { proxy.error = message; },
+    kind: () => proxyProbe?.kind ?? 'local',
+    modes: () => proxyProbe?.modes ?? ['reader', 'raw'],
   };
 
   /** The proxy action: a token is asked for only when the tool requires one. */
@@ -407,7 +426,7 @@ export function launchWebApp(
     const token = raw.trim();
     proxyTarget = proxyTarget ?? currentTargetUrl();
     if (!token) {
-      proxy.error = t('web.proxyTokenRejected');
+      proxy.error = proxyText('web.proxyTokenRejected');
       renderFrame();
       return;
     }
@@ -420,7 +439,7 @@ export function launchWebApp(
         if (seq !== proxySeq) return;
         // WRONG (or unusable) TOKEN: store NOTHING and say so plainly.
         if (!ok || !writeProxyToken(proxyStorage, token)) {
-          proxy.error = t('web.proxyTokenRejected');
+          proxy.error = proxyText('web.proxyTokenRejected');
           renderFrame();
           return;
         }
@@ -431,7 +450,7 @@ export function launchWebApp(
       })
       .catch(() => {
         if (seq !== proxySeq) return;
-        proxy.error = t('web.proxyTokenRejected');
+        proxy.error = proxyText('web.proxyTokenRejected');
         renderFrame();
       });
   }
@@ -490,7 +509,7 @@ export function launchWebApp(
         if (seq !== proxySeq) return;
         ui.body.textContent = '';
         ui.body.append(buildProxyBar('reader', target, proxyHost));
-        ui.body.append(buildReaderError(t('web.proxyReaderError'), target, () => renderFrame(), proxyHost));
+        ui.body.append(buildReaderError(proxyText('web.proxyReaderError'), target, () => renderFrame(), proxyHost));
         syncChrome();
       });
   }

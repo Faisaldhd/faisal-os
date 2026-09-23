@@ -37,6 +37,10 @@ export interface ProxyProbe {
   available: boolean;
   version: string | null;
   auth: 'none' | 'token-required' | null;
+  /** Which proxy answered; the local tool predates the field and means 'local'. */
+  kind?: 'local' | 'cloud';
+  /** The sub-modes it serves; the local tool serves both. */
+  modes?: ProxyMode[];
 }
 
 /** The one storage surface the helpers touch: injected, never read globally. */
@@ -55,12 +59,39 @@ export function proxyBaseUrl(port: number = DEFAULT_PROXY_PORT): string {
   return `http://127.0.0.1:${port}`;
 }
 
+/* ─────────────────────────────── the cloud proxy ─────────────────────────────── */
+
+/**
+ * The owner's token-gated cloud proxy (tools/cloud-proxy.mjs, served by
+ * functions/proxy on Cloudflare Pages). Reader mode only. These are the ONLY
+ * remote bases a proxy URL may ever be built against.
+ */
+export const CLOUD_PROXY_BASE = 'https://faisal-os.pages.dev/proxy';
+const CLOUD_BASE_RE = /^https:\/\/(?:[a-z0-9-]+\.)?faisal-os\.pages\.dev\/proxy$/;
+
+export function isCloudProxyBase(base: string): boolean {
+  return CLOUD_BASE_RE.test(String(base));
+}
+
+/**
+ * The cloud proxy to use from a page served at `origin`: its own /proxy on the
+ * Cloudflare site (production or a preview build), the production one from the
+ * GitHub Pages mirror, and none anywhere else (local dev, the desktop build).
+ */
+export function cloudProxyBaseFor(origin: string): string | null {
+  const candidate = `${origin}/proxy`;
+  if (isCloudProxyBase(candidate)) return candidate;
+  if (origin === 'https://faisaldhd.github.io') return CLOUD_PROXY_BASE;
+  return null;
+}
+
 /**
  * The origins the proxy is allowed to be loaded from. Kept here (not only in the
  * proxy) so the client can refuse to build a URL against something else, and so
  * the values are easy to review side by side with `allowedOrigin()` in the tool.
  */
 export function isAllowedProxyBase(base: string): boolean {
+  if (isCloudProxyBase(base)) return true;
   let u: URL;
   try {
     u = new URL(String(base));
@@ -104,10 +135,19 @@ export async function probeLocalProxy(
     const record = body as Record<string, unknown>;
     if (record.ok !== true) return unavailable;
     const auth = record.auth === 'token-required' || record.auth === 'none' ? record.auth : null;
+    const kind = record.kind === 'cloud' ? 'cloud' : 'local';
+    const modes = Array.isArray(record.modes)
+      ? record.modes.filter((m): m is ProxyMode => m === 'reader' || m === 'raw')
+      : (['reader', 'raw'] as ProxyMode[]);
+    // A cloud proxy is never "open": it must ask for the owner's token.
+    if (kind === 'cloud' && auth !== 'token-required') return unavailable;
+    if (!modes.length) return unavailable;
     return {
       available: true,
       version: typeof record.version === 'string' ? record.version : null,
       auth,
+      kind,
+      modes,
     };
   } catch {
     return unavailable;
