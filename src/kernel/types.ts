@@ -87,6 +87,11 @@ export interface WindowHandle {
   focus(): void;
   close(): void;
   onClose(cb: () => void): Unsubscribe;
+  /**
+   * Asked before the user closes the window (close button, menu, shortcut); return false
+   * to keep it open, e.g. after "discard unsaved changes?". close() itself always closes.
+   */
+  setCloseGuard(guard: (() => boolean | Promise<boolean>) | null): void;
   onResize(cb: (size: { width: number; height: number }) => void): Unsubscribe;
 }
 

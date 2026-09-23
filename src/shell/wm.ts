@@ -32,6 +32,8 @@ interface WinRecord {
   alwaysOnTop: boolean;
   /** Size/position to return to when leaving maximized or snapped. */
   restoreRect: Rect | null;
+  /** Close as the user would: runs the app's close guard first. */
+  requestClose(): Promise<void>;
 }
 
 function loadGeometry(): Record<string, SavedGeometry> {
@@ -289,10 +291,26 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
     const rec: WinRecord = {
       handle: null as unknown as WindowHandle, el, appId: opts.appId, minWidth, minHeight, z: 0,
       minimized: false, maximized: false, autoMaximized: false, snapped: null, alwaysOnTop: false, restoreRect: null,
+      requestClose: async () => {},
     };
     wins.set(id, rec);
 
     let closed = false;
+    let guard: (() => boolean | Promise<boolean>) | null = null;
+    let asking = false;
+    /** A close the user asked for: the app's guard may keep the window open. */
+    const requestClose = async () => {
+      if (asking) return;
+      asking = true;
+      try {
+        if (!guard || await guard()) handle.close();
+      } catch (err) {
+        console.error('[wm] close guard failed', err);
+        handle.close();
+      } finally {
+        asking = false;
+      }
+    };
     const handle: WindowHandle = {
       id,
       appId: opts.appId,
@@ -311,6 +329,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
         if (focusedId === id) focusTopmost();
       },
       onClose: (cb) => { closeCbs.add(cb); return () => closeCbs.delete(cb); },
+      setCloseGuard: (fn) => { guard = fn; },
       onResize: (cb) => { resizeCbs.add(cb); return () => resizeCbs.delete(cb); },
     };
     rec.handle = handle;
@@ -350,13 +369,14 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
           action: () => setAlwaysOnTop(id, !rec.alwaysOnTop),
         },
         { separator: true },
-        { label: t('shell.ctx.closeWindow'), danger: true, action: () => handle.close() },
+        { label: t('shell.ctx.closeWindow'), danger: true, action: () => void requestClose() },
       ], { invoker: titlebar });
     }, { exclude: (target) => target instanceof Element && !!target.closest('.faisal-win-btn') });
 
     minBtn.addEventListener('click', () => minimize(id));
     maxBtn.addEventListener('click', () => toggleMaximize(id));
-    closeBtn.addEventListener('click', () => handle.close());
+    closeBtn.addEventListener('click', () => void requestClose());
+    rec.requestClose = requestClose;
 
     el.addEventListener('pointerdown', () => { if (focusedId !== id) focusWindow(id); });
 
@@ -523,7 +543,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
     const rec = focusedId ? wins.get(focusedId) : undefined;
     // Ctrl+Alt+W closes the focused window.
     if (ev.ctrlKey && ev.altKey && ev.code === 'KeyW') {
-      if (rec) { ev.preventDefault(); rec.handle.close(); }
+      if (rec) { ev.preventDefault(); void rec.requestClose(); }
       return;
     }
     // Super (Windows key) shortcuts; the OS only passes them through in full screen.

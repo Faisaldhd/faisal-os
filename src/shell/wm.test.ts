@@ -124,4 +124,23 @@ describe('window manager', () => {
     expect(() => wm.open(opts('A'))).not.toThrow();
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
+
+  it('asks the close guard before a user close, but not for close()', async () => {
+    const wm = createWindowManager(root, bus);
+    const win = wm.open(opts('A'));
+    let allow = false;
+    win.setCloseGuard(() => allow);
+    const btn = () => [...root.querySelectorAll<HTMLElement>('.faisal-window')].find((w) => w.contains(win.content))?.querySelector<HTMLButtonElement>('.faisal-win-close');
+    btn()!.click();
+    await Promise.resolve();
+    expect(wm.get(win.id)).toBe(win); // guard said no
+    allow = true;
+    btn()!.click();
+    await Promise.resolve(); await Promise.resolve();
+    expect(wm.get(win.id)).toBeUndefined();
+    const other = wm.open(opts('B'));
+    other.setCloseGuard(() => false);
+    other.close(); // programmatic close is never blocked
+    expect(wm.get(other.id)).toBeUndefined();
+  });
 });

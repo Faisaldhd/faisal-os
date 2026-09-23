@@ -24,6 +24,7 @@ function makeWM(): WindowManager {
         appId: o.appId,
         content: document.createElement('div'),
         setTitle() {},
+        setCloseGuard() {},
         focus() {},
         close() {
           closed.add(h.id);
