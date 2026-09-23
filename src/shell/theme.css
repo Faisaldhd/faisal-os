@@ -226,6 +226,7 @@ body {
 }
 
 .faisal-topbar-btn svg { width: 15px; height: 15px; fill: currentColor; }
+.faisal-topbar-btn[hidden] { display: none; }
 
 /* Activities button carries the brand glyph in gold. */
 .faisal-topbar-activities { gap: 8px; padding-inline: 12px 14px; }

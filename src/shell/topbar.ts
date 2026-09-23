@@ -36,7 +36,25 @@ export function mountTopbar(root: HTMLElement, sys: SystemAPI, onToggleOverview:
   menuBtn.setAttribute('aria-haspopup', 'true');
   menuBtn.setAttribute('aria-expanded', 'false');
   menuBtn.append(renderIcon(ICON_SYSTEM));
-  end.append(menuBtn);
+
+  // Dedicated full-screen button (full screen is also what lets the Windows key reach the page).
+  const fsBtn = document.createElement('button');
+  fsBtn.type = 'button';
+  fsBtn.className = 'faisal-topbar-btn faisal-topbar-fullscreen';
+  const syncFs = () => {
+    const on = !!document.fullscreenElement;
+    const label = t(on ? 'shell.menu.exitFullscreen' : 'shell.menu.fullscreen');
+    fsBtn.title = label;
+    fsBtn.setAttribute('aria-label', label);
+    fsBtn.setAttribute('aria-pressed', String(on));
+    fsBtn.replaceChildren(renderIcon(on ? ICON_FS_EXIT : ICON_FS_ENTER));
+  };
+  syncFs();
+  fsBtn.hidden = !document.fullscreenEnabled;
+  fsBtn.addEventListener('click', () => { void toggleFullscreen(); });
+  document.addEventListener('fullscreenchange', syncFs);
+
+  end.append(fsBtn, menuBtn);
 
   bar.append(start, center, end);
   root.prepend(bar);
@@ -197,3 +215,10 @@ async function toggleFullscreen(): Promise<void> {
     await kb?.lock?.(['MetaLeft', 'MetaRight']).catch(() => {});
   } catch { /* full screen refused by the browser or frame: nothing to do */ }
 }
+
+const ICON_FS_ENTER =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">' +
+  '<path d="M1.5 1.5h5v2h-3v3h-2zM9.5 1.5h5v5h-2v-3h-3zM1.5 9.5h2v3h3v2h-5zM12.5 9.5h2v5h-5v-2h3z"/></svg>';
+const ICON_FS_EXIT =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">' +
+  '<path d="M4.5 1.5h2v5h-5v-2h3zM9.5 1.5h2v3h3v2h-5zM1.5 9.5h5v5h-2v-3h-3zM9.5 9.5h5v2h-3v3h-2z"/></svg>';
