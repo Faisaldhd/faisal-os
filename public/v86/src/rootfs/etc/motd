@@ -1,0 +1,7 @@
+
+  Fai$al Linux (v86) - a real Linux kernel running inside your browser.
+  Linux 6.8 + BusyBox 1.36, built from Ubuntu 24.04 packages.
+  No network. Nothing here is saved: everything lives in RAM.
+  Type 'poweroff' to stop the VM.
+  After resizing the window, run: stty cols N rows M
+

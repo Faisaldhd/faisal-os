@@ -1,0 +1,165 @@
+.faisal-editor {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  inline-size: 100%;
+  background: var(--faisal-bg, #f4f4f4);
+  color: var(--faisal-fg, #1e1e1e);
+  font-family: var(--faisal-font, sans-serif);
+}
+
+.faisal-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-block-end: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  background: var(--faisal-surface, #fff);
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+
+.faisal-editor-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: var(--faisal-radius-sm, 6px);
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.faisal-editor-btn:hover { background: var(--faisal-surface-2, #ebebeb); }
+.faisal-editor-btn.is-active { background: var(--faisal-accent, #3c6eb4); color: var(--faisal-accent-fg, #fff); }
+.faisal-editor-btn.is-primary { background: var(--faisal-accent, #3c6eb4); color: var(--faisal-accent-fg, #fff); }
+
+.faisal-editor-spacer { flex: 1 1 auto; }
+
+.faisal-editor-body {
+  flex: 1 1 auto;
+  display: flex;
+  min-block-size: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.faisal-editor-gutter {
+  inline-size: 46px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: var(--faisal-surface-2, #ebebeb);
+  color: var(--faisal-fg-muted, #777);
+  font-family: var(--faisal-font-mono, monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  padding-block-start: 8px;
+  text-align: end;
+  user-select: none;
+}
+
+.faisal-editor-gutter div { padding-inline-end: 6px; }
+
+.faisal-editor-textarea {
+  flex: 1 1 auto;
+  resize: none;
+  border: none;
+  outline: none;
+  padding: 8px;
+  font-family: var(--faisal-font-mono, monospace);
+  font-size: 13px;
+  line-height: 1.5;
+  background: var(--faisal-surface, #fff);
+  color: inherit;
+  white-space: pre;
+  overflow: auto;
+}
+
+.faisal-editor-textarea.is-wrap { white-space: pre-wrap; word-break: break-word; }
+
+.faisal-editor-statusbar {
+  display: flex;
+  gap: 12px;
+  padding: 3px 8px;
+  font-size: 11px;
+  color: var(--faisal-fg-muted, #777);
+  border-block-start: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  flex: 0 0 auto;
+}
+
+.faisal-editor-findbar {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-block-end: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  background: var(--faisal-surface, #fff);
+  flex: 0 0 auto;
+}
+
+.faisal-editor-findbar.is-open { display: flex; }
+
+.faisal-editor-findbar input[type="text"] {
+  padding: 4px 8px;
+  border-radius: var(--faisal-radius-sm, 6px);
+  border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.2));
+  background: var(--faisal-bg, #fff);
+  color: inherit;
+  font: inherit;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+.faisal-editor-find-count {
+  font-size: 11px;
+  color: var(--faisal-fg-muted, #777);
+  white-space: nowrap;
+}
+
+.faisal-editor-overlay {
+  position: absolute;
+  inset: 0;
+  background: var(--faisal-overlay-bg, rgba(20, 22, 28, 0.45));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+}
+
+.faisal-editor-dialog {
+  background: var(--faisal-surface, #fff);
+  border-radius: var(--faisal-radius, 10px);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.3);
+  padding: 16px;
+  min-inline-size: 280px;
+  max-inline-size: min(90%, 420px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.faisal-editor-dialog h3 { margin: 0; font-size: 14px; }
+.faisal-editor-dialog p { margin: 0; color: var(--faisal-fg-muted, #777); font-size: 12px; }
+
+.faisal-editor-dialog input[type="text"] {
+  padding: 6px 8px;
+  border-radius: var(--faisal-radius-sm, 6px);
+  border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.2));
+  background: var(--faisal-bg, #fff);
+  color: inherit;
+  font: inherit;
+}
+
+.faisal-editor-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.faisal-editor-dialog-error {
+  color: var(--faisal-danger, #c01c28);
+  font-size: 12px;
+}

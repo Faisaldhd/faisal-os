@@ -1,0 +1,12 @@
+export PATH=/bin
+export HOME=/root
+export TERM=xterm-256color
+export PS1='\[\e[1;31m\]\u@\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]# '
+cd "$HOME"
+alias ll='ls -l'
+# The terminal passes its size on the kernel command line (a serial port has no window size).
+for a in $(cat /proc/cmdline); do
+  case "$a" in faisal.cols=*) FAISAL_COLS=${a#faisal.cols=} ;; faisal.rows=*) FAISAL_ROWS=${a#faisal.rows=} ;; esac
+done
+[ -n "$FAISAL_COLS" ] && stty cols "$FAISAL_COLS" rows "${FAISAL_ROWS:-24}" 2>/dev/null
+unset a FAISAL_COLS FAISAL_ROWS

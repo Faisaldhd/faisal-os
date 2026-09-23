@@ -1,0 +1,169 @@
+/**
+ * Fai$al OS — System contracts (عقود النظام).
+ *
+ * هذا الملف هو المصدر الوحيد للحقيقة بين المكوّنات. لا يعدّله أي مسار إلا المالك (kernel).
+ * كل مكوّن يعتمد على هذه الواجهات فقط، لا على تفاصيل تنفيذ المكوّنات الأخرى.
+ */
+
+export type Unsubscribe = () => void;
+
+/* ───────────────────────────── Event bus ───────────────────────────── */
+
+export interface SystemEvents {
+  'fs:change': { path: string; kind: 'create' | 'modify' | 'delete' | 'rename'; oldPath?: string };
+  'app:launched': { appId: string; windowId: string };
+  'app:closed': { appId: string; windowId: string };
+  'window:focus': { windowId: string };
+  'settings:change': { key: string; value: unknown };
+  'notify': { title: string; body?: string; appId?: string };
+  'system:ready': Record<string, never>;
+}
+
+export interface EventBus {
+  on<K extends keyof SystemEvents>(type: K, handler: (payload: SystemEvents[K]) => void): Unsubscribe;
+  emit<K extends keyof SystemEvents>(type: K, payload: SystemEvents[K]): void;
+}
+
+/* ───────────────────────── Virtual file system ─────────────────────── */
+
+export type VFSErrorCode =
+  | 'ENOENT' | 'EEXIST' | 'ENOTDIR' | 'EISDIR' | 'ENOTEMPTY' | 'EACCES' | 'EINVAL';
+
+export class VFSError extends Error {
+  constructor(public code: VFSErrorCode, public path: string, message?: string) {
+    super(message ?? `${code}: ${path}`);
+    this.name = 'VFSError';
+  }
+}
+
+export interface Stat {
+  path: string;          // absolute, normalized ("/home/user/a.txt")
+  name: string;          // basename ("a.txt"); "/" for root
+  type: 'file' | 'dir';
+  size: number;          // bytes (0 for dirs)
+  mode: number;          // unix-like permission bits, e.g. 0o644 / 0o755
+  mtime: number;         // ms epoch
+  ctime: number;         // ms epoch
+}
+
+/** كل المسارات مطلقة وPOSIX. الدوال async دائماً. الأخطاء من نوع VFSError. */
+export interface VFS {
+  stat(path: string): Promise<Stat>;
+  exists(path: string): Promise<boolean>;
+  readdir(path: string): Promise<Stat[]>;
+  readFile(path: string): Promise<Uint8Array>;
+  readText(path: string): Promise<string>;
+  /** ينشئ الملف أو يستبدله. الأب يجب أن يكون موجوداً وإلا ENOENT. */
+  writeFile(path: string, data: string | Uint8Array): Promise<void>;
+  mkdir(path: string, opts?: { recursive?: boolean }): Promise<void>;
+  remove(path: string, opts?: { recursive?: boolean }): Promise<void>;
+  rename(from: string, to: string): Promise<void>;
+  chmod(path: string, mode: number): Promise<void>;
+}
+
+/* ─────────────────────────── Windows / shell ───────────────────────── */
+
+export interface WindowOptions {
+  appId: string;
+  title: string;
+  icon?: string;            // SVG markup أو data: URL
+  width?: number;
+  height?: number;
+  minWidth?: number;
+  minHeight?: number;
+  resizable?: boolean;      // default true
+}
+
+export interface WindowHandle {
+  readonly id: string;
+  readonly appId: string;
+  /** العنصر الذي يرسم فيه التطبيق محتواه. */
+  readonly content: HTMLElement;
+  setTitle(title: string): void;
+  focus(): void;
+  close(): void;
+  onClose(cb: () => void): Unsubscribe;
+  onResize(cb: (size: { width: number; height: number }) => void): Unsubscribe;
+}
+
+export interface WindowManager {
+  open(opts: WindowOptions): WindowHandle;
+  list(): WindowHandle[];
+  get(id: string): WindowHandle | undefined;
+}
+
+/* ───────────────────────────── Apps ───────────────────────────────── */
+
+export type Permission =
+  | 'fs:home'        // قراءة/كتابة داخل /home/user و /tmp فقط
+  | 'fs:read-all'    // قراءة كامل النظام (الكتابة تبقى حسب fs:home)
+  | 'fs:system'      // قراءة وكتابة كامل نظام الملفات
+  | 'notifications'
+  | 'settings'       // تعديل إعدادات النظام
+  | 'network';
+
+export interface AppManifest {
+  id: string;                      // "org.faisal.Files"
+  name: { ar: string; en: string };
+  description?: { ar: string; en: string };
+  icon: string;                    // SVG markup
+  permissions: Permission[];
+  singleInstance?: boolean;
+  /** امتدادات الملفات التي يفتحها التطبيق (".txt"). */
+  opens?: string[];
+}
+
+export interface AppContext {
+  readonly sys: SystemAPI;          // الوصول مقيّد حسب permissions
+  readonly window: WindowHandle;
+  readonly args: string[];         // مثلاً مسار ملف للفتح
+}
+
+export interface AppModule {
+  manifest: AppManifest;
+  launch(ctx: AppContext): void | Promise<void>;
+}
+
+export interface AppRegistry {
+  register(app: AppModule): void;
+  list(): AppManifest[];
+  launch(appId: string, args?: string[]): Promise<WindowHandle | undefined>;
+  /** يجد التطبيق المناسب لملف حسب الامتداد. */
+  appForFile(path: string): AppManifest | undefined;
+}
+
+/* ─────────────────────────── Settings / i18n ───────────────────────── */
+
+export interface Settings {
+  get<T>(key: string, fallback: T): T;
+  set(key: string, value: unknown): void;
+}
+
+export type Locale = 'ar' | 'en';
+
+/* ─────────────────────────── Terminal backend ──────────────────────── */
+
+export interface TerminalBackend {
+  readonly kind: 'sim' | 'v86';
+  /** يبدأ الجلسة؛ كل ما يُكتب للشاشة يمر عبر output. */
+  start(output: (data: string) => void): Promise<void>;
+  /** إدخال المستخدم الخام من xterm (بما فيها \r وأسهم ANSI). */
+  input(data: string): void;
+  resize?(cols: number, rows: number): void;
+  dispose(): void;
+}
+
+/* ───────────────────────────── System ─────────────────────────────── */
+
+export interface SystemAPI {
+  bus: EventBus;
+  vfs: VFS;
+  wm: WindowManager;
+  apps: AppRegistry;
+  settings: Settings;
+  locale(): Locale;
+  t(key: string, vars?: Record<string, string | number>): string;
+  notify(title: string, body?: string): void;
+}
+
+export const HOME = '/home/user';
