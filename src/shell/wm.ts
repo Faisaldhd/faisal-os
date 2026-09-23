@@ -1,16 +1,20 @@
 import type { EventBus, WindowHandle, WindowManager, WindowOptions } from '../kernel/types';
 import { renderIcon } from './icon';
 import { t } from '../kernel/i18n';
+import { showContextMenu, wireContextMenu } from './contextmenu';
 
 const NARROW_BREAKPOINT = 700;
 const CASCADE_STEP = 28;
 const CASCADE_MAX = 8;
+/** Always-on-top windows use a z-index tier well above the normal stack. */
+const PINNED_Z_BASE = 100_000;
 
 interface WinRecord {
   handle: WindowHandle;
   el: HTMLElement;
   minimized: boolean;
   maximized: boolean;
+  alwaysOnTop: boolean;
   restoreRect: { left: number; top: number; width: number; height: number } | null;
 }
 
@@ -23,6 +27,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
   const wins = new Map<string, WinRecord>();
   let counter = 0;
   let zTop = 10;
+  let zTopPinned = PINNED_Z_BASE;
   let cascadeIndex = 0;
 
   function isNarrow(): boolean {
@@ -42,12 +47,25 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
   function focusWindow(id: string) {
     const rec = wins.get(id);
     if (!rec) return;
-    zTop += 1;
-    rec.el.style.zIndex = String(zTop);
+    if (rec.alwaysOnTop) {
+      zTopPinned += 1;
+      rec.el.style.zIndex = String(zTopPinned);
+    } else {
+      zTop += 1;
+      rec.el.style.zIndex = String(zTop);
+    }
     for (const [otherId, other] of wins) {
       other.el.classList.toggle('is-focused', otherId === id);
     }
     bus.emit('window:focus', { windowId: id });
+  }
+
+  function setAlwaysOnTop(id: string, on: boolean) {
+    const rec = wins.get(id);
+    if (!rec) return;
+    rec.alwaysOnTop = on;
+    rec.el.classList.toggle('is-pinned', on);
+    focusWindow(id);
   }
 
   function open(opts: WindowOptions): WindowHandle {
@@ -69,7 +87,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
     cascadeIndex += 1;
     const startLeft = 60 + idx * CASCADE_STEP;
     const startTop = 40 + idx * CASCADE_STEP;
-    const { left, top } = clampToViewport({ handle: null as any, el, minimized: false, maximized: false, restoreRect: null }, startLeft, startTop, width, height);
+    const { left, top } = clampToViewport({ handle: null as any, el, minimized: false, maximized: false, alwaysOnTop: false, restoreRect: null }, startLeft, startTop, width, height);
     el.style.left = `${left}px`;
     el.style.top = `${top}px`;
 
@@ -114,7 +132,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
     const closeCbs = new Set<() => void>();
     const resizeCbs = new Set<(size: { width: number; height: number }) => void>();
 
-    const rec: WinRecord = { handle: null as any, el, minimized: false, maximized: false, restoreRect: null };
+    const rec: WinRecord = { handle: null as any, el, minimized: false, maximized: false, alwaysOnTop: false, restoreRect: null };
     wins.set(id, rec);
 
     const handle: WindowHandle = {
@@ -155,6 +173,23 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
       if ((ev.target as HTMLElement).closest('.faisal-win-btn')) return;
       toggleMaximize();
     });
+
+    wireContextMenu(titlebar, (x, y) => {
+      showContextMenu(x, y, [
+        { label: t('shell.ctx.minimize'), action: () => { rec.minimized = true; el.classList.add('is-minimized'); } },
+        {
+          label: t(rec.maximized ? 'shell.ctx.restoreWindow' : 'shell.ctx.maximizeWindow'),
+          action: () => toggleMaximize(),
+        },
+        {
+          label: t('shell.ctx.alwaysOnTop'),
+          checked: rec.alwaysOnTop,
+          action: () => setAlwaysOnTop(id, !rec.alwaysOnTop),
+        },
+        { separator: true },
+        { label: t('shell.ctx.closeWindow'), danger: true, action: () => handle.close() },
+      ], { invoker: titlebar });
+    }, { exclude: (target) => target instanceof Element && !!target.closest('.faisal-win-btn') });
 
     minBtn.addEventListener('click', () => {
       rec.minimized = true;

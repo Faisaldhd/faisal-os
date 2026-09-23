@@ -1,10 +1,14 @@
 import type { SystemAPI } from '../kernel/types';
 import { renderIcon } from './icon';
+import { showContextMenu, wireContextMenu } from './contextmenu';
+import { appTileMenuItems, getDashIds } from './desktop';
 
 /**
  * Always-visible dock pinned to the bottom of the desktop. It sits in the desktop's
  * flex column after the window surface, so maximized windows stop above it.
- * Clicking an app focuses its newest window if one is open, otherwise launches it.
+ * It shows the pinned apps (the dash list), then any running app that isn't pinned.
+ * Clicking an app focuses its newest window if one is open, otherwise launches it;
+ * right-click opens the same menu as in Activities (pin, desktop, details, uninstall).
  */
 export function mountDock(root: HTMLElement, sys: SystemAPI): HTMLElement {
   const bar = document.createElement('nav');
@@ -17,7 +21,12 @@ export function mountDock(root: HTMLElement, sys: SystemAPI): HTMLElement {
   function render() {
     dock.textContent = '';
     const running = new Set(sys.wm.list().map((w) => w.appId));
-    for (const app of sys.apps.list()) {
+    const byId = new Map(sys.apps.list().map((a) => [a.id, a] as const));
+    const ids = getDashIds(sys);
+    for (const id of running) if (!ids.includes(id)) ids.push(id);
+    for (const id of ids) {
+      const app = byId.get(id);
+      if (!app) continue;
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'faisal-dock-btn' + (running.has(app.id) ? ' is-running' : '');
@@ -29,6 +38,9 @@ export function mountDock(root: HTMLElement, sys: SystemAPI): HTMLElement {
         if (wins.length) wins[wins.length - 1].focus();
         else sys.apps.launch(app.id);
       });
+      wireContextMenu(btn, (x, y) => {
+        showContextMenu(x, y, appTileMenuItems(sys, app, { onChange: render }), { invoker: btn });
+      });
       dock.append(btn);
     }
   }
@@ -37,5 +49,6 @@ export function mountDock(root: HTMLElement, sys: SystemAPI): HTMLElement {
   sys.bus.on('apps:changed', render);
   sys.bus.on('app:launched', render);
   sys.bus.on('app:closed', render);
+  sys.bus.on('settings:change', ({ key }) => { if (key === 'shell.dash') render(); });
   return bar;
 }

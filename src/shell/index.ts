@@ -9,11 +9,13 @@ import { mountDock } from './dock';
 import { mountScreenshot } from './screenshot';
 import { mountNotifications } from './notifications';
 import { mountSplash } from './splash';
+import { mountDesktop } from './desktop';
 
 export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   wireAppearance(sys.bus, sys.settings);
   mountSplash(sys.bus);
 
+  mountDesktop(root, sys, sys.wm);
   const overview = mountOverview(root, sys, sys.wm);
   const screenshot = mountScreenshot(sys);
   mountTopbar(root, sys, () => overview.toggle(), () => screenshot.capture());

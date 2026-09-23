@@ -1,6 +1,8 @@
 import type { SystemAPI, WindowManager, AppManifest } from '../kernel/types';
 import { t } from '../kernel/i18n';
 import { renderIcon } from './icon';
+import { showContextMenu, wireContextMenu } from './contextmenu';
+import { appTileMenuItems, getDashIds } from './desktop';
 
 const ICON_WINDOW =
   '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="3" y1="8.5" x2="21" y2="8.5" stroke="currentColor" stroke-width="1.6"/></svg>';
@@ -101,13 +103,20 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
         sys.apps.launch(app.id);
         close();
       });
+      wireContextMenu(tile, (x, y) => {
+        showContextMenu(x, y, appTileMenuItems(sys, app, { onChange: renderApps, onLaunch: close }), { invoker: tile });
+      });
       appGrid.append(tile);
     });
   }
 
   function renderDock() {
     dock.textContent = '';
-    for (const app of sys.apps.list()) {
+    const dashIds = getDashIds(sys);
+    const byId = new Map(sys.apps.list().map((a) => [a.id, a] as const));
+    for (const id of dashIds) {
+      const app = byId.get(id);
+      if (!app) continue;
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'faisal-dock-btn';
@@ -117,6 +126,9 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
         sys.apps.launch(app.id);
         close();
       });
+      wireContextMenu(btn, (x, y) => {
+        showContextMenu(x, y, appTileMenuItems(sys, app, { onChange: renderDock, onLaunch: close }), { invoker: btn });
+      });
       dock.append(btn);
     }
   }
@@ -125,6 +137,10 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
     if (!open) return;
     renderApps();
     renderDock();
+  });
+  sys.bus.on('settings:change', ({ key }) => {
+    if (!open) return;
+    if (key === 'shell.dash') renderDock();
   });
 
   search.addEventListener('input', renderApps);

@@ -976,3 +976,184 @@ body {
 }
 .faisal-shot-bar button:hover { background: rgba(255, 255, 255, 0.22); }
 .faisal-shot-bar button:first-of-type { background: var(--faisal-brand-mark-gold, #E3B650); color: #16264F; }
+/* ───────────────────────── Desktop icons ───────────────────────── */
+
+.faisal-desktop-icons {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(auto-fill, 96px);
+  justify-content: start;
+  gap: 4px;
+  padding: 14px;
+  align-content: start;
+}
+
+.faisal-desktop-icon {
+  width: 92px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px;
+  border-radius: var(--faisal-radius-sm);
+  border: 1px solid transparent;
+  cursor: default;
+  user-select: none;
+  color: #fff;
+}
+.faisal-desktop-icon:hover { background: rgba(255, 255, 255, 0.1); }
+.faisal-desktop-icon.is-selected {
+  background: color-mix(in srgb, var(--faisal-accent) 32%, rgba(255, 255, 255, 0.12));
+  border-color: color-mix(in srgb, var(--faisal-accent-2) 60%, transparent);
+}
+.faisal-desktop-icon:focus-visible {
+  outline: 2px solid var(--faisal-accent-2);
+  outline-offset: 2px;
+}
+
+.faisal-desktop-icon-img {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faisal-accent);
+}
+.faisal-desktop-icon-img svg { width: 44px; height: 44px; filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.35)); }
+
+.faisal-desktop-icon-label {
+  font-size: 11.5px;
+  text-align: center;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  word-break: break-word;
+}
+
+/* ───────────────────────── Context menu ───────────────────────── */
+
+.faisal-ctxmenu {
+  position: fixed;
+  z-index: 3000;
+  min-width: 220px;
+  max-width: 300px;
+  background: var(--faisal-surface);
+  color: var(--faisal-fg);
+  border-radius: var(--faisal-radius);
+  box-shadow: 0 14px 36px var(--faisal-shadow), 0 0 0 1px var(--faisal-border);
+  padding: 6px;
+  font-size: 13.5px;
+}
+
+.faisal-ctxmenu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--faisal-fg);
+  font: inherit;
+  text-align: start;
+  padding: 8px 10px;
+  border-radius: var(--faisal-radius-sm);
+  cursor: pointer;
+}
+.faisal-ctxmenu-item:hover,
+.faisal-ctxmenu-item:focus-visible {
+  background: var(--faisal-surface-2);
+  outline: none;
+}
+.faisal-ctxmenu-item:disabled {
+  color: var(--faisal-fg-muted);
+  cursor: default;
+  background: transparent;
+}
+.faisal-ctxmenu-item.is-danger { color: var(--faisal-danger); }
+
+.faisal-ctxmenu-check {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.faisal-ctxmenu-check svg { width: 12px; height: 12px; fill: none; stroke: currentColor; }
+
+.faisal-ctxmenu-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faisal-fg-muted);
+}
+.faisal-ctxmenu-item.is-danger .faisal-ctxmenu-icon { color: var(--faisal-danger); }
+.faisal-ctxmenu-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; }
+
+.faisal-ctxmenu-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.faisal-ctxmenu-sep {
+  height: 1px;
+  margin: 6px 8px;
+  background: var(--faisal-border);
+}
+
+/* ───────────────────────── Shell dialog (confirm) ───────────────────────── */
+
+.faisal-shell-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  background: var(--faisal-overlay-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.faisal-shell-dialog {
+  width: min(360px, 90vw);
+  background: var(--faisal-surface);
+  color: var(--faisal-fg);
+  border-radius: var(--faisal-radius);
+  box-shadow: 0 20px 50px var(--faisal-shadow);
+  padding: 20px;
+}
+.faisal-shell-dialog h3 { margin: 0 0 8px; font-size: 15px; }
+.faisal-shell-dialog p { margin: 0 0 18px; font-size: 13px; color: var(--faisal-fg-muted); }
+
+.faisal-shell-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.faisal-shell-dialog-btn {
+  border: 1px solid var(--faisal-border);
+  background: var(--faisal-surface-2);
+  color: var(--faisal-fg);
+  font: inherit;
+  padding: 8px 16px;
+  border-radius: var(--faisal-radius-sm);
+  cursor: pointer;
+}
+.faisal-shell-dialog-btn.is-primary { background: var(--faisal-accent); color: var(--faisal-accent-fg); border-color: transparent; }
+.faisal-shell-dialog-btn.is-danger { background: var(--faisal-danger); color: #fff; border-color: transparent; }
+
+/* Always-on-top windows get a subtle gold hairline so they read as "pinned". */
+.faisal-window.is-pinned {
+  box-shadow: 0 0 0 1px var(--faisal-brand-mark-gold), 0 18px 50px var(--faisal-shadow);
+}

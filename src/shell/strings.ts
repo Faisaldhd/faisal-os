@@ -26,6 +26,40 @@ defineStrings('shell', {
     'shot.cancel': 'إلغاء',
     'shot.saved': 'تم حفظ لقطة الشاشة في الصور',
     'shot.failed': 'تعذّر حفظ لقطة الشاشة',
+
+    // Context menus
+    'ctx.open': 'فتح',
+    'ctx.newWindow': 'نافذة جديدة',
+    'ctx.addToDesktop': 'إضافة إلى سطح المكتب',
+    'ctx.removeFromDesktop': 'إزالة من سطح المكتب',
+    'ctx.addToDash': 'تثبيت في اللوحة',
+    'ctx.removeFromDash': 'إزالة من اللوحة',
+    'ctx.appDetails': 'تفاصيل التطبيق',
+    'ctx.uninstall': 'إزالة التثبيت',
+
+    'ctx.openFiles': 'فتح الملفات',
+    'ctx.openTerminal': 'فتح الطرفية',
+    'ctx.newFolder': 'مجلد جديد',
+    'ctx.changeBackground': 'تغيير الخلفية…',
+    'ctx.display': 'العرض',
+    'ctx.displayDark': 'التبديل إلى الوضع الداكن',
+    'ctx.displayLight': 'التبديل إلى الوضع الفاتح',
+    'ctx.arrangeIcons': 'ترتيب الأيقونات',
+    'ctx.about': 'حول Fai$al OS',
+
+    'ctx.minimize': 'تصغير',
+    'ctx.maximizeWindow': 'تكبير',
+    'ctx.restoreWindow': 'استعادة',
+    'ctx.alwaysOnTop': 'البقاء في الأعلى دائماً',
+    'ctx.closeWindow': 'إغلاق',
+
+    'uninstall.title': 'إزالة تثبيت {name}؟',
+    'uninstall.body': 'سيتم إغلاق كل نوافذ {name} وإزالته من الجهاز. يمكنك تثبيته من جديد لاحقاً من المتجر.',
+    'uninstall.confirm': 'إزالة التثبيت',
+    'uninstall.cancel': 'إلغاء',
+    'uninstall.done': 'تمت إزالة تثبيت {name}',
+
+    'desktop.newFolder': 'مجلد جديد',
   },
   en: {
     activities: 'Activities',
@@ -52,5 +86,39 @@ defineStrings('shell', {
     'shot.cancel': 'Cancel',
     'shot.saved': 'Screenshot saved to Pictures',
     'shot.failed': 'Could not save the screenshot',
+
+    // Context menus
+    'ctx.open': 'Open',
+    'ctx.newWindow': 'New window',
+    'ctx.addToDesktop': 'Add to desktop',
+    'ctx.removeFromDesktop': 'Remove from desktop',
+    'ctx.addToDash': 'Add to dash',
+    'ctx.removeFromDash': 'Remove from dash',
+    'ctx.appDetails': 'App details',
+    'ctx.uninstall': 'Uninstall',
+
+    'ctx.openFiles': 'Open Files',
+    'ctx.openTerminal': 'Open Terminal',
+    'ctx.newFolder': 'New folder',
+    'ctx.changeBackground': 'Change background…',
+    'ctx.display': 'Display',
+    'ctx.displayDark': 'Switch to dark mode',
+    'ctx.displayLight': 'Switch to light mode',
+    'ctx.arrangeIcons': 'Arrange icons',
+    'ctx.about': 'About Fai$al OS',
+
+    'ctx.minimize': 'Minimize',
+    'ctx.maximizeWindow': 'Maximize',
+    'ctx.restoreWindow': 'Restore',
+    'ctx.alwaysOnTop': 'Always on top',
+    'ctx.closeWindow': 'Close',
+
+    'uninstall.title': 'Uninstall {name}?',
+    'uninstall.body': 'All windows of {name} will close and it will be removed from this device. You can reinstall it later from the Store.',
+    'uninstall.confirm': 'Uninstall',
+    'uninstall.cancel': 'Cancel',
+    'uninstall.done': '{name} was uninstalled',
+
+    'desktop.newFolder': 'New folder',
   },
 });
