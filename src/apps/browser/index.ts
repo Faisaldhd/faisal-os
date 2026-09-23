@@ -71,6 +71,8 @@ function launch(ctx: AppContext): void {
   win.content.textContent = '';
   /** Non-null in the desktop build: pages load in a real <webview>, so no site refuses. */
   const native = nativeWeb();
+  /** Where a new tab and the Home button go: Google on desktop, the built-in home page on the web. */
+  const START_URL: string | null = native ? 'https://www.google.com/' : null;
 
   const root = document.createElement('div');
   root.className = 'faisal-browser';
@@ -90,8 +92,9 @@ function launch(ctx: AppContext): void {
   // ── toolbar ──
   const toolbar = document.createElement('div');
   toolbar.className = 'faisal-browser-toolbar';
-  const backBtn = iconButton(ICON_BACK, t('browser.backHint'));
-  const fwdBtn = iconButton(ICON_FORWARD, t('browser.forwardHint'));
+  // The hints explain iframe-only limits; the desktop webview has real history.
+  const backBtn = iconButton(ICON_BACK, t(native ? 'browser.back' : 'browser.backHint'));
+  const fwdBtn = iconButton(ICON_FORWARD, t(native ? 'browser.forward' : 'browser.forwardHint'));
   const reloadBtn = iconButton(ICON_RELOAD, t('browser.reload'));
   const homeBtn = iconButton(ICON_HOME, t('browser.home'));
   backBtn.classList.add('faisal-browser-navbtn');
@@ -103,8 +106,7 @@ function launch(ctx: AppContext): void {
   addressInput.type = 'text';
   addressInput.dir = 'ltr';
   addressInput.className = 'faisal-browser-address';
-  addressInput.placeholder = t('browser.addressPlaceholder');
-  addressInput.setAttribute('aria-label', t('browser.addressPlaceholder'));
+  // Set by syncEnginePlaceholder() once the engine is known.
   addressInput.autocomplete = 'off';
   addressInput.spellcheck = false;
   addressForm.append(addressInput);
@@ -115,24 +117,47 @@ function launch(ctx: AppContext): void {
   engineSelect.className = 'faisal-browser-engine';
   engineSelect.title = t('browser.engineLabel');
   engineSelect.setAttribute('aria-label', t('browser.engineLabel'));
-  const engineOptions: { id: SearchEngine; key: string }[] = [
-    { id: 'wikipedia', key: 'browser.engineWikipedia' },
-    { id: 'duckduckgo', key: 'browser.engineDuckDuckGo' },
-    { id: 'google', key: 'browser.engineGoogle' },
-    { id: 'bing', key: 'browser.engineBing' },
-  ];
+  const engineOptions: { id: SearchEngine; key: string }[] = native
+    ? [
+        { id: 'google', key: 'browser.engineNameGoogle' },
+        { id: 'wikipedia', key: 'browser.engineNameWikipedia' },
+        { id: 'duckduckgo', key: 'browser.engineNameDuckDuckGo' },
+        { id: 'bing', key: 'browser.engineNameBing' },
+      ]
+    : [
+        { id: 'wikipedia', key: 'browser.engineWikipedia' },
+        { id: 'duckduckgo', key: 'browser.engineDuckDuckGo' },
+        { id: 'google', key: 'browser.engineGoogle' },
+        { id: 'bing', key: 'browser.engineBing' },
+      ];
   for (const opt of engineOptions) {
     const o = document.createElement('option');
     o.value = opt.id;
     o.textContent = t(opt.key);
     engineSelect.append(o);
   }
-  let engine: SearchEngine = loadEngine();
+  // Desktop: Google is the default, since every engine loads in-tab there.
+  let engine: SearchEngine = loadEngine(native ? 'google' : 'wikipedia');
   engineSelect.value = engine;
   engineSelect.addEventListener('change', () => {
     engine = (engineSelect.value as SearchEngine) ?? 'wikipedia';
     saveEngine(engine);
+    syncEnginePlaceholder();
   });
+
+  function engineName(id: SearchEngine): string {
+    return t(engineOptions.find((o) => o.id === id)?.key ?? 'browser.engineNameGoogle');
+  }
+
+  /** The address bar says which engine a search goes to (desktop names the engine; web keeps its original copy). */
+  function syncEnginePlaceholder(): void {
+    const text = native
+      ? t('browser.addressPlaceholderEngine', { engine: engineName(engine) })
+      : t('browser.addressPlaceholder');
+    addressInput.placeholder = text;
+    addressInput.setAttribute('aria-label', text);
+  }
+  syncEnginePlaceholder();
 
   toolbar.append(backBtn, fwdBtn, reloadBtn, homeBtn, addressForm, starBtn, openTabBtn, engineSelect);
 
@@ -171,18 +196,21 @@ function launch(ctx: AppContext): void {
     hero.className = 'faisal-browser-home-hero';
     const heroTitle = document.createElement('div');
     heroTitle.className = 'faisal-browser-home-title';
-    heroTitle.textContent = t('browser.homeTitle');
+    heroTitle.textContent = t(native ? 'browser.homeTitleDesktop' : 'browser.homeTitle');
     const heroSub = document.createElement('div');
     heroSub.className = 'faisal-browser-home-sub';
-    heroSub.textContent = t('browser.homeSubtitle');
+    heroSub.textContent = t(native ? 'browser.homeSubtitleDesktop' : 'browser.homeSubtitle');
 
     const searchForm = document.createElement('form');
     searchForm.className = 'faisal-browser-home-search';
     const searchInput = document.createElement('input');
     searchInput.type = 'text';
     searchInput.className = 'faisal-browser-home-search-input';
-    searchInput.placeholder = t('browser.homeSearchPlaceholder');
-    searchInput.setAttribute('aria-label', t('browser.homeSearchPlaceholder'));
+    const searchHint = native
+      ? t('browser.homeSearchPlaceholderEngine', { engine: engineName(engine) })
+      : t('browser.homeSearchPlaceholder');
+    searchInput.placeholder = searchHint;
+    searchInput.setAttribute('aria-label', searchHint);
     searchInput.autocomplete = 'off';
     searchInput.spellcheck = false;
     const searchBtn = document.createElement('button');
@@ -209,10 +237,12 @@ function launch(ctx: AppContext): void {
 
     interface ShortcutDef { labelKey: string; url: string; descKey?: string }
     const shortcuts: ShortcutDef[] = [
+      ...(native ? [{ labelKey: 'browser.tileGoogle', url: 'https://www.google.com/' }] : []),
       { labelKey: 'browser.tileWikipediaAr', url: 'https://ar.wikipedia.org/' },
       { labelKey: 'browser.tileWikipediaEn', url: 'https://en.wikipedia.org/' },
       { labelKey: 'browser.tileOsm', url: buildOpenStreetMapEmbedUrl() },
-      { labelKey: 'browser.tileYouTube', url: 'https://www.youtube.com/', descKey: 'browser.tileYouTubeDesc' },
+      // The "paste a video link" hint is about the iframe embed rewrite; the desktop opens YouTube itself.
+      { labelKey: 'browser.tileYouTube', url: 'https://www.youtube.com/', descKey: native ? undefined : 'browser.tileYouTubeDesc' },
       { labelKey: 'browser.tileArchive', url: 'https://archive.org/' },
       { labelKey: 'browser.tileMdn', url: 'https://developer.mozilla.org/' },
       { labelKey: 'browser.tileBbc', url: 'https://www.bbc.com/arabic' },
@@ -495,7 +525,7 @@ function launch(ctx: AppContext): void {
   }
 
   function goHome(tab: Tab): void {
-    pushHistory(tab, null);
+    pushHistory(tab, START_URL);
     renderTabBody(tab);
   }
 
@@ -555,7 +585,7 @@ function launch(ctx: AppContext): void {
     const bodyEl = document.createElement('div');
     bodyEl.className = 'faisal-browser-body';
 
-    const tab: Tab = { id, history: [null], index: 0, tabEl, labelEl, bodyEl, hintTimer: null, view: null, pageTitle: null };
+    const tab: Tab = { id, history: [START_URL], index: 0, tabEl, labelEl, bodyEl, hintTimer: null, view: null, pageTitle: null };
     tabList.append(tabEl);
     pageArea.append(bodyEl);
     tabs.push(tab);
@@ -603,6 +633,7 @@ function launch(ctx: AppContext): void {
     const tab = makeTab();
     activateTab(tab.id);
     if (url) navigate(tab, url);
+    else renderTabBody(tab);
   }
 
   newTabBtn.addEventListener('click', () => openNewTab());

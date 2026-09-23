@@ -28,12 +28,13 @@ export function saveBookmarks(list: string[]): void {
   } catch { /* ignore (private mode / quota) */ }
 }
 
-export function loadEngine(): SearchEngine {
+/** `fallback` applies until the user picks an engine (Google in the desktop build). */
+export function loadEngine(fallback: SearchEngine = 'wikipedia'): SearchEngine {
   try {
     const raw = localStorage.getItem(ENGINE_KEY);
     if (raw === 'wikipedia' || raw === 'duckduckgo' || raw === 'google' || raw === 'bing') return raw;
   } catch { /* ignore */ }
-  return 'wikipedia';
+  return fallback;
 }
 
 export function saveEngine(engine: SearchEngine): void {
