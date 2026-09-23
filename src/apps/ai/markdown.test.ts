@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderMarkdown } from './chat';
+import { renderMarkdown, stripThinking } from './markdown';
 
 describe('claude renderMarkdown', () => {
   it('escapes HTML so replies cannot inject markup', () => {
@@ -20,5 +20,11 @@ describe('claude renderMarkdown', () => {
     expect(html).toContain('<ul><li>one</li><li>two</li></ul>');
     expect(html).toContain('<ol><li>first</li></ol>');
     expect(html).toContain('<pre dir="ltr"><code>&lt;b&gt;x&lt;/b&gt;</code></pre>');
+  });
+
+  it('drops <think> blocks, even an unfinished one', () => {
+    expect(stripThinking('<think>plan</think>\nAnswer')).toBe('Answer');
+    expect(stripThinking('<think>still going')).toBe('');
+    expect(renderMarkdown('<think>x</think>Hi')).toBe('<p>Hi</p>');
   });
 });

@@ -7,7 +7,7 @@ import { manifest as files } from './files/manifest';
 import { manifest as terminal } from './terminal/manifest';
 import { manifest as editor } from './editor/manifest';
 import { manifest as browser } from './browser/manifest';
-import { manifest as claude } from './claude/manifest';
+import { manifest as ai } from './ai/manifest';
 import { manifest as calculator } from './calculator/manifest';
 import { manifest as images } from './images/manifest';
 import { manifest as clock } from './clock/manifest';
@@ -24,7 +24,7 @@ export const BUILTIN_APPS: LazyAppModule[] = [
   lazy(terminal, () => import('./terminal')),
   lazy(editor, () => import('./editor')),
   lazy(browser, () => import('./browser')),
-  lazy(claude, () => import('./claude')),
+  lazy(ai, () => import('./ai')),
   lazy(calculator, () => import('./calculator')),
   lazy(images, () => import('./images')),
   lazy(clock, () => import('./clock')),
