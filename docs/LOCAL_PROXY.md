@@ -92,6 +92,13 @@ node tools/local-proxy.mjs --port 8787 --token faisal-7f3a91c2d4e5b6a7
   - **إعادة فحص كل إجابة DNS**، فلا يفيد ربط اسم عام بعنوان خاص (DNS rebinding).
 - **`Set-Cookie` لا يُمرَّر أبداً**، ولا `content-security-policy-report-only`، ولا
   `access-control-allow-origin` القادم من الموقع؛ ولا يوجد أي ترويسة `*`.
+- **الطلب المسبق (preflight) يُجاب على كل المسارات** ومع ترويسة
+  `Access-Control-Allow-Private-Network: true`: كروم يفرض «الوصول إلى الشبكة الخاصة» على أي
+  صفحة عامة (`https://faisaldhd.github.io`) تطلب عنواناً محلياً، ويرسل طلباً مسبقاً حتى لطلب
+  `GET` بسيط، ويرفض الطلب بلا تلك الترويسة. ولهذا يُجاب `OPTIONS /health` أيضاً: لولا ذلك
+  لبدا الوسيط «غير مشغَّل» وهو يعمل. هذه الترويسة لا تمنح شيئاً بذاتها — تقول فقط «هذه خدمتي
+  المحلية» — وقد يُظهر كروم مع ذلك طلب إذن «الوصول إلى الشبكة المحلية» فاسمح به. الحاجزان
+  الحقيقيان يبقيان الرمز والتذكرة، وأصل غير مسموح لا يحصل على ترويسة أصل إطلاقاً.
 - **`X-Frame-Options` و`frame-ancestors` داخل CSP يُحذفان — وهذا هو الغرض الوحيد
   الموثّق من الوسيط**، وباقي توجيهات CSP تبقى كما هي. لا حقن، ولا إعادة كتابة، ولا
   استخراج داخل الوسيط: العميل هو من يستخرج النص في وضع القراءة.
@@ -237,6 +244,14 @@ alone decides the target and the mode.
     (DNS rebinding) is still refused.
 - **`Set-Cookie` is never forwarded**, nor `content-security-policy-report-only`, nor any
   `access-control-allow-origin` from the site; no wildcard is ever sent.
+- **A preflight is answered on every route**, with `Access-Control-Allow-Private-Network: true`:
+  Chrome enforces Private Network Access on any public page (`https://faisaldhd.github.io`) that
+  asks for a local address, preflights even a simple `GET`, and refuses the call without that
+  header. That is why `OPTIONS /health` is answered too — otherwise the app would report "no proxy
+  running" while the proxy was running fine. The header grants nothing by itself (it only says
+  "this is my own loopback service"), Chrome may still show its own local-network permission
+  prompt — allow it — and the real gates stay the token and the ticket. An origin that is not on
+  the list still receives no allow-origin header at all.
 - **`X-Frame-Options` and CSP `frame-ancestors` are removed — the documented and only
   purpose of the proxy**; every other CSP directive is kept. No injection, no rewriting,
   no extraction inside the proxy: the client extracts text in reader mode.

@@ -1238,7 +1238,15 @@ describe('requestProxyTicket', () => {
       .resolves.toEqual({ ok: false, reason: 'unreachable' });
     // No fetch implementation, an unbuildable base and an unbuildable target all
     // resolve rather than throw.
-    await expect(requestProxyTicket(base, target, 'raw', token, undefined as never))
+    //
+    // `null`, not `undefined`: `undefined` triggers the parameter default, which
+    // is the real `globalThis.fetch`, and Node ships one — so this assertion used
+    // to reach the network. It passed only while nothing listened on the default
+    // port, and it broke the moment a real proxy was running on 8787 on the
+    // developer's machine (the live proxy answered 401, so the reason came back
+    // 'unauthorized' instead of 'unreachable'). A unit test must not depend on
+    // an empty port.
+    await expect(requestProxyTicket(base, target, 'raw', token, null as never))
       .resolves.toEqual({ ok: false, reason: 'unreachable' });
     const spy = vi.fn();
     await expect(requestProxyTicket('https://evil.example', target, 'raw', token, spy as never))
@@ -1521,7 +1529,7 @@ describe('the proxy ticket routes (real loopback listener)', () => {
     expect(h.upstream).toEqual([`https://example.com/p${MAX_LIVE_TICKETS}`]);
   });
 
-  it('answers the OPTIONS preflight for /ticket, and never for a foreign origin', async () => {
+  it('answers the OPTIONS preflight everywhere, with the private-network grant Chrome demands', async () => {
     h = await startProxy();
     const allowed = await fetch(`${h.base}/ticket`, {
       method: 'OPTIONS',
@@ -1531,9 +1539,23 @@ describe('the proxy ticket routes (real loopback listener)', () => {
     expect(allowed.headers.get('access-control-allow-origin')).toBe('https://faisaldhd.github.io');
     expect(allowed.headers.get('access-control-allow-headers')).toBe('x-faisal-proxy-token');
     expect(allowed.headers.get('access-control-allow-methods')).toContain('GET');
+    // Chrome preflights a public-page request to loopback even for a simple GET
+    // and requires this header, or the probe is refused while the proxy is fine.
+    expect(allowed.headers.get('access-control-allow-private-network')).toBe('true');
 
-    // /fetch keeps its preflight; an origin that is not on the list gets NO
-    // allow-origin header at all, so the browser blocks the call.
+    // /health is the route the app probes, so it MUST answer a preflight.
+    const healthPreflight = await fetch(`${h.base}/health`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'https://faisaldhd.github.io',
+        'access-control-request-private-network': 'true',
+      },
+    });
+    expect(healthPreflight.status).toBe(204);
+    expect(healthPreflight.headers.get('access-control-allow-private-network')).toBe('true');
+
+    // An origin that is not on the list still gets NO allow-origin header at all,
+    // so the browser blocks the call whatever else is answered.
     const fetchPreflight = await fetch(`${h.base}/fetch`, {
       method: 'OPTIONS',
       headers: { origin: 'https://evil.example' },
@@ -1541,9 +1563,14 @@ describe('the proxy ticket routes (real loopback listener)', () => {
     expect(fetchPreflight.status).toBe(204);
     expect(fetchPreflight.headers.get('access-control-allow-origin')).toBeNull();
 
-    // /view needs no preflight: it is a plain token-free GET.
+    // /view is token-free, but a preflight is still answered (a browser decides
+    // when to send one, and 405 would look like "no proxy" to a user).
     const view = await fetch(`${h.base}/view`, { method: 'OPTIONS' });
-    expect(view.status).toBe(405);
+    expect(view.status).toBe(204);
+
+    // No method other than GET, HEAD and OPTIONS is ever useful here.
+    const post = await fetch(`${h.base}/fetch`, { method: 'POST' });
+    expect(post.status).toBe(405);
   });
 
   it('NEVER logs the ticket, even with --verbose, and never logs a spent ticket', async () => {

@@ -611,14 +611,24 @@ export function createProxyServer(options = {}) {
       return;
     }
 
-    if (req.method === 'OPTIONS' && (url.pathname === '/fetch' || url.pathname === '/ticket')) {
-      // Preflight for the token header, on the two routes that take one. /view is
-      // deliberately absent: it is token-free, so a browser never preflights it.
-      // No allow-origin header at all for an origin that is not on the list, so
-      // the browser blocks the call.
+    if (req.method === 'OPTIONS') {
+      // Preflight. Answered for EVERY path, not only the token routes, because of
+      // Chrome's Private Network Access rule: a request from a public page
+      // (https://faisaldhd.github.io) to a loopback address is preflighted even
+      // when it is a "simple" GET, and the preflight must carry
+      // `Access-Control-Allow-Private-Network: true` or the browser refuses the
+      // call. The probe hits /health, so a 405 there would have made the app
+      // report "no proxy running" while the proxy was running perfectly.
+      //
+      // This grants nothing on its own: the header only says "yes, this is my own
+      // loopback service"; Chrome may still show its own local-network permission
+      // prompt, which the user answers. The token (and the ticket) remain the
+      // real gates, and an origin that is not on the list still gets NO
+      // allow-origin header at all, so the browser blocks the call.
       const headers = {
-        'access-control-allow-methods': 'GET, OPTIONS',
+        'access-control-allow-methods': 'GET, HEAD, OPTIONS',
         'access-control-allow-headers': 'x-faisal-proxy-token',
+        'access-control-allow-private-network': 'true',
         'access-control-max-age': '600',
         'cache-control': 'no-store',
       };
