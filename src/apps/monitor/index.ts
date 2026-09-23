@@ -181,8 +181,14 @@ function launch(ctx: AppContext): void {
 
   const tabsEl = document.createElement('div');
   tabsEl.className = 'faisal-mon-tabs';
+  // Four real tabs sharing one panel (the scrolling body).
+  tabsEl.setAttribute('role', 'tablist');
+  tabsEl.setAttribute('aria-label', t('monitor.title'));
   const bodyEl = document.createElement('div');
   bodyEl.className = 'faisal-mon-body';
+  bodyEl.id = 'faisal-mon-panel';
+  bodyEl.setAttribute('role', 'tabpanel');
+  bodyEl.tabIndex = 0;
   root.append(tabsEl, bodyEl);
   win.content.appendChild(root);
 
@@ -193,6 +199,10 @@ function launch(ctx: AppContext): void {
     const b = document.createElement('button');
     b.className = 'faisal-mon-tab';
     b.type = 'button';
+    b.id = `faisal-mon-tab-${id}`;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-controls', 'faisal-mon-panel');
+    b.setAttribute('aria-selected', 'false');
     b.appendChild(icon(svgIcon));
     const span = document.createElement('span');
     span.textContent = label;
@@ -208,10 +218,22 @@ function launch(ctx: AppContext): void {
   tabsEl.append(processesTabBtn, resourcesTabBtn, fsTabBtn, systemTabBtn);
 
   function updateTabButtons() {
-    processesTabBtn.classList.toggle('is-active', tab === 'processes');
-    resourcesTabBtn.classList.toggle('is-active', tab === 'resources');
-    fsTabBtn.classList.toggle('is-active', tab === 'filesystems');
-    systemTabBtn.classList.toggle('is-active', tab === 'system');
+    const buttons: [Tab, HTMLButtonElement][] = [
+      ['processes', processesTabBtn],
+      ['resources', resourcesTabBtn],
+      ['filesystems', fsTabBtn],
+      ['system', systemTabBtn],
+    ];
+    // The `is-active` class is invisible to assistive tech: mirror it into
+    // aria-selected / the roving tabindex, and point the panel at the active tab.
+    for (const [id, btn] of buttons) {
+      const active = id === tab;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-selected', String(active));
+      btn.tabIndex = active ? 0 : -1;
+    }
+    const activeBtn = buttons.find(([id]) => id === tab)?.[1];
+    if (activeBtn) bodyEl.setAttribute('aria-labelledby', activeBtn.id);
   }
 
   function setTab(next: Tab) {
@@ -359,10 +381,15 @@ function launch(ctx: AppContext): void {
     titleEl.textContent = title;
     const valueEl = document.createElement('span');
     valueEl.className = 'faisal-mon-chart-value';
+    // The value is repainted every sampling second. It stays readable on demand
+    // (aria-live="off", not hidden), but nothing in this card may be announced
+    // continuously: the canvas is aria-hidden and the status line is not a live region.
+    valueEl.setAttribute('aria-live', 'off');
     head.append(titleEl, valueEl);
     const statusEl = document.createElement('div');
     statusEl.className = 'faisal-mon-chart-status';
     const body = document.createElement('div');
+    body.setAttribute('aria-live', 'off');
     card.append(head, statusEl, body);
     return { card, valueEl, statusEl, body };
   }
@@ -376,6 +403,9 @@ function launch(ctx: AppContext): void {
     if (heapMem) {
       // Page JavaScript heap only (Chromium). Never presented as hardware memory.
       heapCanvas = document.createElement('canvas');
+      // The chart is a picture of numbers that are already in the text; a screen reader
+      // gets nothing from the pixels, so the canvas is hidden instead of announced.
+      heapCanvas.setAttribute('aria-hidden', 'true');
       heap.body.appendChild(heapCanvas);
       heap.statusEl.textContent = t('monitor.heapNotePageOnly');
     } else {
@@ -392,6 +422,9 @@ function launch(ctx: AppContext): void {
     fpsValueEl = fps.valueEl;
     fpsStatusEl = fps.statusEl;
     fpsCanvas = document.createElement('canvas');
+    // The FPS chart must never be announced: it redraws every second. aria-hidden keeps
+    // it out of the accessibility tree entirely (see the FPS value/status note above).
+    fpsCanvas.setAttribute('aria-hidden', 'true');
     fps.body.appendChild(fpsCanvas);
     resourcesRoot.appendChild(fps.card);
     updateFpsStatus();
@@ -708,6 +741,8 @@ function launch(ctx: AppContext): void {
     const quotaLabel = document.createElement('span');
     quotaLabel.textContent = t('monitor.vfsQuotaLabel');
     const quotaVal = document.createElement('span');
+    // Filled in by the asynchronous scan below, so it is the status of that action.
+    quotaVal.setAttribute('role', 'status');
     quotaVal.textContent = `${formatBytes(totalUsed)} / ${formatBytes(VFS_QUOTA_BYTES)}`;
     quotaRow.append(quotaLabel, quotaVal);
     const quotaTrack = document.createElement('div');
@@ -727,6 +762,8 @@ function launch(ctx: AppContext): void {
     const estLabel = document.createElement('span');
     estLabel.textContent = t('monitor.storageEstimate');
     const estVal = document.createElement('span');
+    // Resolved asynchronously from navigator.storage.estimate(): announce the answer.
+    estVal.setAttribute('role', 'status');
     estVal.textContent = t('monitor.storageUnavailable');
     estRow.append(estLabel, estVal);
     summary.appendChild(estRow);

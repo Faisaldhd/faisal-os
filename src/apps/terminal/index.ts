@@ -45,8 +45,11 @@ function launch({ sys, window: win, args }: AppContext): void {
   }
   const status = el('span', 'faisal-term-status');
   // Backend messages ("Connecting…", "Failed to load") appear with no user action of
-  // their own, so the status line is the live region that reports them.
+  // their own, so the status line is the live region that reports them. `role="status"`
+  // implies aria-live="polite"; it is set explicitly for the same reason as the
+  // calculator's result region.
   status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
   const restart = el('button', 'faisal-term-btn', t('terminal.restart'));
   restart.type = 'button';
   header.append(label, select, status, restart);

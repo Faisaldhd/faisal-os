@@ -153,9 +153,14 @@ function launch(ctx: AppContext) {
 
   const nav = document.createElement('nav');
   nav.className = 'faisal-settings-nav';
+  nav.setAttribute('role', 'tablist');
+  nav.setAttribute('aria-label', t('settings.title'));
 
   const panel = document.createElement('div');
   panel.className = 'faisal-settings-panel';
+  panel.id = 'faisal-settings-panel';
+  panel.setAttribute('role', 'tabpanel');
+  panel.tabIndex = 0;
 
   const sections: { id: SectionId; labelKey: string; icon: string; render: () => void }[] = [
     { id: 'appearance', labelKey: 'settings.nav.appearance', icon: ICON_APPEARANCE, render: renderAppearance },
@@ -171,7 +176,17 @@ function launch(ctx: AppContext) {
 
   function selectSection(id: SectionId) {
     activeId = id;
-    navButtons.forEach((btn, bid) => btn.classList.toggle('is-active', bid === id));
+    navButtons.forEach((btn, bid) => {
+      const active = bid === id;
+      btn.classList.toggle('is-active', active);
+      // The `is-active` class is invisible to a screen reader: mirror the active
+      // section into aria-selected (the standard state for the tab pattern) plus the
+      // roving tabindex, and point the panel at the tab that owns it.
+      btn.setAttribute('aria-selected', String(active));
+      btn.tabIndex = active ? 0 : -1;
+    });
+    const activeBtn = navButtons.get(id);
+    if (activeBtn) panel.setAttribute('aria-labelledby', activeBtn.id);
     sections.find((s) => s.id === id)?.render();
   }
 
@@ -179,6 +194,10 @@ function launch(ctx: AppContext) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'faisal-settings-nav-btn';
+    btn.id = `faisal-settings-tab-${section.id}`;
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-controls', 'faisal-settings-panel');
+    btn.setAttribute('aria-selected', 'false');
     btn.append(renderIcon(section.icon), document.createTextNode(t(section.labelKey)));
     btn.addEventListener('click', () => selectSection(section.id));
     navButtons.set(section.id, btn);
@@ -200,12 +219,17 @@ function launch(ctx: AppContext) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'faisal-toggle-btn' + (mode === currentTheme ? ' is-active' : '');
+      b.setAttribute('aria-pressed', String(mode === currentTheme));
       b.textContent = t(`settings.theme.${mode}`);
       b.addEventListener('click', () => {
         sys.settings.set('theme', mode);
         applyTheme(mode);
-        [...themeToggle.children].forEach((c) => c.classList.remove('is-active'));
+        [...themeToggle.children].forEach((c) => {
+          c.classList.remove('is-active');
+          c.setAttribute('aria-pressed', 'false');
+        });
         b.classList.add('is-active');
+        b.setAttribute('aria-pressed', 'true');
       });
       themeToggle.append(b);
     });
@@ -249,6 +273,7 @@ function launch(ctx: AppContext) {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'faisal-toggle-btn' + (loc === sys.locale() ? ' is-active' : '');
+      b.setAttribute('aria-pressed', String(loc === sys.locale()));
       b.textContent = loc === 'ar' ? 'العربية' : 'English';
       b.addEventListener('click', () => {
         sys.settings.set('locale', loc);
@@ -322,6 +347,8 @@ function launch(ctx: AppContext) {
     // the System section shows, rather than a second guess at the size.
     const filesRow = row('settings.privacy.files', 'settings.privacy.filesDesc');
     const filesValue = valueNode(t('settings.system.storageUnknown'));
+    // Resolved asynchronously from navigator.storage.estimate(): role=status announces it.
+    filesValue.setAttribute('role', 'status');
     filesRow.control.append(filesValue);
     void (navigator.storage?.estimate?.() ?? Promise.reject(new Error('unsupported')))
       .then((est) => {
@@ -440,6 +467,8 @@ function launch(ctx: AppContext) {
     const storageRow = row('settings.system.storage', 'settings.system.storageDesc');
     const usage = document.createElement('span');
     usage.className = 'faisal-settings-value';
+    // The browser reports the estimate asynchronously; announce the answer when it lands.
+    usage.setAttribute('role', 'status');
     usage.textContent = '…';
     storageRow.control.append(usage);
     void (navigator.storage?.estimate?.() ?? Promise.reject(new Error('unsupported')))

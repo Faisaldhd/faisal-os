@@ -132,6 +132,9 @@ function launch(ctx: AppContext): void {
   // ── tabs ──
   const tabsBar = document.createElement('div');
   tabsBar.className = 'faisal-clock-tabs';
+  // Four tabs over four panels.
+  tabsBar.setAttribute('role', 'tablist');
+  tabsBar.setAttribute('aria-label', t('clock.title'));
   const tabDefs: { id: Tab; label: string }[] = [
     { id: 'world', label: t('clock.tabWorld') },
     { id: 'calendar', label: t('clock.tabCalendar') },
@@ -142,6 +145,11 @@ function launch(ctx: AppContext): void {
   for (const def of tabDefs) {
     const b = document.createElement('button');
     b.className = 'faisal-clock-tab';
+    b.type = 'button';
+    b.id = `faisal-clock-tab-${def.id}`;
+    b.setAttribute('role', 'tab');
+    b.setAttribute('aria-controls', `faisal-clock-panel-${def.id}`);
+    b.setAttribute('aria-selected', 'false');
     b.textContent = def.label;
     b.addEventListener('click', () => setTab(def.id));
     tabsBar.append(b);
@@ -191,12 +199,18 @@ function launch(ctx: AppContext): void {
   const calTitleH = document.createElement('div');
   calTitleH.className = 'faisal-clock-cal-title-h';
   calTitles.append(calTitleG, calTitleH);
+  // Changing month is a user action whose only feedback was the painted title, so the
+  // Gregorian title is the status region for it (the Hijri line is a second label).
+  calTitleG.setAttribute('role', 'status');
+  calTitleG.setAttribute('aria-live', 'polite');
   const calNext = document.createElement('button');
   calNext.className = 'faisal-clock-cal-nav';
   calNext.textContent = '›';
   calHead.append(calPrev, calTitles, calNext);
   const calGrid = document.createElement('div');
   calGrid.className = 'faisal-clock-cal-grid';
+  calGrid.setAttribute('role', 'grid');
+  calGrid.setAttribute('aria-label', t('clock.tabCalendar'));
   calPanel.append(calHead, calGrid);
 
   // Stopwatch panel
@@ -232,6 +246,9 @@ function launch(ctx: AppContext): void {
   timerWrap.className = 'faisal-clock-timer';
   const timerTimeEl = document.createElement('div');
   timerTimeEl.className = 'faisal-clock-timer-time';
+  // The countdown is repainted four times a second; it must not be a live region.
+  // Timer completion is announced by the notification in onTimerFinished().
+  timerTimeEl.setAttribute('aria-live', 'off');
   const presetsRow = document.createElement('div');
   presetsRow.className = 'faisal-clock-presets';
   const PRESETS = [1, 5, 10, 25];
@@ -275,15 +292,34 @@ function launch(ctx: AppContext): void {
   root.append(tabsBar, panels);
   win.content.append(root);
 
+  // One panel per tab, wired to its tab button (see setTab for the state mirror).
+  for (const def of tabDefs) {
+    const panel = { world: worldPanel, calendar: calPanel, stopwatch: swPanel, timer: timerPanel }[def.id];
+    panel.id = `faisal-clock-panel-${def.id}`;
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', `faisal-clock-tab-${def.id}`);
+    panel.tabIndex = 0;
+  }
+
   const panelMap: Record<Tab, HTMLElement> = {
     world: worldPanel, calendar: calPanel, stopwatch: swPanel, timer: timerPanel,
   };
 
   function setTab(tab: Tab) {
     activeTab = tab;
-    for (const [id, btn] of tabButtons) btn.classList.toggle('is-active', id === tab);
+    // The `is-active` class is invisible to assistive tech: mirror it into
+    // aria-selected / the roving tabindex, and hide the panels that are not shown.
+    for (const [id, btn] of tabButtons) {
+      const active = id === tab;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-selected', String(active));
+      btn.tabIndex = active ? 0 : -1;
+    }
     for (const [id, panel] of Object.entries(panelMap) as [Tab, HTMLElement][]) {
       panel.classList.toggle('is-active', id === tab);
+      // `display: none` alone hides a panel visually; `aria-hidden` says the same to a
+      // screen reader, so the four value displays are never read as one blob.
+      panel.setAttribute('aria-hidden', String(id !== tab));
     }
     if (tab === 'calendar') renderCalendar();
   }
@@ -418,20 +454,38 @@ function launch(ctx: AppContext): void {
 
     calGrid.replaceChildren();
     const dowFmt = new Intl.DateTimeFormat(locale, { weekday: 'narrow', timeZone: 'UTC' });
+    const dowLong = new Intl.DateTimeFormat(locale, { weekday: 'long', timeZone: 'UTC' });
+    const dayFmt = new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long', year: 'numeric' });
+    // The calendar really is a 7-column grid of dated cells, so it is exposed as one:
+    // a column-header row, then one row per week with a labelled gridcell per day.
+    const headerRow = document.createElement('div');
+    headerRow.className = 'faisal-clock-cal-row';
+    headerRow.setAttribute('role', 'row');
     // Week starts Sunday (day 0). Use a fixed UTC Sunday reference to avoid TZ drift.
     for (let i = 0; i < 7; i++) {
       const label = document.createElement('div');
       label.className = 'faisal-clock-cal-dow';
-      label.textContent = dowFmt.format(new Date(Date.UTC(2023, 0, 1 + i))); // 2023-01-01 was a Sunday
-      calGrid.append(label);
+      const ref = new Date(Date.UTC(2023, 0, 1 + i)); // 2023-01-01 was a Sunday
+      label.textContent = dowFmt.format(ref);
+      label.setAttribute('role', 'columnheader');
+      label.setAttribute('aria-label', dowLong.format(ref));
+      headerRow.append(label);
     }
+    calGrid.append(headerRow);
 
     const startWeekday = first.getDay(); // 0 = Sunday
     const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
     const today = new Date();
     const totalCells = Math.ceil((startWeekday + daysInMonth) / 7) * 7;
 
+    let weekRow: HTMLElement | null = null;
     for (let cellIdx = 0; cellIdx < totalCells; cellIdx++) {
+      if (cellIdx % 7 === 0) {
+        weekRow = document.createElement('div');
+        weekRow.className = 'faisal-clock-cal-row';
+        weekRow.setAttribute('role', 'row');
+        calGrid.append(weekRow);
+      }
       const dayNum = cellIdx - startWeekday + 1;
       const cellDate = new Date(viewYear, viewMonth, dayNum);
       const outside = dayNum < 1 || dayNum > daysInMonth;
@@ -442,14 +496,21 @@ function launch(ctx: AppContext): void {
 
       const cell = document.createElement('div');
       cell.className = 'faisal-clock-cal-cell' + (outside ? ' is-outside' : '') + (isToday ? ' is-today' : '');
+      cell.setAttribute('role', 'gridcell');
+      // Each cell shows a Gregorian day and a Hijri day with no visible month, so the
+      // accessible name spells both out in full.
+      const hijri = hijriDayParts(cellDate);
+      const parts = [dayFmt.format(cellDate), hijri.month];
+      if (isToday) parts.push(t('clock.today'));
+      cell.setAttribute('aria-label', parts.join(' · '));
       const g = document.createElement('div');
       g.className = 'faisal-clock-cal-g';
       g.textContent = String(cellDate.getDate());
       const h = document.createElement('div');
       h.className = 'faisal-clock-cal-h';
-      h.textContent = String(hijriDayParts(cellDate).day);
+      h.textContent = String(hijri.day);
       cell.append(g, h);
-      calGrid.append(cell);
+      weekRow?.append(cell);
     }
   }
 
