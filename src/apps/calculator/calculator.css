@@ -256,6 +256,6 @@
   white-space: nowrap;
 }
 
-@media (max-width: 480px) {
+@container faisal-window (max-width: 480px) {
   .faisal-calc-history { display: none; }
 }

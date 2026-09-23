@@ -349,6 +349,6 @@
   padding: 10px 2px;
 }
 
-@media (max-width: 560px) {
+@container faisal-window (max-width: 560px) {
   .faisal-browser-home-grid { grid-template-columns: 1fr 1fr; }
 }

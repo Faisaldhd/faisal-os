@@ -688,6 +688,8 @@ body {
   position: relative;
   overflow: auto;
   background: var(--faisal-bg);
+  /* Apps lay out by their window's width (container queries), not the screen's. */
+  container: faisal-window / inline-size;
 }
 
 .faisal-resize-handle {
@@ -812,9 +814,13 @@ body {
   padding: 10px 14px;
 }
 
-@media (max-width: 700px) {
+@container faisal-window (max-width: 620px) {
   .faisal-settings { flex-direction: column; }
-  .faisal-settings-nav { width: 100%; flex-direction: row; overflow-x: auto; border-inline-end: none; border-block-end: 1px solid var(--faisal-border); }
+  .faisal-settings-nav { width: 100%; flex-direction: row; overflow-x: auto; border-inline-end: none; border-block-end: 1px solid var(--faisal-border); padding: 6px; }
+  .faisal-settings-nav-btn { white-space: nowrap; padding: 7px 10px; }
+  .faisal-settings-panel { padding: 16px 14px; }
+  .faisal-settings-row { flex-wrap: wrap; }
+  .faisal-settings-row > div:first-child { flex: 1 1 200px; }
 }
 
 /* ───────────────────────── Brand: wordmarks + boot splash ───────────────────────── */

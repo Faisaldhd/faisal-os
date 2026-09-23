@@ -354,3 +354,20 @@
   outline: 2px dashed var(--faisal-accent, #3c6eb4);
   outline-offset: -4px;
 }
+
+/* Narrow windows (phones, or a small window): places become a scrolling strip on top. */
+@container faisal-window (max-width: 560px) {
+  .faisal-files { flex-direction: column; }
+  .faisal-files-sidebar {
+    inline-size: auto;
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 6px;
+    border-inline-end: none;
+    border-block-end: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+    scrollbar-width: none;
+  }
+  .faisal-files-sidebar-item { width: auto; flex: none; white-space: nowrap; }
+}
