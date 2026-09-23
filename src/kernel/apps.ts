@@ -212,7 +212,9 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
         sys.bus.emit('app:launched', { appId, windowId: win.id });
       } catch (err) {
         console.error(`[apps] ${appId} failed to launch`, err);
-        win.content.textContent = String(err);
+        // A deploy removed the chunk this page was built with: the fix is a reload.
+        const stale = /dynamically imported module|Importing a module script failed|error loading dynamically/i.test(String(err));
+        win.content.textContent = stale ? sys.t('shell.update.reload') : String(err);
       }
       return win;
     },

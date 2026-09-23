@@ -33,6 +33,23 @@ async function boot() {
   BUILTIN_APPS.forEach((a) => apps.register(a));
   mountShell(root, sys);
   bus.emit('system:ready', {});
+  registerServiceWorker(sys);
+}
+
+/** Offline support and install-as-app (production builds only; see build/pwa.ts). */
+function registerServiceWorker(sys: SystemAPI) {
+  if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('./sw.js').then((reg) => {
+    reg.addEventListener('updatefound', () => {
+      const next = reg.installing;
+      next?.addEventListener('statechange', () => {
+        // A new version is ready; it takes over once every Fai$al OS tab is closed.
+        if (next.state === 'installed' && navigator.serviceWorker.controller) {
+          sys.notify(t('shell.update.title'), t('shell.update.body'));
+        }
+      });
+    });
+  }).catch((err) => console.warn('[sw] registration failed', err));
 }
 
 boot().catch((err) => {
