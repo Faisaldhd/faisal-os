@@ -6,24 +6,20 @@ import { t } from '../kernel/i18n';
 export const SCREENSHOT_DIR = join(HOME, 'Pictures');
 
 /**
- * Snipping tool (Win+Shift+S). The browser can only read the page's pixels through
- * screen capture, so each shot asks to share this tab, grabs one frame, and stops the
- * stream at once. The frozen frame is then shown full screen so the user can drag a
- * region or take the whole screen; the result is saved as a PNG in ~/Pictures.
+ * Snipping tool (Win+Shift+S). The desktop is redrawn into a canvas from its own DOM
+ * (html-to-image), so no permission prompt is needed. Only if that fails does it fall back
+ * to screen capture, which asks to share this tab for a single frame. The frozen frame is
+ * then shown full screen so the user can drag a region or take the whole screen; the
+ * result is saved as a PNG in ~/Pictures.
  */
 export function mountScreenshot(sys: SystemAPI): { capture(): void } {
   let busy = false;
 
   async function capture(): Promise<void> {
     if (busy) return;
-    const md = navigator.mediaDevices;
-    if (!md?.getDisplayMedia) {
-      sys.notify(t('shell.shot.unsupported'));
-      return;
-    }
     busy = true;
     try {
-      const frame = await grabFrame(md);
+      const frame = (await renderPage().catch(() => null)) ?? (await grabFrame());
       if (!frame) return;
       const region = await pickRegion(frame);
       if (!region) return;
@@ -54,8 +50,27 @@ export function fileName(d: Date): string {
   return `Screenshot_${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}.png`;
 }
 
-/** Asks to share this tab and returns one frame, or null if the user declined. */
-async function grabFrame(md: MediaDevices): Promise<HTMLCanvasElement | null> {
+/** Draws the visible page from its DOM. No prompt; loaded on first use to keep startup small. */
+async function renderPage(): Promise<HTMLCanvasElement> {
+  const { toCanvas } = await import('html-to-image');
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  return toCanvas(document.body, {
+    width: w,
+    height: h,
+    canvasWidth: w,
+    canvasHeight: h,
+    pixelRatio: window.devicePixelRatio || 1,
+    // The desktop only uses system fonts, so skip web-font embedding (it would fetch every stylesheet).
+    skipFonts: true,
+    style: { margin: '0' },
+  });
+}
+
+/** Fallback: asks to share this tab and returns one frame, or null if unsupported or declined. */
+async function grabFrame(): Promise<HTMLCanvasElement | null> {
+  const md = navigator.mediaDevices;
+  if (!md?.getDisplayMedia) throw new Error('unsupported');
   let stream: MediaStream;
   try {
     stream = await md.getDisplayMedia({

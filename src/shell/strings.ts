@@ -26,7 +26,6 @@ defineStrings('shell', {
     'shot.cancel': 'إلغاء',
     'shot.saved': 'تم حفظ لقطة الشاشة في الصور',
     'shot.failed': 'تعذّر حفظ لقطة الشاشة',
-    'shot.unsupported': 'المتصفح لا يدعم التقاط الشاشة',
   },
   en: {
     activities: 'Activities',
@@ -53,6 +52,5 @@ defineStrings('shell', {
     'shot.cancel': 'Cancel',
     'shot.saved': 'Screenshot saved to Pictures',
     'shot.failed': 'Could not save the screenshot',
-    'shot.unsupported': 'This browser cannot capture the screen',
   },
 });
