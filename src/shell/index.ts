@@ -5,6 +5,7 @@ export { createWindowManager } from './wm';
 import { wireAppearance } from './appearance';
 import { mountTopbar } from './topbar';
 import { mountOverview } from './overview';
+import { mountDock } from './dock';
 import { mountNotifications } from './notifications';
 import { mountSplash } from './splash';
 
@@ -14,6 +15,7 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
 
   const overview = mountOverview(root, sys, sys.wm);
   mountTopbar(root, sys, () => overview.toggle());
+  mountDock(root, sys);
   mountNotifications(root, sys.bus);
 
   // GNOME behaviour: tapping the Super/Windows key alone toggles Activities; Alt+F1 does too.
