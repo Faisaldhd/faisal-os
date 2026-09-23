@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { GroqError, listModels, runGroqTurn, sortModels, type ChatTurn } from './groq';
+import { GroqError, listModels, runGroqTurn, sortModels, supportsTools, type ChatTurn } from './groq';
+import type { AgentOptions, ToolBox, ToolCall } from './agent';
 
 const sse = (chunks: (object | string)[]) =>
   new Response(chunks.map((c) => `data: ${typeof c === 'string' ? c : JSON.stringify(c)}\n\n`).join(''), {
@@ -75,5 +76,132 @@ describe('runGroqTurn', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: { message: 'Rate limit reached' } }), { status: 429 })));
     const err = await runGroqTurn('k', 'm', [{ role: 'user', content: 'x' }], noop, new AbortController().signal).catch((e) => e);
     expect(err).toMatchObject({ status: 429 });
+  });
+});
+
+describe('runGroqTurn with tools', () => {
+  const bodyOf = (fetchMock: ReturnType<typeof vi.fn>, i: number) =>
+    JSON.parse((fetchMock.mock.calls[i] as unknown as [string, RequestInit])[1].body as string);
+
+  /** A fake tool box that answers every call with `result:<name>:<arguments>`. */
+  const makeAgent = (extra: Partial<AgentOptions> = {}) => {
+    const log: string[] = [];
+    const tools: ToolBox = {
+      specs: [{ name: 'read_file', description: 'Reads a file', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } }],
+      preview: (call) => ({ label: `preview ${call.name}` }),
+      execute: vi.fn(async (call: ToolCall) => `result:${call.name}:${call.arguments}`),
+    };
+    const agent: AgentOptions = {
+      tools,
+      confirm: async () => true,
+      onCall: (call, preview) => log.push(`call ${call.id} ${preview.label}`),
+      onResult: (call, result) => log.push(`result ${call.id} ${result}`),
+      ...extra,
+    };
+    return { agent, tools, log };
+  };
+
+  it('runs a streamed tool call, sends the result back and returns the final answer', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sse([
+        { choices: [{ delta: { content: 'Checking. ' } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_a', type: 'function', function: { name: 'read_file', arguments: '' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"pa' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'th":"/home/' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'a.txt"}' } }] }, finish_reason: 'tool_calls' }] },
+        '[DONE]',
+      ]))
+      .mockResolvedValueOnce(sse([
+        { choices: [{ delta: { content: 'It says hi.' }, finish_reason: 'stop' }] },
+        '[DONE]',
+      ]));
+    vi.stubGlobal('fetch', fetchMock);
+    const { agent, tools, log } = makeAgent();
+    const history: ChatTurn[] = [{ role: 'user', content: 'read a.txt' }];
+    let streamed = '';
+    const res = await runGroqTurn('k', 'llama-3.3-70b-versatile', history,
+      { onText: (d) => { streamed += d; }, onTool: () => {} }, new AbortController().signal, agent);
+
+    const call = { id: 'call_a', name: 'read_file', arguments: '{"path":"/home/a.txt"}' };
+    expect(tools.execute).toHaveBeenCalledTimes(1);
+    expect(tools.execute).toHaveBeenCalledWith(call, agent.confirm);
+    expect(log).toEqual(['call call_a preview read_file', `result call_a result:read_file:${call.arguments}`]);
+    expect(res).toEqual({ text: 'Checking. It says hi.', sources: [], truncated: false });
+    expect(streamed).toBe('Checking. It says hi.');
+
+    const first = bodyOf(fetchMock, 0);
+    expect(first.tool_choice).toBe('auto');
+    expect(first.tools).toEqual([{ type: 'function', function: tools.specs[0] }]);
+
+    const assistantCall = { role: 'assistant', content: 'Checking. ',
+      tool_calls: [{ id: 'call_a', type: 'function', function: { name: 'read_file', arguments: call.arguments } }] };
+    const toolMsg = { role: 'tool', tool_call_id: 'call_a', content: `result:read_file:${call.arguments}` };
+    expect(bodyOf(fetchMock, 1).messages.slice(1)).toEqual([{ role: 'user', content: 'read a.txt' }, assistantCall, toolMsg]);
+    expect(history).toEqual([{ role: 'user', content: 'read a.txt' }, assistantCall, toolMsg, { role: 'assistant', content: 'It says hi.' }]);
+  });
+
+  it('runs parallel tool calls in order and answers each one', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(sse([
+        { choices: [{ delta: { tool_calls: [
+          { index: 0, id: 'c0', function: { name: 'read_file', arguments: '{"path":"/a"}' } },
+          { index: 1, id: 'c1', function: { name: 'read_file', arguments: '{"path":' } },
+        ] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 1, function: { arguments: '"/b"}' } }] }, finish_reason: 'tool_calls' }] },
+      ]))
+      .mockResolvedValueOnce(sse([{ choices: [{ delta: { content: 'done' }, finish_reason: 'stop' }] }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const { agent, tools } = makeAgent();
+    await runGroqTurn('k', 'openai/gpt-oss-120b', [{ role: 'user', content: 'x' }], noop, new AbortController().signal, agent);
+
+    expect((tools.execute as ReturnType<typeof vi.fn>).mock.calls.map((c) => (c[0] as ToolCall).arguments))
+      .toEqual(['{"path":"/a"}', '{"path":"/b"}']);
+    const msgs = bodyOf(fetchMock, 1).messages;
+    expect(msgs[2].tool_calls.map((c: { id: string }) => c.id)).toEqual(['c0', 'c1']);
+    expect(msgs.slice(3)).toEqual([
+      { role: 'tool', tool_call_id: 'c0', content: 'result:read_file:{"path":"/a"}' },
+      { role: 'tool', tool_call_id: 'c1', content: 'result:read_file:{"path":"/b"}' },
+    ]);
+  });
+
+  it('never sends custom tools to compound models', async () => {
+    expect(supportsTools('groq/compound')).toBe(false);
+    expect(supportsTools('groq/compound-mini')).toBe(false);
+    expect(supportsTools('llama-3.3-70b-versatile')).toBe(true);
+    const fetchMock = vi.fn(async () => sse([{ choices: [{ delta: { content: 'hi' }, finish_reason: 'stop' }] }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const { agent } = makeAgent();
+    const res = await runGroqTurn('k', 'groq/compound', [{ role: 'user', content: 'x' }], noop, new AbortController().signal, agent);
+    expect(res.text).toBe('hi');
+    const body = bodyOf(fetchMock, 0);
+    expect(body).not.toHaveProperty('tools');
+    expect(body).not.toHaveProperty('tool_choice');
+  });
+
+  it('stops after maxSteps with truncated when the model keeps calling tools', async () => {
+    let n = 0;
+    const fetchMock = vi.fn(async () => sse([{ choices: [{ delta: { tool_calls: [
+      { index: 0, id: `c${n++}`, function: { name: 'read_file', arguments: '{}' } },
+    ] }, finish_reason: 'tool_calls' }] }]));
+    vi.stubGlobal('fetch', fetchMock);
+    const { agent, tools } = makeAgent({ maxSteps: 3 });
+    const history: ChatTurn[] = [{ role: 'user', content: 'loop' }];
+    const res = await runGroqTurn('k', 'm', history, noop, new AbortController().signal, agent);
+    expect(res.truncated).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(tools.execute).toHaveBeenCalledTimes(3);
+    expect(history.at(-1)).toMatchObject({ role: 'tool', tool_call_id: 'c2' });
+  });
+
+  it('stops when aborted between steps and restores the history', async () => {
+    const ctrl = new AbortController();
+    vi.stubGlobal('fetch', vi.fn(async () => sse([{ choices: [{ delta: { tool_calls: [
+      { index: 0, id: 'c', function: { name: 'read_file', arguments: '{}' } },
+    ] }, finish_reason: 'tool_calls' }] }])));
+    const { agent } = makeAgent({ onResult: () => ctrl.abort() });
+    const history: ChatTurn[] = [{ role: 'user', content: 'x' }];
+    const err = await runGroqTurn('k', 'm', history, noop, ctrl.signal, agent).catch((e) => e);
+    expect(err).toMatchObject({ name: 'AbortError' });
+    expect(history).toEqual([{ role: 'user', content: 'x' }]);
   });
 });
