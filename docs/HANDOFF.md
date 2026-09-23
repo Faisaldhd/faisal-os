@@ -49,3 +49,32 @@ Extract that into its own small docs PR.
   blocked two rebases; src/shell/wm.ts still carries that session's uncommitted changes.
 - Verification standard used throughout: no commit without a line-by-line review, and no
   visible change without a real browser check.
+
+## Review verdict on wip/phase11-12-review (eff487e), read-only, 2026-09-23
+
+CLOCK: safe, but ONLY because the commit also adds `.faisal-clock-cal-row { display: contents }`
+(clock.css:227-232). Without it the calendar would break visually: the grid is
+`display:grid; grid-template-columns:repeat(7,1fr)` and the new `.faisal-clock-cal-row` wrappers
+are its direct children, so each week would collapse into a single 1fr column (8 narrow stacked
+columns). Treat clock/index.ts and clock/clock.css as ONE unit - never ship one without the other.
+The four other replaced lines are behaviourally identical (same class toggle, same Intl weekday,
+same Hijri value computed once instead of twice, same cell append; `weekRow` is assigned before
+first use so no cell can be dropped). Cells were never given a data-* attribute or an
+addEventListener (premise corrected).
+
+MONITOR: safe. FPS sampling, the visibility pause, canvas drawing and tab switching are untouched;
+the four replaced lines are the same class toggle. Accessibility is not blocked: aria-hidden sits on
+the <canvas> only, while the numeric value is a separate visible span whose textContent is still
+written, and aria-live="off" on a plain span is a no-op rather than a hide. IDs, aria-controls,
+aria-labelledby and aria-selected usage are all clean (no duplicates, no dangling refs, no
+forbidden role/attribute pairings); grid has rows and gridcells; every tabpanel has an owning tab.
+Non-ARIA content in these two files: none, apart from the load-bearing clock.css rule above.
+
+Known gaps to fix when convenient (gaps, not regressions): (1) the charts have no text alternative
+for the trend - a screen-reader user gets the current number but no history; (2) role="status" on
+the two async storage lines sits inside a body that is aria-live="off", so they will likely never be
+announced - scope aria-live to those nodes or drop the role; (3) the numeric value is not announced
+when it changes.
+
+Still required before merge: the eight manual browser checks (both themes) listed in the review,
+above all the clock grid pixel alignment and the Hijri sub-line in every cell.
