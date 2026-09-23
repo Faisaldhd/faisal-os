@@ -15,19 +15,17 @@
   "author": "Faisal Saeed Al Shahrani",
   "license": "ISC",
   "devDependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3",
     "fake-indexeddb": "^6.2.5",
+    "html-to-image": "^1.11.13",
     "jsdom": "^30.1.1",
     "typescript": "^7.0.2",
+    "v86": "^0.5.462",
     "vite": "^8.3.0",
     "vitest": "^5.0.1"
-  },
-  "dependencies": {
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/xterm": "^6.0.0",
-    "html-to-image": "^1.11.13",
-    "v86": "^0.5.462"
   },
   "type": "module",
   "private": true,
@@ -49,7 +47,20 @@
       "target": "dmg"
     },
     "linux": {
-      "target": "AppImage"
-    }
+      "target": "AppImage",
+      "category": "Utility"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Faisaldhd",
+        "repo": "faisal-os",
+        "releaseType": "release"
+      }
+    ],
+    "artifactName": "${name}-${version}-${os}-${arch}.${ext}"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

@@ -18,7 +18,7 @@
  */
 'use strict';
 
-const { app, BrowserWindow, protocol, net, session, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, protocol, net, session, shell, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -126,6 +126,45 @@ function createWindow() {
   return win;
 }
 
+/**
+ * Auto-update from GitHub Releases (installed builds only; `npm run desktop`
+ * runs from source and never updates itself). The update downloads in the
+ * background; the user chooses to restart now, otherwise it installs on quit.
+ * Being offline or having no release yet is not an error worth showing.
+ */
+const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;
+
+function setupAutoUpdate() {
+  if (!app.isPackaged) return;
+  const { autoUpdater } = require('electron-updater');
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  let prompted = false;
+  autoUpdater.on('update-downloaded', async (info) => {
+    if (prompted) return;
+    prompted = true;
+    const ar = app.getLocale().startsWith('ar');
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      buttons: ar ? ['إعادة التشغيل الآن', 'لاحقًا'] : ['Restart now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Fai$al OS',
+      message: ar ? `التحديث ${info.version} جاهز` : `Update ${info.version} is ready`,
+      detail: ar
+        ? 'أعد التشغيل لتثبيته الآن، أو سيُثبَّت تلقائيًا عند إغلاق التطبيق.'
+        : 'Restart to install it now, or it installs automatically when you quit.',
+    });
+    if (response === 0) autoUpdater.quitAndInstall();
+  });
+  autoUpdater.on('error', (err) => console.warn('[update]', err?.message ?? err));
+
+  const check = () => autoUpdater.checkForUpdates().catch((err) => console.warn('[update]', err?.message ?? err));
+  check();
+  setInterval(check, UPDATE_EVERY_MS);
+}
+
 ipcMain.handle('faisal:open-external', (_event, url) => {
   if (typeof url === 'string' && isWebUrl(url)) return shell.openExternal(url);
   return undefined;
@@ -135,6 +174,7 @@ app.whenReady().then(() => {
   serveDist();
   setupWebSession();
   createWindow();
+  setupAutoUpdate();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
