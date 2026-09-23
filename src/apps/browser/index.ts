@@ -71,6 +71,8 @@ function launch(ctx: AppContext): void {
   win.content.textContent = '';
   /** Non-null in the desktop build: pages load in a real <webview>, so no site refuses. */
   const native = nativeWeb();
+  /** Where a new tab and the Home button go: Google on desktop, the built-in home page on the web. */
+  const START_URL: string | null = native ? 'https://www.google.com/' : null;
 
   const root = document.createElement('div');
   root.className = 'faisal-browser';
@@ -523,7 +525,7 @@ function launch(ctx: AppContext): void {
   }
 
   function goHome(tab: Tab): void {
-    pushHistory(tab, null);
+    pushHistory(tab, START_URL);
     renderTabBody(tab);
   }
 
@@ -583,7 +585,7 @@ function launch(ctx: AppContext): void {
     const bodyEl = document.createElement('div');
     bodyEl.className = 'faisal-browser-body';
 
-    const tab: Tab = { id, history: [null], index: 0, tabEl, labelEl, bodyEl, hintTimer: null, view: null, pageTitle: null };
+    const tab: Tab = { id, history: [START_URL], index: 0, tabEl, labelEl, bodyEl, hintTimer: null, view: null, pageTitle: null };
     tabList.append(tabEl);
     pageArea.append(bodyEl);
     tabs.push(tab);
@@ -631,6 +633,7 @@ function launch(ctx: AppContext): void {
     const tab = makeTab();
     activateTab(tab.id);
     if (url) navigate(tab, url);
+    else renderTabBody(tab);
   }
 
   newTabBtn.addEventListener('click', () => openNewTab());
