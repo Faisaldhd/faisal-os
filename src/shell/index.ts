@@ -13,12 +13,10 @@ import { mountSplash } from './splash';
 import { mountDesktop } from './desktop';
 import { mountSession } from './session';
 import { mountLock } from './lock';
-import { startSync } from './sync';
 
 export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   wireAppearance(sys.bus, sys.settings);
   mountSplash(sys.bus);
-  startSync(sys);
 
   mountDesktop(root, sys, sys.wm);
   const overview = mountOverview(root, sys, sys.wm);
