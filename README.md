@@ -25,6 +25,20 @@ This is a personal project by Faisal Saeed Al Shahrani. It is built for one user
 
   يتطلب Node 22 (وهو الإصدار الذي يستخدمه سير النشر).
 
+## نسخة سطح المكتب (Electron) — متصفح بلا قيود
+
+داخل تبويب متصفح عادي لا يستطيع النظام عرض المواقع إلا عبر `iframe`، ومواقع مثل Google وYouTube وGitHub ترفض ذلك. نسخة سطح المكتب تستخدم `<webview>` حقيقيًا من Electron، فتفتح كل المواقع داخل تطبيق «المتصفح» وتطبيقات الويب مع تسجيل الدخول والكوكيز — بلا وسيط وبلا تعديل أي هيدر.
+
+```bash
+npm install
+npm run desktop         # بناء ثم تشغيل التطبيق
+npm run desktop:build   # ملف تثبيت في release/ (Windows: NSIS، macOS: DMG، Linux: AppImage)
+```
+
+- الملفات: `electron/main.cjs` (العملية الرئيسية) و`electron/preload.cjs` (جسر صغير معزول) و`src/shell/native-web.ts` (جهة الواجهة).
+- الأمان: النظام يُخدَّم من أصل خاص `app://faisal-os` في بيئة معزولة بلا Node؛ كل `webview` يُجبَر على بيئة معزولة بلا Node ولا preload وعلى قسم جلسة منفصل `persist:faisal-web`، ولا يحمّل إلا http(s).
+- النسخة المنشورة على GitHub Pages لم تتغير: خارج Electron تبقى `iframe` وبطاقات الرفض كما هي.
+
 ## What it is
 
 Fai$al OS puts a GNOME-style desktop inside a browser tab: a top bar, a dash, a desktop with shortcuts, an Activities overview, a window manager, notifications, a settings app, and a set of built-in applications backed by a virtual file system. The Arabic interface is the default (`<html lang="ar" dir="rtl">`); English is a runtime switch. Everything is plain DOM and CSS — no React/Vue.

@@ -409,3 +409,8 @@
 @container faisal-window (max-width: 560px) {
   .faisal-browser-home-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* Desktop build: Electron's <webview> lays its guest out as a flex child. */
+webview.faisal-browser-webview {
+  display: flex;
+}
