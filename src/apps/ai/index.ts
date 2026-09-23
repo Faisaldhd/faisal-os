@@ -3,7 +3,9 @@ import type { AppContext, AppModule } from '../../kernel/types';
 import { defineStrings, t } from '../../kernel/i18n';
 import { renderIcon } from '../../shell/icon';
 import { renderMarkdown } from './markdown';
-import { FALLBACK_MODELS, GroqError, listModels, runGroqTurn, type ChatTurn, type Source } from './groq';
+import { FALLBACK_MODELS, GroqError, listModels, runGroqTurn, supportsTools, type ChatTurn, type Source } from './groq';
+import { createToolBox } from './tools';
+import type { ConfirmFn, ToolCall } from './agent';
 import { ICON_AI } from './icon';
 import './ai.css';
 
@@ -19,12 +21,19 @@ defineStrings('ai', {
     keyNote: 'يُحفظ المفتاح في هذا المتصفح فقط ولا يُرسل إلا إلى api.groq.com.',
     model: 'النموذج',
     modelSearch: '{id} (يبحث في الويب)',
+    modelAgent: '{id} (وكيل)',
+    allow: 'سماح',
+    deny: 'رفض',
+    allowed: 'تم السماح',
+    denied: 'تم الرفض',
+    agentHint: 'وضع الوكيل: أقدر أقرأ ملفاتك وأفتح التطبيقات، وأسألك قبل أي تغيير.',
+    searchHint: 'هذا النموذج يبحث في الويب لكنه لا يتحكم في النظام. اختر نموذجاً عليه (وكيل) لإدارة الملفات والتطبيقات.',
     newChat: 'محادثة جديدة',
     removeKey: 'تغيير المفتاح',
     placeholder: 'اكتب رسالتك… (Enter للإرسال، Shift+Enter لسطر جديد)',
     send: 'إرسال',
     stop: 'إيقاف',
-    empty: 'اسألني أي شيء. مع نماذج Compound أقدر أبحث في الإنترنت وأقرأ الروابط.',
+    empty: 'اطلب مني أي شيء: أرتّب ملفاتك، أكتب ملفاً، أفتح تطبيقاً، أشغّل أمراً في الطرفية، أو أغيّر المظهر. أسألك قبل أي تغيير.',
     thinking: 'يفكر…',
     searching: 'يبحث في الويب: {q}',
     fetching: 'يقرأ الصفحة: {q}',
@@ -48,12 +57,19 @@ defineStrings('ai', {
     keyNote: 'The key is stored in this browser only and is sent only to api.groq.com.',
     model: 'Model',
     modelSearch: '{id} (searches the web)',
+    modelAgent: '{id} (agent)',
+    allow: 'Allow',
+    deny: 'Deny',
+    allowed: 'Allowed',
+    denied: 'Denied',
+    agentHint: 'Agent mode: I can read your files and open apps, and I ask before changing anything.',
+    searchHint: 'This model searches the web but cannot control the system. Pick an (agent) model to manage files and apps.',
     newChat: 'New chat',
     removeKey: 'Change key',
     placeholder: 'Type a message… (Enter to send, Shift+Enter for a new line)',
     send: 'Send',
     stop: 'Stop',
-    empty: 'Ask me anything. With the Compound models I can search the web and read links.',
+    empty: 'Ask me for anything: tidy your files, write a file, open an app, run a terminal command, or change the look. I ask before changing anything.',
     thinking: 'Thinking…',
     searching: 'Searching the web: {q}',
     fetching: 'Reading page: {q}',
@@ -95,7 +111,8 @@ function launch(ctx: AppContext): void {
 
   let apiKey = read(KEY_STORAGE);
   let models: string[] = [];
-  let model = read(MODEL_STORAGE) || FALLBACK_MODELS[0];
+  let model = read(MODEL_STORAGE);
+  const toolbox = createToolBox(ctx.sys);
   let history: ChatTurn[] = [];
   let abort: AbortController | null = null;
   win.onClose(() => abort?.abort());
@@ -153,10 +170,14 @@ function launch(ctx: AppContext): void {
     const picker = el('select', 'faisal-ai-model');
     picker.setAttribute('aria-label', t('ai.model'));
     picker.dir = 'ltr';
+    const hint = el('div', 'faisal-ai-hint');
+    const syncHint = () => { hint.textContent = t(supportsTools(model) ? 'ai.agentHint' : 'ai.searchHint'); };
     const fillModels = (ids: string[]) => {
-      if (!ids.includes(model)) model = ids[0] ?? model;
+      // No saved choice (or it was retired): start in agent mode.
+      if (!ids.includes(model)) model = ids.find(supportsTools) ?? ids[0] ?? model;
+      syncHint();
       picker.replaceChildren(...ids.map((id) => {
-        const o = el('option', undefined, searches(id) ? t('ai.modelSearch', { id }) : id);
+        const o = el('option', undefined, searches(id) ? t('ai.modelSearch', { id }) : supportsTools(id) ? t('ai.modelAgent', { id }) : id);
         o.value = id;
         o.selected = id === model;
         return o;
@@ -167,7 +188,7 @@ function launch(ctx: AppContext): void {
       // Refresh the list from the account (it changes as Groq adds and retires models).
       listModels(apiKey).then((ids) => { if (ids.length) { models = ids; fillModels(ids); } }).catch(() => {});
     }
-    picker.addEventListener('change', () => { model = picker.value; write(MODEL_STORAGE, model); });
+    picker.addEventListener('change', () => { model = picker.value; write(MODEL_STORAGE, model); syncHint(); });
     const newBtn = el('button', undefined, t('ai.newChat'));
     const keyBtn = el('button', undefined, t('ai.removeKey'));
     bar.append(picker, el('span', 'grow'), newBtn, keyBtn);
@@ -182,7 +203,7 @@ function launch(ctx: AppContext): void {
     ta.setAttribute('aria-label', t('ai.placeholder'));
     const sendBtn = el('button', 'primary', t('ai.send'));
     input.append(ta, sendBtn);
-    wrap.append(bar, log, input);
+    wrap.append(bar, hint, log, input);
 
     const emptyState = () => {
       const e = el('div', 'faisal-ai-empty');
@@ -192,7 +213,7 @@ function launch(ctx: AppContext): void {
     if (!history.length) emptyState();
     else for (const m of history) {
       if (m.role === 'user') addUser(m.content);
-      else if (m.content) addAssistant().body.innerHTML = renderMarkdown(m.content);
+      else if (m.role === 'assistant' && m.content) addAssistant().body.innerHTML = renderMarkdown(m.content);
     }
 
     function addUser(text: string) {
@@ -227,6 +248,7 @@ function launch(ctx: AppContext): void {
       ta.value = '';
       autosize();
       addUser(text);
+      const turnStart = history.length;
       history.push({ role: 'user', content: text });
       const { m, tools, body } = addAssistant();
       body.append(el('span', 'faisal-ai-typing', t('ai.thinking')));
@@ -239,6 +261,49 @@ function launch(ctx: AppContext): void {
       let raw = '';
       let frame = 0;
       const paint = () => { frame = 0; body.innerHTML = renderMarkdown(raw); scroll(); };
+      const steps = new Map<string, HTMLElement>();
+      /** Inline card in the reply: the change, and Allow / Deny. */
+      const confirm: ConfirmFn = (req) => new Promise((resolve) => {
+        const card = el('div', 'faisal-ai-confirm' + (req.danger ? ' is-danger' : ''));
+        card.setAttribute('role', 'group');
+        card.setAttribute('aria-label', req.title);
+        const detail = el('div', 'faisal-ai-confirm-detail', req.detail);
+        detail.dir = 'auto';
+        const actions = el('div', 'faisal-ai-confirm-actions');
+        const yes = el('button', 'primary', t('ai.allow'));
+        const no = el('button', undefined, t('ai.deny'));
+        const decide = (ok: boolean) => {
+          actions.replaceChildren(el('span', 'faisal-ai-typing', t(ok ? 'ai.allowed' : 'ai.denied')));
+          card.classList.add(ok ? 'is-allowed' : 'is-denied');
+          resolve(ok);
+        };
+        yes.addEventListener('click', () => decide(true));
+        no.addEventListener('click', () => decide(false));
+        // Stopping the reply also answers a pending question with "no".
+        abort?.signal.addEventListener('abort', () => { if (!card.classList.contains('is-allowed')) decide(false); }, { once: true });
+        actions.append(yes, no);
+        card.append(el('div', 'faisal-ai-confirm-title', req.title), detail, actions);
+        tools.append(card);
+        scroll();
+        yes.focus();
+      });
+      const onCall = (call: ToolCall, preview: { label: string }) => {
+        const step = el('details', 'faisal-ai-step');
+        const summary = el('summary', undefined, preview.label);
+        summary.dir = 'auto';
+        step.append(summary);
+        tools.append(step);
+        steps.set(call.id, step);
+        scroll();
+      };
+      const onResult = (call: ToolCall, result: string) => {
+        const step = steps.get(call.id);
+        if (!step) return;
+        const pre = el('pre', undefined, result.length > 4000 ? `${result.slice(0, 4000)}…` : result);
+        pre.dir = 'ltr';
+        step.append(pre);
+        step.classList.add('is-done');
+      };
       try {
         const res = await runGroqTurn(apiKey, model, history, {
           onText(d) { raw += d; if (!frame) frame = requestAnimationFrame(paint); },
@@ -248,15 +313,15 @@ function launch(ctx: AppContext): void {
             tools.append(line);
             scroll();
           },
-        }, abort.signal);
+        }, abort.signal, supportsTools(model) ? { tools: toolbox, confirm, onCall, onResult } : undefined);
         if (frame) cancelAnimationFrame(frame);
         paint();
         if (res.truncated) body.append(el('p', 'faisal-ai-typing', t('ai.truncated')));
         if (res.sources.length) body.append(sourcesEl(res.sources));
       } catch (err) {
         if (frame) cancelAnimationFrame(frame);
-        // Roll the unanswered message back so the next turn starts clean.
-        if (history.at(-1)?.role === 'user') history.pop();
+        // Drop the whole unfinished turn (it may end mid tool call) so the next one starts clean.
+        history.length = turnStart;
         if (abort?.signal.aborted) {
           if (raw) paint(); else body.replaceChildren();
           body.append(el('p', 'faisal-ai-typing', t('ai.stopped')));
