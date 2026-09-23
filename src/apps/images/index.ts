@@ -397,7 +397,14 @@ function launch(ctx: AppContext): void {
   const resizeObserver = new ResizeObserver(() => { if (zoom === 'fit') applyTransform(); });
   resizeObserver.observe(stage);
 
+  // New files in Pictures (e.g. a screenshot) show up without reopening the app.
+  const unsubFs = sys.bus.on('fs:change', (ev) => {
+    const pics = join(HOME, 'Pictures');
+    if (mode === 'gallery' && (dirname(ev.path) === pics || (ev.oldPath && dirname(ev.oldPath) === pics))) void renderGallery();
+  });
+
   win.onClose(() => {
+    unsubFs();
     resizeObserver.disconnect();
     galleryObserver?.disconnect();
     revokeCurrent();

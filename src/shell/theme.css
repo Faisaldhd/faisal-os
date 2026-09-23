@@ -910,3 +910,69 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .faisal-splash { display: none; }
 }
+
+/* ───────────────────────── Screenshot (Win+Shift+S) ───────────────────────── */
+
+.faisal-shot {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+  user-select: none;
+}
+.faisal-shot-stage {
+  position: relative;
+  cursor: crosshair;
+  touch-action: none;
+}
+.faisal-shot-frame { display: block; }
+.faisal-shot-stage::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+.faisal-shot-sel {
+  position: absolute;
+  z-index: 1;
+  border: 1.5px solid var(--faisal-brand-mark-gold, #E3B650);
+  /* Punches the selection out of the dim layer. */
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.4);
+  background: transparent;
+  pointer-events: none;
+}
+.faisal-shot-stage:has(.faisal-shot-sel:not([hidden]))::after { background: transparent; }
+.faisal-shot-sel[hidden] { display: none; }
+.faisal-shot-bar {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 14px;
+  border-radius: 12px;
+  background: rgba(12, 20, 44, 0.92);
+  color: #fff;
+  font-size: 13px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  white-space: nowrap;
+}
+.faisal-shot-bar button {
+  appearance: none;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+.faisal-shot-bar button:hover { background: rgba(255, 255, 255, 0.22); }
+.faisal-shot-bar button:first-of-type { background: var(--faisal-brand-mark-gold, #E3B650); color: #16264F; }
