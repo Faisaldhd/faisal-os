@@ -77,7 +77,11 @@ async function clearServiceWorkerAndCaches(): Promise<void> {
   } catch { /* cache storage unavailable or blocked — nothing to delete */ }
 }
 
-function row(labelKey: string, descKey?: string): { row: HTMLElement; control: HTMLElement } {
+/**
+ * A settings row. `descKey` is translated; `detail` is already-translated plain
+ * text (the remembered site URLs) and is written through `textContent` only.
+ */
+function row(labelKey: string, descKey?: string, detail?: string): { row: HTMLElement; control: HTMLElement } {
   const r = document.createElement('div');
   r.className = 'faisal-settings-row';
   const text = document.createElement('div');
@@ -90,6 +94,12 @@ function row(labelKey: string, descKey?: string): { row: HTMLElement; control: H
     desc.className = 'faisal-settings-row-desc';
     desc.textContent = t(descKey);
     text.append(desc);
+  }
+  if (detail) {
+    const line = document.createElement('div');
+    line.className = 'faisal-settings-row-desc';
+    line.textContent = detail;
+    text.append(line);
   }
   const control = document.createElement('div');
   r.append(text, control);
@@ -309,6 +319,16 @@ function launch(ctx: AppContext) {
     bookmarksRow.control.append(valueNode(countText('settings.privacy.count', 'settings.privacy.none', inv.bookmarkCount)));
     stored.push(bookmarksRow.row);
 
+    // The remembered pages come from the three known web app keys only, and are
+    // shown as plain text — never as markup, and never as a key from anywhere else.
+    const webUrlsDetail = inv.webAppUrlCount > 0
+      // LRI…PDI keeps the Latin URLs in order inside Arabic text.
+      ? t('settings.privacy.webAppsRemembered', { urls: `\u2066${inv.webAppUrls.join(' · ')}\u2069` })
+      : undefined;
+    const webAppsRow = row('settings.privacy.webApps', 'settings.privacy.webAppsDesc', webUrlsDetail);
+    webAppsRow.control.append(valueNode(countText('settings.privacy.count', 'settings.privacy.none', inv.webAppUrlCount)));
+    stored.push(webAppsRow.row);
+
     for (const provider of AI_PROVIDERS) {
       const providerRow = row(provider.labelKey, 'settings.privacy.aiKeyDesc');
       providerRow.control.append(valueNode(t(inv.aiKeysSaved[provider.id]
@@ -392,6 +412,19 @@ function launch(ctx: AppContext) {
     });
     browsingRow.control.append(browsingBtn);
     actions.push(browsingRow.row);
+
+    const webUrlsRow = row('settings.privacy.clearWebUrls', 'settings.privacy.clearWebUrlsDesc');
+    const webUrlsBtn = dangerButton('settings.privacy.clearWebUrlsBtn');
+    webUrlsBtn.addEventListener('click', () => {
+      void confirmClear(
+        'webUrls',
+        'settings.privacy.clearWebUrlsTitle',
+        t('settings.privacy.clearWebUrlsBody', { keys: keyList(clearedKeys('webUrls')) }),
+        'settings.privacy.clearWebUrlsConfirm',
+      );
+    });
+    webUrlsRow.control.append(webUrlsBtn);
+    actions.push(webUrlsRow.row);
 
     const resetLink = row('settings.privacy.fullReset', 'settings.privacy.fullResetDesc');
     const resetLinkBtn = document.createElement('button');

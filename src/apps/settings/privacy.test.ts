@@ -2,13 +2,16 @@
 import { describe, it, expect } from 'vitest';
 import {
   AI_KEY_STORAGE, AI_PROVIDERS, BOOKMARKS_KEY, DEFAULT_ENGINE, ENGINE_KEY, GEOMETRY_KEY,
-  NOTIFICATIONS_KEY, SETTINGS_KEY, clearedKeys, clearPrivacyItem, readPrivacyInventory,
-  type WritableStorageLike,
+  NOTIFICATIONS_KEY, SETTINGS_KEY, WEB_APP_IDS, WEB_URL_STORAGE_KEYS, clearedKeys, clearPrivacyItem,
+  readPrivacyInventory, webUrlStorageKey, type WebAppId, type WritableStorageLike,
 } from './privacy';
 import { LEGACY_STORAGE_KEYS, PROVIDERS, PROVIDER_STORAGE } from '../ai/providers';
+import { WIRED_WEB_APPS, lastUrlStorageKey } from '../web/registry';
 
 const GROQ_KEY = 'faisal.groq.apiKey';
 const DEEPSEEK_KEY = 'faisal.deepseek.apiKey';
+/** The real keys apps/web writes, one per wired site. */
+const WEB_URL_KEYS = ['faisal.web.google.url', 'faisal.web.youtube.url', 'faisal.web.wikipedia.url'];
 
 interface FakeStore extends WritableStorageLike {
   values: Record<string, string>;
@@ -53,6 +56,8 @@ describe('readPrivacyInventory', () => {
         'org.faisal.Files': { left: 40, top: 60, width: 900, height: 600 },
       }),
       [BOOKMARKS_KEY]: JSON.stringify(['https://a.test', 'https://b.test', 'http://insecure.test', 7]),
+      [WEB_URL_KEYS[0]]: 'https://www.google.com/search?q=faisal',
+      [WEB_URL_KEYS[2]]: 'https://en.wikipedia.org/wiki/Main_Page',
       [GROQ_KEY]: 'gsk_saved',
     });
     expect(readPrivacyInventory(store)).toEqual({
@@ -61,6 +66,8 @@ describe('readPrivacyInventory', () => {
       notificationCount: 3,
       geometryCount: 2,
       bookmarkCount: 2,
+      webAppUrlCount: 2,
+      webAppUrls: ['https://www.google.com/search?q=faisal', 'https://en.wikipedia.org/wiki/Main_Page'],
       aiKeysSaved: { groq: true, deepseek: false },
     });
   });
@@ -75,6 +82,7 @@ describe('readPrivacyInventory', () => {
   it('reads a missing key as 0', () => {
     expect(readPrivacyInventory(fakeStorage())).toEqual({
       settingsCount: 0, sessionCount: 0, notificationCount: 0, geometryCount: 0, bookmarkCount: 0,
+      webAppUrlCount: 0, webAppUrls: [],
       aiKeysSaved: { groq: false, deepseek: false },
     });
   });
@@ -88,6 +96,7 @@ describe('readPrivacyInventory', () => {
     });
     expect(readPrivacyInventory(store)).toEqual({
       settingsCount: 0, sessionCount: 0, notificationCount: 0, geometryCount: 0, bookmarkCount: 0,
+      webAppUrlCount: 0, webAppUrls: [],
       aiKeysSaved: { groq: false, deepseek: false },
     });
   });
@@ -96,9 +105,47 @@ describe('readPrivacyInventory', () => {
     for (const store of [blockedReads, null, undefined]) {
       expect(readPrivacyInventory(store)).toEqual({
         settingsCount: 0, sessionCount: 0, notificationCount: 0, geometryCount: 0, bookmarkCount: 0,
+        webAppUrlCount: 0, webAppUrls: [],
         aiKeysSaved: { groq: false, deepseek: false },
       });
     }
+  });
+
+  it('counts how many wired sites remember a URL: 0, 1 or 3', () => {
+    expect(readPrivacyInventory(fakeStorage()).webAppUrlCount).toBe(0);
+
+    const one = fakeStorage({ [WEB_URL_KEYS[1]]: 'https://www.youtube.com/watch?v=faisal' });
+    expect(readPrivacyInventory(one)).toMatchObject({
+      webAppUrlCount: 1,
+      webAppUrls: ['https://www.youtube.com/watch?v=faisal'],
+    });
+
+    const three = fakeStorage({
+      [WEB_URL_KEYS[0]]: 'https://www.google.com/search?q=faisal',
+      [WEB_URL_KEYS[1]]: 'https://www.youtube.com/watch?v=faisal',
+      [WEB_URL_KEYS[2]]: 'https://en.wikipedia.org/wiki/Faisal',
+    });
+    expect(readPrivacyInventory(three).webAppUrlCount).toBe(3);
+    expect(readPrivacyInventory(three).webAppUrls).toEqual([
+      'https://www.google.com/search?q=faisal',
+      'https://www.youtube.com/watch?v=faisal',
+      'https://en.wikipedia.org/wiki/Faisal',
+    ]);
+  });
+
+  it('counts a corrupt, empty or non-string remembered value as 0', () => {
+    const store = fakeStorage({
+      [WEB_URL_KEYS[0]]: '{not json',
+      [WEB_URL_KEYS[1]]: '   ',
+      [WEB_URL_KEYS[2]]: 'javascript:alert(1)',
+    });
+    expect(readPrivacyInventory(store)).toMatchObject({ webAppUrlCount: 0, webAppUrls: [] });
+
+    // A store that hands back something that is not a string at all.
+    const notAString = {
+      getItem: (key: string) => (key === WEB_URL_KEYS[0] ? 42 : null),
+    } as unknown as WritableStorageLike;
+    expect(readPrivacyInventory(notAString)).toMatchObject({ webAppUrlCount: 0, webAppUrls: [] });
   });
 
   it('counts only settings keys the kernel would load', () => {
@@ -143,8 +190,12 @@ describe('clearedKeys', () => {
     expect(clearedKeys('browsing')).toEqual([BOOKMARKS_KEY, ENGINE_KEY]);
     expect(clearedKeys('groq')).toEqual([GROQ_KEY]);
     expect(clearedKeys('deepseek')).toEqual([DEEPSEEK_KEY]);
+    expect(clearedKeys('webUrls')).toEqual(WEB_URL_KEYS);
     // Nothing else may be listed — in particular not the settings object or the VFS.
     expect(clearedKeys('browsing')).not.toContain(SETTINGS_KEY);
+    expect(clearedKeys('webUrls')).not.toContain(SETTINGS_KEY);
+    expect(clearedKeys('webUrls')).not.toContain(BOOKMARKS_KEY);
+    expect(clearedKeys('webUrls')).not.toContain(GROQ_KEY);
   });
 });
 
@@ -196,16 +247,47 @@ describe('clearPrivacyItem', () => {
     expect(store.values[GROQ_KEY]).toBe('gsk_saved');
   });
 
+  it('clears only the remembered site URLs, leaving every other stored item intact', () => {
+    const settings = JSON.stringify({ theme: 'dark', 'shell.session': ['org.faisal.Files'] });
+    const store = fakeStorage({
+      [WEB_URL_KEYS[0]]: 'https://www.google.com/search?q=faisal',
+      [WEB_URL_KEYS[1]]: 'https://www.youtube.com/watch?v=faisal',
+      [WEB_URL_KEYS[2]]: 'https://en.wikipedia.org/wiki/Faisal',
+      // A near-miss key that is not one of the three the web app writes.
+      'faisal.web.google.url.old': 'https://www.google.com/older',
+      [GROQ_KEY]: 'gsk_saved', [DEEPSEEK_KEY]: 'sk_saved',
+      [BOOKMARKS_KEY]: '["https://a.test"]', [ENGINE_KEY]: 'duckduckgo',
+      [NOTIFICATIONS_KEY]: notification(1),
+      [GEOMETRY_KEY]: '{"org.faisal.Files":{}}',
+      [SETTINGS_KEY]: settings,
+    });
+    expect(clearPrivacyItem(store, 'webUrls')).toEqual(WEB_URL_KEYS);
+    // Exactly those three keys were removed, and nothing else was even touched.
+    expect(store.removed).toEqual(WEB_URL_KEYS);
+    expect(readPrivacyInventory(store)).toMatchObject({
+      webAppUrlCount: 0, webAppUrls: [],
+      settingsCount: 2, sessionCount: 1, notificationCount: 1, geometryCount: 1, bookmarkCount: 1,
+      aiKeysSaved: { groq: true, deepseek: true },
+    });
+    for (const key of [GROQ_KEY, DEEPSEEK_KEY, BOOKMARKS_KEY, ENGINE_KEY, NOTIFICATIONS_KEY, GEOMETRY_KEY, SETTINGS_KEY]) {
+      expect(store.values[key]).toBeDefined();
+    }
+    expect(store.values[SETTINGS_KEY]).toBe(settings);
+    expect(store.values['faisal.web.google.url.old']).toBe('https://www.google.com/older');
+  });
+
   it('never throws when storage blocks writes, and reports what it tried to delete', () => {
     // A store that refuses every write, as in a locked-down private window.
     const blocked = fakeStorage({ [GROQ_KEY]: 'gsk_saved' }, true);
     for (const store of [blocked, blockedReads, null, undefined]) {
       expect(() => clearPrivacyItem(store, 'notifications')).not.toThrow();
       expect(() => clearPrivacyItem(store, 'browsing')).not.toThrow();
+      expect(() => clearPrivacyItem(store, 'webUrls')).not.toThrow();
       expect(() => clearPrivacyItem(store, 'groq')).not.toThrow();
     }
     // The keys it would have deleted are still reported, so the UI can be honest about it.
     expect(clearPrivacyItem(blocked, 'browsing')).toEqual([BOOKMARKS_KEY, ENGINE_KEY]);
+    expect(clearPrivacyItem(blocked, 'webUrls')).toEqual(WEB_URL_KEYS);
     expect(clearPrivacyItem(null, 'groq')).toEqual([GROQ_KEY]);
   });
 });
@@ -221,5 +303,20 @@ describe('provider key registry', () => {
     expect(new Set(keys).size).toBe(keys.length);
     expect(keys).not.toContain(PROVIDER_STORAGE);
     for (const legacy of LEGACY_STORAGE_KEYS) expect(keys).not.toContain(legacy);
+  });
+});
+
+describe('web app url key registry', () => {
+  it('mirrors the ids and the exact key shape apps/web/registry.ts uses', () => {
+    // The list is duplicated on purpose (Settings must not import an app), so this
+    // pins it to the registry: same ids, same `faisal.web.<id>.url` key shape.
+    expect(WEB_APP_IDS).toEqual(WIRED_WEB_APPS.map((def) => def.id));
+    for (const def of WIRED_WEB_APPS) {
+      expect(webUrlStorageKey(def.id as WebAppId)).toBe(lastUrlStorageKey(def));
+    }
+    expect(WEB_URL_STORAGE_KEYS).toEqual(WEB_URL_KEYS);
+    // One key per wired site, no duplicates, and no key shape of our own invention.
+    expect(new Set(WEB_URL_STORAGE_KEYS).size).toBe(WEB_URL_STORAGE_KEYS.length);
+    for (const key of WEB_URL_STORAGE_KEYS) expect(key).toMatch(/^faisal\.web\.[a-z0-9-]+\.url$/);
   });
 });
