@@ -45,6 +45,8 @@ defineStrings('shell', {
     'ctx.uninstall': 'إزالة التثبيت',
 
     'ctx.openFiles': 'فتح الملفات',
+    'ctx.openInFiles': 'فتح في الملفات',
+    'ctx.delete': 'حذف',
     'ctx.openTerminal': 'فتح الطرفية',
     'ctx.newFolder': 'مجلد جديد',
     'ctx.changeBackground': 'تغيير الخلفية…',
@@ -67,6 +69,12 @@ defineStrings('shell', {
     'uninstall.done': 'تمت إزالة تثبيت {name}',
 
     'desktop.newFolder': 'مجلد جديد',
+
+    // Desktop entries (files and folders living in ~/Desktop)
+    'fileDelete.title': 'حذف {name}؟',
+    'fileDelete.fileBody': 'سيُحذف الملف نهائيًا من نظام الملفات.',
+    'fileDelete.folderBody': 'سيُحذف المجلد وكل ما فيه نهائيًا من نظام الملفات.',
+    'fileDelete.failed': 'تعذّر حذف {name}',
   },
   en: {
     activities: 'Activities',
@@ -112,6 +120,8 @@ defineStrings('shell', {
     'ctx.uninstall': 'Uninstall',
 
     'ctx.openFiles': 'Open Files',
+    'ctx.openInFiles': 'Open in Files',
+    'ctx.delete': 'Delete',
     'ctx.openTerminal': 'Open Terminal',
     'ctx.newFolder': 'New folder',
     'ctx.changeBackground': 'Change background…',
@@ -134,5 +144,11 @@ defineStrings('shell', {
     'uninstall.done': '{name} was uninstalled',
 
     'desktop.newFolder': 'New folder',
+
+    // Desktop entries (files and folders living in ~/Desktop)
+    'fileDelete.title': 'Delete {name}?',
+    'fileDelete.fileBody': 'This file will be permanently removed from the file system.',
+    'fileDelete.folderBody': 'This folder and everything inside it will be permanently removed from the file system.',
+    'fileDelete.failed': 'Could not delete {name}',
   },
 });
