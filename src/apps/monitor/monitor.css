@@ -147,6 +147,95 @@
   text-align: center;
 }
 
+.faisal-mon-chart-status {
+  font-size: 11.5px;
+  color: var(--faisal-fg-muted, #aab1c2);
+  margin-block-end: 6px;
+  min-height: 14px;
+}
+.faisal-mon-chart-status.is-paused { color: var(--faisal-warn, #E3B650); }
+
+/* ───────────────────────── System ───────────────────────── */
+
+.faisal-mon-honesty {
+  background: color-mix(in srgb, var(--faisal-warn, #E3B650) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--faisal-warn, #E3B650) 40%, transparent);
+  border-radius: var(--faisal-radius, 10px);
+  padding: 10px 12px;
+  margin-block-end: 16px;
+}
+
+.faisal-mon-honesty-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.faisal-mon-honesty-title {
+  font-weight: 700;
+  color: var(--faisal-warn, #E3B650);
+}
+
+.faisal-mon-honesty-lang {
+  appearance: none;
+  border: 1px solid var(--faisal-border, rgba(255,255,255,.11));
+  background: transparent;
+  color: var(--faisal-fg, #eceef3);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  flex: none;
+}
+.faisal-mon-honesty-lang:hover { background: var(--faisal-surface-3, #343d52); }
+.faisal-mon-honesty-lang:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8F6412);
+  outline-offset: 2px;
+}
+
+.faisal-mon-honesty-body {
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--faisal-fg, #eceef3);
+}
+
+.faisal-mon-sys-group { margin-block-end: 16px; }
+
+.faisal-mon-sys-heading {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--faisal-fg-muted, #aab1c2);
+  margin: 0 0 6px;
+}
+
+.faisal-mon-sys-table tbody tr { cursor: default; }
+.faisal-mon-sys-label {
+  width: 42%;
+  color: var(--faisal-fg-muted, #aab1c2);
+}
+.faisal-mon-sys-valuecell { text-align: end; }
+.faisal-mon-sys-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.faisal-mon-sys-value.is-unavailable {
+  font-weight: 400;
+  color: var(--faisal-fg-muted, #aab1c2);
+  font-style: italic;
+}
+.faisal-mon-sys-note {
+  font-size: 11px;
+  color: var(--faisal-fg-muted, #aab1c2);
+  margin-block-start: 2px;
+  overflow-wrap: anywhere;
+}
+
 /* ───────────────────────── File systems ───────────────────────── */
 
 .faisal-mon-fs-summary {
