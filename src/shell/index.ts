@@ -19,9 +19,9 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   mountDesktop(root, sys, sys.wm);
   const overview = mountOverview(root, sys, sys.wm);
   const screenshot = mountScreenshot(sys);
-  mountTopbar(root, sys, () => overview.toggle(), () => screenshot.capture());
+  const topbar = mountTopbar(root, sys, () => overview.toggle(), () => screenshot.capture());
   mountDock(root, sys);
-  mountNotifications(root, sys.bus);
+  mountNotifications(root, sys, topbar.querySelector<HTMLButtonElement>('.faisal-topbar-clock'));
 
   // GNOME behaviour: tapping the Super/Windows key alone toggles Activities; Alt+F1 does too.
   let superAlone = false;

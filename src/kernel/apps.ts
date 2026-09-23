@@ -201,7 +201,8 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
           : Object.freeze({ get: sys.settings.get, set: denied('settings') }),
         locale: sys.locale,
         t: sys.t,
-        notify: perms.includes('notifications') ? sys.notify : () => {},
+        // Tagged with the app, so the notification shows its icon and opens it on click.
+        notify: perms.includes('notifications') ? (title: string, body?: string) => sys.bus.emit('notify', { title, body, appId }) : () => {},
       });
       try {
         // First launch downloads the app's chunk; show a spinner in the window meanwhile.

@@ -148,3 +148,20 @@ describe('sessionToRestore', () => {
     expect(sessionToRestore(Array(30).fill('a'), ['a'])).toHaveLength(12);
   });
 });
+
+import { parseHistory } from './notifications';
+
+describe('parseHistory', () => {
+  it('keeps valid items newest first and drops junk', () => {
+    const items = parseHistory([
+      { id: 1, title: 'old', time: 1 },
+      { id: 2, title: 'new', time: 5, body: 'b', appId: 'org.x' },
+      { id: 3, title: 7, time: 9 },
+      null,
+      { id: 4, title: 'bad body', time: 3, body: 42 },
+    ]);
+    expect(items.map((i) => i.id)).toEqual([2, 4, 1]);
+    expect(items[1]).not.toHaveProperty('body');
+    expect(parseHistory({})).toEqual([]);
+  });
+});
