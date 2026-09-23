@@ -7,10 +7,9 @@ export const SCREENSHOT_DIR = join(HOME, 'Pictures');
 
 /**
  * Snipping tool (Win+Shift+S). The desktop is redrawn into a canvas from its own DOM
- * (html-to-image), so no permission prompt is needed. Only if that fails does it fall back
- * to screen capture, which asks to share this tab for a single frame. The frozen frame is
- * then shown full screen so the user can drag a region or take the whole screen; the
- * result is saved as a PNG in ~/Pictures.
+ * (html-to-image), so the browser never asks for permission. The frozen frame is then
+ * shown full screen so the user can drag a region or take the whole screen; the result
+ * is saved as a PNG in ~/Pictures.
  */
 export function mountScreenshot(sys: SystemAPI): { capture(): void } {
   let busy = false;
@@ -19,14 +18,14 @@ export function mountScreenshot(sys: SystemAPI): { capture(): void } {
     if (busy) return;
     busy = true;
     try {
-      const frame = (await renderPage().catch(() => null)) ?? (await grabFrame());
-      if (!frame) return;
+      const frame = await renderPage();
       const region = await pickRegion(frame);
       if (!region) return;
       const name = await save(crop(frame, region));
       sys.notify(t('shell.shot.saved'), name);
-    } catch {
-      sys.notify(t('shell.shot.failed'));
+    } catch (err) {
+      console.error('Screenshot failed', err);
+      sys.notify(t('shell.shot.failed'), err instanceof Error ? err.message : String(err));
     } finally {
       busy = false;
     }
@@ -50,12 +49,20 @@ export function fileName(d: Date): string {
   return `Screenshot_${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}.png`;
 }
 
-/** Draws the visible page from its DOM. No prompt; loaded on first use to keep startup small. */
+/** Transparent 1×1 GIF used for any image that can't be read, so one bad image never fails the shot. */
+const BLANK = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
+/**
+ * Draws the desktop from its DOM. Only #faisal-root is drawn: browser extensions inject
+ * their own elements (often with cross-origin images) into <body>, and those made the
+ * whole render fail. Loaded on first use to keep startup small.
+ */
 async function renderPage(): Promise<HTMLCanvasElement> {
   const { toCanvas } = await import('html-to-image');
+  const root = document.getElementById('faisal-root') ?? document.body;
   const w = window.innerWidth;
   const h = window.innerHeight;
-  return toCanvas(document.body, {
+  return toCanvas(root, {
     width: w,
     height: h,
     canvasWidth: w,
@@ -63,42 +70,11 @@ async function renderPage(): Promise<HTMLCanvasElement> {
     pixelRatio: window.devicePixelRatio || 1,
     // The desktop only uses system fonts, so skip web-font embedding (it would fetch every stylesheet).
     skipFonts: true,
-    style: { margin: '0' },
+    imagePlaceholder: BLANK,
+    backgroundColor: getComputedStyle(document.body).backgroundColor,
+    // Skip anything that isn't ours: iframes, and custom elements (extension widgets use them).
+    filter: (node) => !(node instanceof HTMLElement) || (node.tagName !== 'IFRAME' && !node.tagName.includes('-')),
   });
-}
-
-/** Fallback: asks to share this tab and returns one frame, or null if unsupported or declined. */
-async function grabFrame(): Promise<HTMLCanvasElement | null> {
-  const md = navigator.mediaDevices;
-  if (!md?.getDisplayMedia) throw new Error('unsupported');
-  let stream: MediaStream;
-  try {
-    stream = await md.getDisplayMedia({
-      video: { displaySurface: 'browser' },
-      audio: false,
-      preferCurrentTab: true,
-      selfBrowserSurface: 'include',
-      surfaceSwitching: 'exclude',
-    } as DisplayMediaStreamOptions);
-  } catch {
-    return null;
-  }
-  try {
-    const video = document.createElement('video');
-    video.muted = true;
-    video.playsInline = true;
-    video.srcObject = stream;
-    await video.play();
-    // Let the share bar settle and a fresh frame arrive before reading pixels.
-    await new Promise((r) => setTimeout(r, 300));
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d')!.drawImage(video, 0, 0);
-    return canvas;
-  } finally {
-    stream.getTracks().forEach((tr) => tr.stop());
-  }
 }
 
 interface Rect { x: number; y: number; w: number; h: number }
