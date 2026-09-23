@@ -24,12 +24,14 @@ export function pwa(): Plugin {
     apply: 'build',
     configResolved(cfg) { outDir = cfg.build.outDir; },
     closeBundle() {
-      const files = walk(outDir)
+      const all = walk(outDir)
         .map((p) => relative(outDir, p).split(sep).join('/'))
-        .filter((f) => !RUNTIME_ONLY.some((re) => re.test(f)))
         .sort();
+      // The version covers EVERY emitted file, including the runtime-only ones: upgrading
+      // v86 or its wasm must invalidate the cache even though those files aren't precached.
       const hash = createHash('sha256');
-      for (const f of files) hash.update(f).update(readFileSync(join(outDir, f)));
+      for (const f of all) hash.update(f).update(readFileSync(join(outDir, f)));
+      const files = all.filter((f) => !RUNTIME_ONLY.some((re) => re.test(f)));
       const precache = ['./', ...files.filter((f) => f !== 'index.html'), 'index.html'];
       const sw = readFileSync(new URL('./sw-template.js', import.meta.url), 'utf8')
         .replace('__VERSION__', hash.digest('hex').slice(0, 12))

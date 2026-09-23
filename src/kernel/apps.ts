@@ -1,6 +1,6 @@
 import type {
-  AppModule, AppRegistry, AppManifest, EventBus, LazyAppModule, Permission, SystemAPI, SystemEvents, VFS,
-  WindowHandle, WindowManager,
+  AppCategory, AppModule, AppRegistry, AppManifest, EventBus, LazyAppModule, Permission, SystemAPI, SystemEvents,
+  VFS, WindowHandle, WindowManager,
 } from './types';
 import { HOME, VFSError } from './types';
 import { normalize } from './path';
@@ -78,6 +78,39 @@ function scopeWM(wm: WindowManager, appId: string): WindowManager {
 const INSTALL_KEY = 'apps.installState';
 type InstallState = { removed: string[]; added: string[] };
 
+const KNOWN_PERMISSIONS = new Set<Permission>([
+  'fs:home', 'fs:read-all', 'fs:system', 'notifications', 'settings', 'apps:manage', 'system:monitor', 'network',
+]);
+const KNOWN_CATEGORIES = new Set<AppCategory>(['system', 'utilities', 'accessories', 'media', 'development']);
+
+/**
+ * Rejects malformed manifests at registration, so a typo or an unknown permission fails
+ * loudly at boot instead of silently granting nothing (or something).
+ */
+export function validateManifest(m: AppManifest): void {
+  const id = m?.id;
+  if (typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) {
+    throw new Error(`Invalid app id: ${String(id)}`);
+  }
+  if (typeof m.icon !== 'string') throw new Error(`App ${id}: icon must be a string`);
+  for (const lang of ['ar', 'en'] as const) {
+    if (typeof m.name?.[lang] !== 'string' || !m.name[lang].trim()) {
+      throw new Error(`App ${id}: name.${lang} is required`);
+    }
+  }
+  if (!Array.isArray(m.permissions)) throw new Error(`App ${id}: permissions must be an array`);
+  for (const p of m.permissions) {
+    if (!KNOWN_PERMISSIONS.has(p)) throw new Error(`App ${id}: unknown permission '${String(p)}'`);
+  }
+  if (m.category !== undefined && !KNOWN_CATEGORIES.has(m.category)) {
+    throw new Error(`App ${id}: unknown category '${String(m.category)}'`);
+  }
+  if (m.opens !== undefined && (!Array.isArray(m.opens)
+    || m.opens.some((e) => typeof e !== 'string' || !e.startsWith('.')))) {
+    throw new Error(`App ${id}: opens must hold extensions like ".txt"`);
+  }
+}
+
 export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
   /** manifest is frozen at register time; code() loads (once) and returns the app's launch function. */
   type Entry = { manifest: AppManifest; code(): Promise<AppModule['launch']> };
@@ -101,10 +134,11 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
     if (!a) throw new Error(`Unknown app: ${id}`);
     return a.manifest;
   };
-  const windowsOf = (id: string) => (running.get(id) ?? []).map((r) => r.win);
+  const windowsOf = (id: string) => getSys().wm.list().filter((w) => w.appId === id);
 
   const registry: AppRegistry = {
     register(app) {
+      validateManifest(app.manifest);
       if (apps.has(app.manifest.id)) throw new Error(`App already registered: ${app.manifest.id}`);
       const manifest = Object.freeze({ ...app.manifest });
       let pending: Promise<AppModule['launch']> | null = null;
@@ -135,7 +169,8 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
       if (m.core) throw new Error(`Cannot remove core app: ${appId}`);
       const st = state();
       if (!isInstalled(m, st)) return;
-      windowsOf(appId).forEach((w) => w.close());
+      // Closing the way the user would: an app with unsaved work may refuse.
+      windowsOf(appId).forEach((w) => void w.requestClose());
       saveState({
         removed: m.defaultInstalled === false ? st.removed : [...st.removed, appId],
         added: st.added.filter((x) => x !== appId),
@@ -146,10 +181,13 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
         rs.map((r) => ({ appId, windowId: r.win.id, startedAt: r.startedAt })));
     },
     closeWindow(windowId) {
-      for (const rs of running.values()) rs.find((r) => r.win.id === windowId)?.win.close();
+      const win = getSys().wm.list().find((w) => w.id === windowId);
+      void win?.requestClose();
     },
     appForFile(path) {
-      const ext = path.slice(path.lastIndexOf('.')).toLowerCase();
+      const dot = path.lastIndexOf('.');
+      const ext = dot > path.lastIndexOf('/') ? path.slice(dot).toLowerCase() : '';
+      if (!ext) return undefined;
       return registry.list().find((m) => m.opens?.includes(ext));
     },
     async launch(appId, args = []) {
@@ -158,7 +196,13 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
       if (!isInstalled(app.manifest)) throw new Error(`App not installed: ${appId}`);
       const sys = getSys();
       const open = running.get(appId) ?? [];
-      if (app.manifest.singleInstance && open.length) { open[0].win.focus(); return open[0].win; }
+      if (app.manifest.singleInstance && open.length) {
+        const win = open[0].win;
+        win.focus();
+        // Hand the new arguments to the window that is already open instead of dropping them.
+        if (args.length) sys.bus.emit('app:activate', { appId, windowId: win.id, args: [...args] });
+        return win;
+      }
 
       const win = sys.wm.open({
         appId,

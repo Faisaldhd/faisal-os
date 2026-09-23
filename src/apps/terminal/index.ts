@@ -113,6 +113,9 @@ function launch({ sys, window: win, args }: AppContext): void {
     },
   };
 
+  /** Set when the window closes, so a backend that is still loading is thrown away. */
+  let closed = false;
+
   async function switchTo(kind: Kind): Promise<void> {
     backend?.dispose();
     backend = null;
@@ -132,7 +135,7 @@ function launch({ sys, window: win, args }: AppContext): void {
       setStatus('statusLoading');
       win.setTitle(t('terminal.v86'));
       const { V86Backend } = await import('./backends/v86');
-      if (current !== kind) return;
+      if (closed || current !== kind) return;
       b = new V86Backend({
         assetsBase: new URL('v86/', document.baseURI).href,
         messages: {
@@ -149,6 +152,8 @@ function launch({ sys, window: win, args }: AppContext): void {
         },
       });
     }
+    // Closing while the chunk loaded leaves nothing in onClose to dispose: do it here.
+    if (closed) { b.dispose(); return; }
     backend = b;
     await b.start((data) => { if (backend === b) term.write(data); });
     b.resize?.(term.cols, term.rows);
@@ -165,6 +170,7 @@ function launch({ sys, window: win, args }: AppContext): void {
   ro?.observe(body);
 
   win.onClose(() => {
+    closed = true;
     offData.dispose();
     offResize.dispose();
     offWinResize();

@@ -264,6 +264,14 @@ describe('VFS', () => {
       await expect(vfs.rename('/home/user/d', '/home/user/d/sub')).rejects.toMatchObject({ code: 'EINVAL' });
     });
 
+    it('renaming a file onto itself throws and keeps the file (no silent record delete)', async () => {
+      const vfs = await createVFS(createBus());
+      await vfs.writeFile('/home/user/keep.txt', 'K');
+      await expect(vfs.rename('/home/user/keep.txt', '/home/user/keep.txt'))
+        .rejects.toMatchObject({ code: 'EINVAL' });
+      expect(await vfs.readText('/home/user/keep.txt')).toBe('K');
+    });
+
     it('renaming root throws EINVAL', async () => {
       const vfs = await createVFS(createBus());
       await expect(vfs.rename('/', '/home/user/x')).rejects.toMatchObject({ code: 'EINVAL' });

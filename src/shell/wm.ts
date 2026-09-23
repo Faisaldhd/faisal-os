@@ -1,6 +1,7 @@
 import type { EventBus, WindowHandle, WindowManager, WindowOptions } from '../kernel/types';
 import { renderIcon } from './icon';
 import { t } from '../kernel/i18n';
+import { isKey } from './keys';
 import { showContextMenu, wireContextMenu } from './contextmenu';
 
 const NARROW_BREAKPOINT = 700;
@@ -20,6 +21,10 @@ type SavedGeometry = Rect & { maximized?: boolean };
 interface WinRecord {
   handle: WindowHandle;
   el: HTMLElement;
+  /** Where apps render; the resize observer watches this element. */
+  contentEl: HTMLElement;
+  /** Detached while minimized, so apps are never told their size became 0×0. */
+  obs: ResizeObserver | null;
   appId: string;
   minWidth: number;
   minHeight: number;
@@ -140,12 +145,15 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
     if (rec.minimized) {
       rec.minimized = false;
       rec.el.classList.remove('is-minimized');
+      rec.obs?.observe(rec.contentEl);
       changed(id);
     }
     desktopShown = null;
     rec.z = rec.alwaysOnTop ? ++zTopPinned : ++zTop;
     rec.el.style.zIndex = String(rec.z);
     setFocusClass(id);
+    // Real DOM focus follows the visual one, unless the user is already typing in this window.
+    if (!rec.el.contains(document.activeElement)) rec.el.focus({ preventScroll: true });
     bus.emit('window:focus', { windowId: id });
   }
 
@@ -162,6 +170,8 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
     if (!rec || rec.minimized) return;
     rec.minimized = true;
     rec.el.classList.add('is-minimized');
+    // A display:none element measures 0×0; apps must not re-layout on that.
+    rec.obs?.unobserve(rec.contentEl);
     changed(id);
     if (focusedId === id) focusTopmost();
   }
@@ -225,6 +235,8 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
 
     const el = document.createElement('section');
     el.className = 'faisal-window is-opening';
+    // Focusable container (never in the tab order), so DOM focus can follow the active window.
+    el.tabIndex = -1;
     el.setAttribute('role', 'dialog');
     el.setAttribute('aria-label', opts.title);
     el.style.minWidth = `${minWidth}px`;
@@ -289,7 +301,8 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
     const resizeCbs = new Set<(size: { width: number; height: number }) => void>();
 
     const rec: WinRecord = {
-      handle: null as unknown as WindowHandle, el, appId: opts.appId, minWidth, minHeight, z: 0,
+      handle: null as unknown as WindowHandle, el, contentEl: content, obs: null,
+      appId: opts.appId, minWidth, minHeight, z: 0,
       minimized: false, maximized: false, autoMaximized: false, snapped: null, alwaysOnTop: false, restoreRect: null,
       requestClose: async () => {},
     };
@@ -330,6 +343,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
       },
       onClose: (cb) => { closeCbs.add(cb); return () => closeCbs.delete(cb); },
       setCloseGuard: (fn) => { guard = fn; },
+      requestClose,
       onResize: (cb) => { resizeCbs.add(cb); return () => resizeCbs.delete(cb); },
     };
     rec.handle = handle;
@@ -340,6 +354,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
             resizeCbs.forEach((cb) => cb({ width: content.clientWidth, height: content.clientHeight }));
           });
           obs.observe(content);
+          rec.obs = obs;
           return obs;
         })()
       : { disconnect() {} };
@@ -457,6 +472,10 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
       const o = readRect(el);
       const target = startEv.target as HTMLElement;
       target.setPointerCapture(startEv.pointerId);
+      // The handles are placed with logical CSS, so in RTL the "e" grip sits on the physical left.
+      const phys = getComputedStyle(el).direction === 'rtl'
+        ? dir.replace(/[ew]/g, (c) => (c === 'e' ? 'w' : 'e'))
+        : dir;
       let pending: PointerEvent | null = null;
       let raf = 0;
 
@@ -466,10 +485,10 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
         const dx = ev.clientX - startX;
         const dy = ev.clientY - startY;
         let { left, top, width: w, height: h } = o;
-        if (dir.includes('e')) w = Math.max(minWidth, o.width + dx);
-        if (dir.includes('s')) h = Math.max(minHeight, o.height + dy);
-        if (dir.includes('w')) { w = Math.max(minWidth, o.width - dx); left = o.left + (o.width - w); }
-        if (dir.includes('n')) { h = Math.max(minHeight, o.height - dy); top = o.top + (o.height - h); }
+        if (phys.includes('e')) w = Math.max(minWidth, o.width + dx);
+        if (phys.includes('s')) h = Math.max(minHeight, o.height + dy);
+        if (phys.includes('w')) { w = Math.max(minWidth, o.width - dx); left = o.left + (o.width - w); }
+        if (phys.includes('n')) { h = Math.max(minHeight, o.height - dy); top = o.top + (o.height - h); }
         const { width: sw, height: sh } = surfaceSize();
         left = Math.max(0, Math.min(left, sw - minWidth));
         top = Math.max(0, Math.min(top, sh - minHeight));
@@ -540,15 +559,21 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
   });
 
   window.addEventListener('keydown', (ev) => {
+    if (ev.isComposing) return;
+    // Unmodified keys belong to whatever the user is typing into, never to the window manager.
+    const target = ev.target as HTMLElement | null;
+    const typing = !!target && (target.isContentEditable
+      || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT');
+    if (typing && !ev.ctrlKey && !ev.altKey && !ev.metaKey) return;
     const rec = focusedId ? wins.get(focusedId) : undefined;
     // Ctrl+Alt+W closes the focused window.
-    if (ev.ctrlKey && ev.altKey && ev.code === 'KeyW') {
+    if (ev.ctrlKey && ev.altKey && isKey(ev, 'W')) {
       if (rec) { ev.preventDefault(); void rec.requestClose(); }
       return;
     }
     // Super (Windows key) shortcuts; the OS only passes them through in full screen.
     if (!ev.metaKey || ev.ctrlKey || ev.altKey) return;
-    if (ev.code === 'KeyD') { ev.preventDefault(); toggleShowDesktop(); return; }
+    if (isKey(ev, 'D')) { ev.preventDefault(); toggleShowDesktop(); return; }
     if (!rec || ev.shiftKey) return;
     switch (ev.key) {
       case 'ArrowUp':

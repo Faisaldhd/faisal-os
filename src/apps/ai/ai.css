@@ -226,10 +226,30 @@
   flex-direction: column;
   gap: 6px;
   color: var(--faisal-fg);
+  transition: opacity 0.15s ease;
 }
-.faisal-ai-confirm.is-danger { border-color: var(--faisal-danger); background: color-mix(in srgb, var(--faisal-danger) 7%, var(--faisal-surface)); }
+.faisal-ai-confirm.is-danger {
+  border-color: color-mix(in srgb, var(--faisal-danger) 45%, var(--faisal-border));
+  border-inline-start: 3px solid var(--faisal-danger);
+  background: color-mix(in srgb, var(--faisal-danger) 7%, var(--faisal-surface));
+}
 .faisal-ai-confirm-title { font-weight: 700; font-size: 13px; }
-.faisal-ai-confirm-detail { font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.faisal-ai-confirm-detail {
+  font-family: var(--faisal-font-mono);
+  font-size: 12px;
+  color: var(--faisal-fg-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+  max-block-size: 160px;
+  overflow: auto;
+  background: var(--faisal-surface-2);
+  border-radius: var(--faisal-radius-sm);
+  padding: 6px 8px;
+}
 .faisal-ai-confirm-actions { display: flex; gap: 8px; }
 .faisal-ai-confirm.is-danger .faisal-ai-confirm-actions button.primary { background: var(--faisal-danger); }
 .faisal-ai-confirm.is-denied { opacity: 0.7; }
+@media (prefers-reduced-motion: reduce) {
+  .faisal-ai-confirm { transition: none; }
+}

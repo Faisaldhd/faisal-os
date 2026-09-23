@@ -1,6 +1,7 @@
 import './theme.css';
 import './strings';
 import type { SystemAPI } from '../kernel/types';
+import { isKey } from './keys';
 export { createWindowManager } from './wm';
 import { wireAppearance } from './appearance';
 import { mountTopbar } from './topbar';
@@ -31,7 +32,7 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
     superAlone = false;
     if (ev.altKey && ev.key === 'F1') { ev.preventDefault(); overview.toggle(); }
     // Windows snipping shortcut. The OS takes Win+Shift+S unless the page is in full screen (Keyboard Lock).
-    if (ev.metaKey && ev.shiftKey && ev.code === 'KeyS') { ev.preventDefault(); overview.close(); screenshot.capture(); }
+    if (ev.metaKey && ev.shiftKey && isKey(ev, 'S')) { ev.preventDefault(); overview.close(); screenshot.capture(); }
   });
   window.addEventListener('keyup', (ev) => {
     if ((ev.key === 'Meta' || ev.key === 'OS') && superAlone) { superAlone = false; ev.preventDefault(); overview.toggle(); }
@@ -40,7 +41,7 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
 
   // Ctrl+Alt+T opens a terminal, as on most Linux desktops.
   window.addEventListener('keydown', (ev) => {
-    if (ev.ctrlKey && ev.altKey && !ev.shiftKey && ev.code === 'KeyT') {
+    if (ev.ctrlKey && ev.altKey && !ev.shiftKey && isKey(ev, 'T')) {
       ev.preventDefault();
       overview.close();
       void sys.apps.launch('org.faisal.Terminal').catch(() => {});

@@ -32,6 +32,10 @@ function makeWM(): WindowManager {
         },
         onClose: (cb) => { closeCbs.add(cb); return () => closeCbs.delete(cb); },
         onResize: () => () => {},
+        requestClose: async () => {
+          closed.add(h.id);
+          closeCbs.forEach((cb) => cb());
+        },
       };
       wins.push(h);
       return h;

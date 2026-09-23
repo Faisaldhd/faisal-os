@@ -32,6 +32,8 @@ async function boot() {
 
   BUILTIN_APPS.forEach((a) => apps.register(a));
   mountShell(root, sys);
+  // The static boot screen in index.html has done its job once the shell is mounted.
+  document.getElementById('faisal-boot')?.remove();
   bus.emit('system:ready', {});
   registerServiceWorker(sys);
 }

@@ -27,6 +27,12 @@
   --faisal-accent-2: var(--faisal-brand-accent-2);
   --faisal-accent-fg: var(--faisal-brand-accent-fg);
 
+  /* Focus indicator (WCAG 1.4.11 ≥ 3:1 against the surface it is drawn on).
+   * --faisal-focus-ring      : for light surfaces (5.25:1 on #ffffff, 4.77:1 on --faisal-bg).
+   * --faisal-focus-ring-invert: for the dark shell chrome / wallpaper (10.15:1 on #1f2533). */
+  --faisal-focus-ring: #8F6412;
+  --faisal-focus-ring-invert: #F0CF7A;
+
   --faisal-bg: #f5f4f1;
   --faisal-fg: #1a1d26;
   --faisal-fg-muted: #565b67;
@@ -65,6 +71,8 @@
     --faisal-brand-accent-2: #F0CF7A;
     --faisal-brand-accent-fg: #0E1A3A;
     --faisal-brand-mark-gold: #E3B650;
+    --faisal-focus-ring: #F0CF7A;
+    --faisal-focus-ring-invert: #8F6412;
     --faisal-bg: #151a26;
     --faisal-fg: #eceef3;
     --faisal-fg-muted: #aab1c2;
@@ -90,6 +98,8 @@
   --faisal-brand-accent-2: #F0CF7A;
   --faisal-brand-accent-fg: #0E1A3A;
   --faisal-brand-mark-gold: #E3B650;
+  --faisal-focus-ring: #F0CF7A;
+  --faisal-focus-ring-invert: #8F6412;
   --faisal-bg: #151a26;
   --faisal-fg: #eceef3;
   --faisal-fg-muted: #aab1c2;
@@ -172,6 +182,10 @@ body {
 
 .faisal-topbar {
   height: var(--faisal-topbar-h);
+  box-sizing: border-box;
+  /* Standalone PWA: keep the bar clear of a notch / status bar (0 when there is none). */
+  padding-block-start: env(safe-area-inset-top, 0px);
+  padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
   flex: 0 0 auto;
   display: flex;
   align-items: stretch;
@@ -327,7 +341,7 @@ body {
   cursor: pointer;
   padding: 0;
 }
-.faisal-accent-dot:focus-visible { outline: 2px solid var(--faisal-accent-2); outline-offset: 2px; }
+.faisal-accent-dot:focus-visible { outline: 2px solid var(--faisal-focus-ring); outline-offset: 2px; }
 .faisal-accent-dot.is-active {
   border-color: var(--faisal-fg);
   box-shadow: 0 0 0 2px var(--faisal-surface);
@@ -338,6 +352,9 @@ body {
 .faisal-notif-stack {
   position: fixed;
   top: calc(var(--faisal-topbar-h) + 8px);
+  /* The topbar already folds the notch inset into its height; this keeps toasts clear of it too. */
+  padding-block-start: env(safe-area-inset-top, 0px);
+  padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
   inset-inline: 0;
   display: flex;
   flex-direction: column;
@@ -434,7 +451,9 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 28px;
-  padding: 26px 16px;
+  /* Nothing interactive at the very edge of the screen: keep the app grid off the gesture bar. */
+  padding-block: 26px calc(26px + env(safe-area-inset-bottom, 0px));
+  padding-inline: calc(16px + env(safe-area-inset-left, 0px)) calc(16px + env(safe-area-inset-right, 0px));
 }
 
 .faisal-win-thumbs {
@@ -561,7 +580,10 @@ body {
   flex: none;
   display: flex;
   justify-content: center;
-  padding: 6px 12px 10px;
+  /* Gesture bar / home indicator: lift the dock's own spacing instead of shrinking it. */
+  padding-block-start: 6px;
+  padding-block-end: calc(10px + env(safe-area-inset-bottom, 0px));
+  padding-inline: calc(12px + env(safe-area-inset-left, 0px)) calc(12px + env(safe-area-inset-right, 0px));
   position: relative;
   z-index: 400;
   pointer-events: none;
@@ -916,6 +938,13 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .faisal-splash { display: none; }
   .faisal-window.is-opening { animation: none; }
+  /* Infinite animations that must not run: the splash sweep bar and the loading spinner. */
+  .faisal-splash-bar::after,
+  .faisal-notif,
+  .faisal-notif-center,
+  .faisal-window-content.is-loading::after { animation: none; }
+  /* Snap preview still appears at the exact rect, it just can't animate layout any more. */
+  .faisal-snap-preview { transition: none; }
 }
 
 /* ───────────────────────── Screenshot (Win+Shift+S) ───────────────────────── */
@@ -1077,6 +1106,11 @@ body {
   background: var(--faisal-surface-2);
   outline: none;
 }
+/* Restores the ring the rule above removes (same specificity, later in the sheet). */
+.faisal-ctxmenu-item:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring);
+  outline-offset: -2px;
+}
 .faisal-ctxmenu-item:disabled {
   color: var(--faisal-fg-muted);
   cursor: default;
@@ -1130,10 +1164,15 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Keep the dialog clear of a notch / gesture bar. */
+  padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px);
+  padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
 }
 
 .faisal-shell-dialog {
   width: min(360px, 90vw);
+  max-height: 100%;
+  overflow-y: auto;
   background: var(--faisal-surface);
   color: var(--faisal-fg);
   border-radius: var(--faisal-radius);
@@ -1189,15 +1228,21 @@ body {
 }
 .faisal-window.is-snapped { border-radius: 0; }
 
-/* Where a window will land if dropped at a screen edge. */
+/* Where a window will land if dropped at a screen edge.
+ * wm.ts writes left/top/width/height, so this stays a compositor-friendly transform
+ * (the element keeps its 100% x 100% base size) rather than animating layout. */
 .faisal-snap-preview {
   position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  inline-size: 100%;
+  block-size: 100%;
   z-index: 99999;
   pointer-events: none;
   border-radius: var(--faisal-radius);
   background: color-mix(in srgb, var(--faisal-accent) 18%, transparent);
   border: 2px solid color-mix(in srgb, var(--faisal-accent) 55%, transparent);
-  transition: left 0.08s, top 0.08s, width 0.08s, height 0.08s;
+  transition: transform 0.08s ease-out;
 }
 .faisal-snap-preview[hidden] { display: none; }
 
@@ -1317,3 +1362,49 @@ body {
   cursor: pointer;
 }
 .faisal-notif-dnd input { width: 34px; height: 18px; accent-color: var(--faisal-accent); cursor: pointer; }
+
+/* ───────────────────────── Focus coverage + touch hit areas ─────────────────────────
+ * Keyboard ring for every shell control that had none. `outline-offset: -2px` keeps the
+ * ring inside the control, so nothing shifts and neighbouring controls are unaffected.
+ * Dark surfaces (topbar, dock, overview) use the light ring token, light surfaces the dark one. */
+
+.faisal-topbar-btn:focus-visible,
+.faisal-dock-btn:focus-visible,
+.faisal-app-tile:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring-invert);
+  outline-offset: -2px;
+}
+
+.faisal-win-btn:focus-visible,
+.faisal-settings-nav-btn:focus-visible,
+.faisal-shell-dialog-btn:focus-visible,
+.faisal-menu-item:focus-visible,
+.faisal-toggle-btn:focus-visible,
+.faisal-search:focus-visible,
+.faisal-notif:focus-visible,
+.faisal-notif-clear:focus-visible,
+.faisal-notif-x:focus-visible,
+.faisal-notif-open:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring);
+  outline-offset: -2px;
+}
+
+/* Touch only: widen the hit area to >=44px without changing the painted size.
+ * The overlay is transparent, so it never hides anything; `inset-block` keeps it
+ * inside the titlebar so it cannot swallow clicks meant for the window beneath. */
+.faisal-win-btn { position: relative; }
+.faisal-win-btn::after {
+  content: "";
+  position: absolute;
+  /* 26px circle -> 36 x 34px hit area; stops short of the resize handles at x=0. */
+  inset-block: -4px;
+  inset-inline: -5px;
+}
+/* The 22px accent dots sit in an 8px-gap row, so ±4px is the widest row that stays collision-free. */
+.faisal-accent-dot { position: relative; }
+.faisal-accent-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+}

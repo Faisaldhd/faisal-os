@@ -142,6 +142,10 @@ function launch(ctx: AppContext): void {
   let clipboard: { mode: 'copy' | 'cut'; paths: string[] } | null = null;
   let entries: Stat[] = [];
   let focusIndex = -1;
+  /** Set by onClose; once true no further UI work is done on the detached window. */
+  let closed = false;
+  /** Pending blob-URL revoke of a download, tracked so onClose can settle it exactly once. */
+  let pendingRevoke: { timer: number; url: string } | null = null;
 
   win.setTitle(t('files.title'));
 
@@ -216,20 +220,26 @@ function launch(ctx: AppContext): void {
     const files = fileInput.files;
     if (!files) return;
     for (const f of Array.from(files)) {
+      if (closed) return;
       try {
         const buf = new Uint8Array(await f.arrayBuffer());
-        const dest = join(currentPath, sanitizeUploadName(f.name));
-        await vfs.writeFile(dest, buf);
+        // Never clobber an existing file: pick a free name ("name (2).ext") first.
+        const name = await uniqueName(vfs, currentPath, sanitizeUploadName(f.name), t('files.copyOf'));
+        if (closed) return;
+        await vfs.writeFile(join(currentPath, name), buf);
       } catch (err) {
+        if (closed) return;
         showError(err);
       }
     }
+    if (closed) return;
     fileInput.value = '';
   });
 
+  /** Keeps a single path segment: strips separators and refuses "." / ".." so an upload cannot escape the folder. */
   function sanitizeUploadName(name: string): string {
-    const base = name.split('/').pop() || 'file';
-    return base.trim() || 'file';
+    const base = name.split(/[/\\]/).pop()?.trim() || 'file';
+    return base === '.' || base === '..' ? 'file' : base;
   }
 
   let unsubFs: () => void;
@@ -427,8 +437,10 @@ function launch(ctx: AppContext): void {
       try {
         await vfs.remove(p, { recursive: true });
       } catch (err) {
+        if (closed) return;
         showError(err);
       }
+      if (closed) return;
     }
   }
 
@@ -441,11 +453,13 @@ function launch(ctx: AppContext): void {
     if (!clipboard) return;
     const { mode, paths } = clipboard;
     for (const src of paths) {
+      if (closed) return;
       try {
         if (mode === 'cut' && sameOrDescendant(src, currentPath)) continue; // can't move into itself
         let dest = targetPathFor(src, currentPath);
         if (mode === 'copy') {
           const name = await uniqueName(vfs, currentPath, basename(src), t('files.copyOf'));
+          if (closed) return;
           dest = join(currentPath, name);
           await copyRecursive(vfs, src, dest);
         } else {
@@ -454,9 +468,11 @@ function launch(ctx: AppContext): void {
             const name = await uniqueName(vfs, currentPath, basename(src), t('files.copyOf'));
             dest = join(currentPath, name);
           }
+          if (closed) return;
           await vfs.rename(src, dest);
         }
       } catch (err) {
+        if (closed) return;
         showError(err);
       }
     }
@@ -466,6 +482,7 @@ function launch(ctx: AppContext): void {
   async function downloadEntry(st: Stat) {
     try {
       const data = await vfs.readFile(st.path);
+      if (closed) return;
       const blob = new Blob([data.slice()], { type: "application/octet-stream" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -475,15 +492,37 @@ function launch(ctx: AppContext): void {
       document.body.appendChild(a);
       a.click();
       a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      // Tracked so onClose can settle it; the callback and close revoke exactly once either way.
+      const timer = window.setTimeout(() => {
+        if (pendingRevoke?.timer === timer) pendingRevoke = null;
+        URL.revokeObjectURL(url);
+      }, 4000);
+      pendingRevoke = { timer, url };
     } catch (err) {
+      if (closed) return;
       showError(err);
     }
   }
 
+  /** Revokes the pending download URL and clears its timer, exactly once. */
+  function settlePendingRevoke() {
+    if (!pendingRevoke) return;
+    const { timer, url } = pendingRevoke;
+    pendingRevoke = null;
+    window.clearTimeout(timer);
+    URL.revokeObjectURL(url);
+  }
+
   // ---- context menu ----
   let openMenu: HTMLElement | null = null;
+  let menuListenerTimer: number | null = null;
+  /** Closes the menu and always drops its document listener and pending attach timer. */
   function closeMenu() {
+    if (menuListenerTimer !== null) {
+      window.clearTimeout(menuListenerTimer);
+      menuListenerTimer = null;
+    }
+    document.removeEventListener('mousedown', onDocMouseDown);
     openMenu?.remove();
     openMenu = null;
   }
@@ -512,14 +551,14 @@ function launch(ctx: AppContext): void {
     menu.style.left = `${Math.min(x, vw - rect.width - 8)}px`;
     menu.style.top = `${Math.min(y, vh - rect.height - 8)}px`;
     openMenu = menu;
-    setTimeout(() => document.addEventListener('mousedown', onDocMouseDown), 0);
+    menuListenerTimer = window.setTimeout(() => {
+      menuListenerTimer = null;
+      document.addEventListener('mousedown', onDocMouseDown);
+    }, 0);
   }
 
   function onDocMouseDown(e: MouseEvent) {
-    if (openMenu && !openMenu.contains(e.target as Node)) {
-      closeMenu();
-      document.removeEventListener('mousedown', onDocMouseDown);
-    }
+    if (openMenu && !openMenu.contains(e.target as Node)) closeMenu();
   }
 
   function entryMenuItems(st: Stat) {
@@ -747,9 +786,11 @@ function launch(ctx: AppContext): void {
   });
 
   win.onClose(() => {
+    closed = true;
     unsubFs();
     closeMenu();
     document.removeEventListener('mousedown', onDocMouseDown);
+    settlePendingRevoke();
   });
 
   updateSidebarActive();

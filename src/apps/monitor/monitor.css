@@ -176,6 +176,17 @@
 }
 .faisal-mon-fs-bar-fill.is-over { background: var(--faisal-danger, #c01c28); }
 
+/* The fill may animate, but not when the user asked for reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  .faisal-mon-fs-bar-fill { transition: none; }
+}
+
+.faisal-mon-tab:focus-visible,
+.faisal-mon-end-btn:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8F6412);
+  outline-offset: 2px;
+}
+
 .faisal-mon-fs-list {
   display: flex;
   flex-direction: column;

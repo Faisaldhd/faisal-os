@@ -33,6 +33,17 @@
 }
 
 .faisal-clock-tab:hover { background: var(--faisal-surface-2, #ebebeb); }
+.faisal-clock-tab:focus-visible,
+.faisal-clock-add-btn:focus-visible,
+.faisal-clock-city-remove:focus-visible,
+.faisal-clock-dialog-close:focus-visible,
+.faisal-clock-dialog-item:focus-visible,
+.faisal-clock-cal-nav:focus-visible,
+.faisal-clock-btn:focus-visible,
+.faisal-clock-preset:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8F6412);
+  outline-offset: 2px;
+}
 .faisal-clock-tab.is-active {
   color: var(--faisal-accent, #8F6412);
   border-block-end-color: var(--faisal-accent, #8F6412);
