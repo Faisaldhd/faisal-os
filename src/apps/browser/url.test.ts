@@ -190,3 +190,15 @@ describe('refusesFraming — hosts measured to send X-Frame-Options: SAMEORIGIN'
     expect(refusesFraming('')).toBe(false);
   });
 });
+
+describe('adoptDesktopGoogleOnce', () => {
+  it('switches a saved engine to Google once, then keeps later choices', async () => {
+    const { adoptDesktopGoogleOnce, loadEngine, saveEngine } = await import('./model');
+    localStorage.clear();
+    saveEngine('wikipedia');
+    expect(adoptDesktopGoogleOnce(loadEngine('google'))).toBe('google');
+    expect(loadEngine()).toBe('google');
+    saveEngine('bing');
+    expect(adoptDesktopGoogleOnce(loadEngine('google'))).toBe('bing');
+  });
+});

@@ -37,6 +37,24 @@ export function loadEngine(fallback: SearchEngine = 'wikipedia'): SearchEngine {
   return fallback;
 }
 
+const DESKTOP_GOOGLE_KEY = 'faisal.browser.engine.desktopGoogle';
+
+/**
+ * Desktop build, once per install: switch to Google even if an engine was saved
+ * earlier (most were saved when only Wikipedia could load in-page). Later
+ * choices are kept. Returns the engine to use.
+ */
+export function adoptDesktopGoogleOnce(current: SearchEngine): SearchEngine {
+  try {
+    if (localStorage.getItem(DESKTOP_GOOGLE_KEY)) return current;
+    localStorage.setItem(DESKTOP_GOOGLE_KEY, '1');
+    saveEngine('google');
+    return 'google';
+  } catch {
+    return current;
+  }
+}
+
 export function saveEngine(engine: SearchEngine): void {
   try { localStorage.setItem(ENGINE_KEY, engine); } catch { /* ignore */ }
 }
