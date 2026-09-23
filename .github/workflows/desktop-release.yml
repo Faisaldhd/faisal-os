@@ -31,14 +31,15 @@ jobs:
       - uses: actions/checkout@v4
       - name: Next version
         id: next
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
+          # Highest patch already used in this major.minor series — by any tag
+          # (a release in flight has its tag before its release) or by
+          # package.json — plus one, so this never reuses a version.
           series=$(node -p "require('./package.json').version.split('.').slice(0, 2).join('.')")
-          latest=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName \
-            --jq "[.[].tagName | select(startswith(\"v$series.\")) | ltrimstr(\"v$series.\") | tonumber] | max // empty")
-          base_patch=$(node -p "require('./package.json').version.split('.')[2]")
-          patch=$(( ${latest:-$base_patch} + 1 ))
+          pkg_patch=$(node -p "require('./package.json').version.split('.')[2]")
+          tag_patch=$(git ls-remote --tags origin "refs/tags/v$series.*" \
+            | sed -nE "s#.*refs/tags/v${series//./\\.}\.([0-9]+)\$#\1#p" | sort -n | tail -1)
+          patch=$(( (${tag_patch:-0} > pkg_patch ? ${tag_patch:-0} : pkg_patch) + 1 ))
           echo "version=$series.$patch" >> "$GITHUB_OUTPUT"
           echo "Releasing $series.$patch"
 
