@@ -2,9 +2,10 @@ import type { EventBus } from '../kernel/types';
 import { MARK_SVG, WORDMARK_ARABIC_SVG, WORDMARK_LATIN_SVG } from '../brand/logo';
 import { renderIcon } from './icon';
 
-const HOLD_AFTER_READY_MS = 900;
+/** The static screen in index.html already shows the brand, so the fade-in needs no long hold. */
+const HOLD_AFTER_READY_MS = 300;
 const FADE_MS = 450;
-const FAILSAFE_MS = 8000;
+const FAILSAFE_MS = 4000;
 
 /** Mark + both wordmarks, shared by the splash and Settings → About. */
 export function brandLockup(): { mark: HTMLElement; wordmarks: HTMLElement } {

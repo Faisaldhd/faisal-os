@@ -1,7 +1,7 @@
 import './theme.css';
 import './strings';
 import type { SystemAPI } from '../kernel/types';
-import { isKey } from './keys';
+import { isKey, cycleTarget } from './keys';
 export { createWindowManager } from './wm';
 import { wireAppearance } from './appearance';
 import { mountTopbar } from './topbar';
@@ -46,6 +46,18 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
       overview.close();
       void sys.apps.launch('org.faisal.Terminal').catch(() => {});
     }
+  });
+
+  // Ctrl+Alt+Tab replaces the desktop Alt+Tab, which the operating system never sends to a
+  // page. Focusing a minimized window restores it, exactly like the desktop switcher.
+  window.addEventListener('keydown', (ev) => {
+    if (!ev.ctrlKey || !ev.altKey || (ev.key !== 'Tab' && ev.code !== 'Tab')) return;
+    const windows = sys.wm.list();
+    const target = cycleTarget(windows.map((w) => w.id), sys.wm.focused()?.id ?? null, ev.shiftKey);
+    if (!target) return;
+    ev.preventDefault();
+    overview.close();
+    sys.wm.get(target)?.focus();
   });
 
   mountSession(sys);

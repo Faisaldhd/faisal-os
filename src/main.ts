@@ -5,12 +5,25 @@
 import { createBus } from './kernel/bus';
 import { createSettings } from './kernel/settings';
 import { createAppRegistry } from './kernel/apps';
-import { getLocale, setLocale, t } from './kernel/i18n';
+import { defineStrings, getLocale, setLocale, t } from './kernel/i18n';
 import type { Locale, SystemAPI } from './kernel/types';
 
-import { createVFS } from './vfs';                           // Track B
-import { createWindowManager, mountShell } from './shell';   // Track A
+import { createVFS, lazyVFS } from './vfs';                    // Track B
+import { createWindowManager, mountShell } from './shell';    // Track A
 import { BUILTIN_APPS } from './apps';
+
+defineStrings('kernel', {
+  ar: {
+    'boot.failed.title': 'تعذّر إقلاع Fai$al OS',
+    'boot.failed.body': 'حدث خطأ غير متوقّع أثناء التحميل. يمكنك إعادة المحاولة.',
+    'boot.retry': 'إعادة المحاولة',
+  },
+  en: {
+    'boot.failed.title': 'Fai$al OS could not start',
+    'boot.failed.body': 'Something went wrong while loading. You can try again.',
+    'boot.retry': 'Try again',
+  },
+});
 
 async function boot() {
   const root = document.getElementById('faisal-root')!;
@@ -18,7 +31,11 @@ async function boot() {
   const settings = createSettings(bus);
   setLocale(settings.get<Locale>('locale', 'ar'));
 
-  const vfs = await createVFS(bus);
+  // The file system starts opening now, but the desktop does not wait for it: every call
+  // goes through a handle that resolves the store on first use, so a slow or large
+  // IndexedDB delays file operations instead of the whole shell.
+  const vfsReady = createVFS(bus);
+  const vfs = lazyVFS(vfsReady);
   const wm = createWindowManager(root, bus);
 
   let sys!: SystemAPI;
@@ -34,6 +51,14 @@ async function boot() {
   mountShell(root, sys);
   // The static boot screen in index.html has done its job once the shell is mounted.
   document.getElementById('faisal-boot')?.remove();
+
+  // Announce readiness only after the store resolved: the VFS reports a non-persistent
+  // file system on this event, and the notice would be lost if nobody were listening yet.
+  try {
+    await vfsReady;
+  } catch (err) {
+    console.error('[boot] file system failed', err);
+  }
   bus.emit('system:ready', {});
   registerServiceWorker(sys);
 }
@@ -54,7 +79,26 @@ function registerServiceWorker(sys: SystemAPI) {
   }).catch((err) => console.warn('[sw] registration failed', err));
 }
 
-boot().catch((err) => {
+/** A readable, translated failure screen instead of a raw English string on a blank page. */
+function showBootFailure(err: unknown): void {
   console.error('[boot] failed', err);
-  document.body.textContent = `Boot failed: ${err}`;
-});
+  const host = document.getElementById('faisal-boot') ?? document.body;
+  const box = document.createElement('div');
+  box.className = 'faisal-boot-error';
+
+  const title = document.createElement('b');
+  title.textContent = t('kernel.boot.failed.title');
+  const body = document.createElement('p');
+  body.textContent = t('kernel.boot.failed.body');
+  const detail = document.createElement('code');
+  detail.textContent = err instanceof Error ? err.message : String(err);
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.textContent = t('kernel.boot.retry');
+  retry.addEventListener('click', () => window.location.reload());
+
+  box.append(title, body, detail, retry);
+  host.replaceChildren(box);
+}
+
+boot().catch(showBootFailure);

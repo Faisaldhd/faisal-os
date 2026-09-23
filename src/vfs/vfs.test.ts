@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createBus } from '../kernel/bus';
 import { VFSError } from '../kernel/types';
-import { createVFS } from './index';
+import { createVFS, lazyVFS } from './index';
 
 function freshDbName() {
   // fake-indexeddb persists per-name across the process, so give each
@@ -389,5 +389,32 @@ describe('VFS', () => {
       expect((err as VFSError).code).toBe('ENOENT');
       expect((err as VFSError).path).toBe('/nope');
     }
+  });
+});
+
+describe('lazyVFS (boot does not wait for IndexedDB)', () => {
+  it('resolves the real store on first use and answers exactly like it', async () => {
+    const bus = createBus();
+    const real = await createVFS(bus);
+    await real.writeFile('/home/user/lazy.txt', 'lazy');
+
+    let resolved = false;
+    const ready = Promise.resolve(real).then((v) => { resolved = true; return v; });
+    const lazy = lazyVFS(ready);
+    // Handing out the handle must not have waited for the store.
+    expect(resolved).toBe(false);
+    expect(await lazy.readText('/home/user/lazy.txt')).toBe('lazy');
+    expect(resolved).toBe(true);
+    expect((await lazy.stat('/home/user/lazy.txt')).size).toBe(4);
+    expect(await lazy.exists('/home/user/nope')).toBe(false);
+    await lazy.mkdir('/home/user/lazydir');
+    await lazy.rename('/home/user/lazy.txt', '/home/user/lazy2.txt');
+    expect(await real.exists('/home/user/lazy2.txt')).toBe(true);
+    await expect(lazy.stat('/home/user/nope')).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('surfaces a store that never opens instead of hanging the caller', async () => {
+    const lazy = lazyVFS(Promise.reject(new Error('no IndexedDB')));
+    await expect(lazy.readText('/home/user/x')).rejects.toThrow('no IndexedDB');
   });
 });
