@@ -6,7 +6,7 @@
   background: var(--faisal-bg);
   color: var(--faisal-fg);
   font-family: var(--faisal-font);
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .faisal-claude-bar {
@@ -176,3 +176,11 @@
   line-height: 1.8;
 }
 .faisal-claude-empty svg { width: 64px; height: 64px; display: block; margin: 0 auto 8px; }
+
+.faisal-claude-picker { display: flex; gap: 6px; }
+.faisal-claude-picker button { flex: 1; }
+.faisal-claude-picker button.is-active {
+  background: var(--faisal-accent);
+  color: var(--faisal-accent-fg);
+  border-color: transparent;
+}

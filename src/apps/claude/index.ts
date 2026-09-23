@@ -3,6 +3,7 @@ import type { AppContext, AppModule } from '../../kernel/types';
 import { defineStrings, t } from '../../kernel/i18n';
 import { renderIcon } from '../../shell/icon';
 import { createClient, renderMarkdown, runTurn, type ChatMessage, type Source } from './chat';
+import { GeminiError, runGeminiTurn, type GeminiContent } from './gemini';
 import { ICON_CLAUDE } from './icon';
 import './claude.css';
 
@@ -10,13 +11,16 @@ defineStrings('claude', {
   ar: {
     title: 'Faisal AI',
     setupTitle: 'مرحباً بك في Faisal AI',
-    setupBody: 'Faisal AI يعمل بنموذج Claude من Anthropic باستخدام مفتاحك الخاص، ويقدر يبحث في الإنترنت ويقرأ الروابط.',
+    setupBody: 'اختر المزوّد وأدخل مفتاحك. Faisal AI يقدر يبحث في الإنترنت ويقرأ الروابط.',
+    providerGemini: 'Gemini (مجاني)',
+    providerClaude: 'Claude',
     setupGet: 'احصل على مفتاح من',
     keyPlaceholder: 'sk-ant-…',
     save: 'حفظ والبدء',
     keyNote: 'يُحفظ المفتاح في هذا المتصفح فقط ولا يُرسل إلا إلى api.anthropic.com. الاستخدام يُحاسب على حسابك في Anthropic.',
+    keyNoteGemini: 'يُحفظ المفتاح في هذا المتصفح فقط ولا يُرسل إلا إلى Google. الاستخدام المجاني له حد يومي، وقد تستخدم Google المحادثات المجانية لتحسين خدماتها.',
     newChat: 'محادثة جديدة',
-    removeKey: 'حذف المفتاح',
+    removeKey: 'تغيير المزوّد / المفتاح',
     placeholder: 'اكتب رسالتك… (Enter للإرسال، Shift+Enter لسطر جديد)',
     send: 'إرسال',
     stop: 'إيقاف',
@@ -36,13 +40,16 @@ defineStrings('claude', {
   en: {
     title: 'Faisal AI',
     setupTitle: 'Welcome to Faisal AI',
-    setupBody: 'Faisal AI runs on Claude from Anthropic with your own API key, and can search the web and read links.',
+    setupBody: 'Pick a provider and enter your key. Faisal AI can search the web and read links.',
+    providerGemini: 'Gemini (free)',
+    providerClaude: 'Claude',
     setupGet: 'Get a key from',
     keyPlaceholder: 'sk-ant-…',
     save: 'Save and start',
     keyNote: 'The key is stored in this browser only and is sent only to api.anthropic.com. Usage is billed to your Anthropic account.',
+    keyNoteGemini: 'The key is stored in this browser only and is sent only to Google. The free tier has a daily limit, and Google may use free-tier chats to improve its products.',
     newChat: 'New chat',
-    removeKey: 'Remove key',
+    removeKey: 'Change provider / key',
     placeholder: 'Type a message… (Enter to send, Shift+Enter for a new line)',
     send: 'Send',
     stop: 'Stop',
@@ -61,10 +68,21 @@ defineStrings('claude', {
   },
 });
 
-const KEY_STORAGE = 'faisal.claude.apiKey';
-const loadKey = () => { try { return localStorage.getItem(KEY_STORAGE) ?? ''; } catch { return ''; } };
-const saveKey = (k: string) => { try { localStorage.setItem(KEY_STORAGE, k); } catch { /* private mode: key lives for this window only */ } };
-const clearKey = () => { try { localStorage.removeItem(KEY_STORAGE); } catch { /* nothing stored */ } };
+type Provider = 'gemini' | 'claude';
+const PROVIDER_STORAGE = 'faisal.ai.provider';
+const KEY_STORAGE: Record<Provider, string> = { claude: 'faisal.claude.apiKey', gemini: 'faisal.gemini.apiKey' };
+const read = (k: string) => { try { return localStorage.getItem(k) ?? ''; } catch { return ''; } };
+const write = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode: lives for this window only */ } };
+const remove = (k: string) => { try { localStorage.removeItem(k); } catch { /* nothing stored */ } };
+const loadProvider = (): Provider => {
+  const p = read(PROVIDER_STORAGE);
+  if (p === 'gemini' || p === 'claude') return p;
+  return read(KEY_STORAGE.claude) ? 'claude' : 'gemini'; // keep earlier Claude users on Claude
+};
+const KEY_LINKS: Record<Provider, { href: string; label: string; placeholder: string }> = {
+  gemini: { href: 'https://aistudio.google.com/apikey', label: 'aistudio.google.com', placeholder: 'Gemini API key' },
+  claude: { href: 'https://console.anthropic.com/settings/keys', label: 'console.anthropic.com', placeholder: 'sk-ant-…' },
+};
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -79,9 +97,12 @@ function launch(ctx: AppContext): void {
   const root = el('div', 'faisal-claude');
   win.content.append(root);
 
-  let apiKey = loadKey();
+  let provider = loadProvider();
+  let apiKey = read(KEY_STORAGE[provider]);
   let client: Anthropic | null = null;
   let history: ChatMessage[] = [];
+  let gemHistory: GeminiContent[] = [];
+  const resetChat = () => { history = []; gemHistory = []; };
   let abort: AbortController | null = null;
   win.onClose(() => abort?.abort());
 
@@ -92,30 +113,51 @@ function launch(ctx: AppContext): void {
     const icon = el('div');
     icon.append(renderIcon(ICON_CLAUDE));
     icon.querySelector('svg')?.setAttribute('width', '56');
+
+    const picker = el('div', 'faisal-claude-picker');
     const get = el('div', 'note');
-    const link = el('a', undefined, 'console.anthropic.com');
-    link.href = 'https://console.anthropic.com/settings/keys';
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    get.append(`${t('claude.setupGet')} `, link);
+    const note = el('div', 'note');
     const input = el('input');
     input.type = 'password';
-    input.placeholder = t('claude.keyPlaceholder');
     input.autocomplete = 'off';
     input.dir = 'ltr';
+    let choice: Provider = provider;
+    const render = () => {
+      for (const b of picker.children) b.classList.toggle('is-active', (b as HTMLElement).dataset.p === choice);
+      const l = KEY_LINKS[choice];
+      const link = el('a', undefined, l.label);
+      link.href = l.href;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      get.replaceChildren(`${t('claude.setupGet')} `, link);
+      input.placeholder = l.placeholder;
+      input.value = read(KEY_STORAGE[choice]);
+      note.textContent = t(choice === 'gemini' ? 'claude.keyNoteGemini' : 'claude.keyNote');
+    };
+    for (const p of ['gemini', 'claude'] as const) {
+      const b = el('button', undefined, t(p === 'gemini' ? 'claude.providerGemini' : 'claude.providerClaude'));
+      b.type = 'button';
+      b.dataset.p = p;
+      b.addEventListener('click', () => { choice = p; render(); input.focus(); });
+      picker.append(b);
+    }
+
     const btn = el('button', 'primary', t('claude.save'));
     const submit = () => {
       const k = input.value.trim();
       if (!k) return;
+      if (choice !== provider) resetChat();
+      provider = choice;
       apiKey = k;
       client = null;
-      saveKey(k);
+      write(PROVIDER_STORAGE, provider);
+      write(KEY_STORAGE[provider], k);
       show();
     };
     btn.addEventListener('click', submit);
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
-    box.append(icon, el('h2', undefined, t('claude.setupTitle')), el('div', undefined, t('claude.setupBody')), get, input, btn,
-      el('div', 'note', t('claude.keyNote')));
+    box.append(icon, el('h2', undefined, t('claude.setupTitle')), el('div', undefined, t('claude.setupBody')), picker, get, input, btn, note);
+    render();
     queueMicrotask(() => input.focus());
     return box;
   }
@@ -127,7 +169,7 @@ function launch(ctx: AppContext): void {
     const bar = el('div', 'faisal-claude-bar');
     const newBtn = el('button', undefined, t('claude.newChat'));
     const keyBtn = el('button', undefined, t('claude.removeKey'));
-    bar.append(el('span', undefined, 'Faisal AI · Claude Opus 5'), el('span', 'grow'), newBtn, keyBtn);
+    bar.append(el('span', undefined, provider === 'gemini' ? 'Faisal AI · Gemini' : 'Faisal AI · Claude Opus 5'), el('span', 'grow'), newBtn, keyBtn);
 
     const log = el('div', 'faisal-claude-log');
     const input = el('div', 'faisal-claude-input');
@@ -144,11 +186,19 @@ function launch(ctx: AppContext): void {
       e.append(renderIcon(ICON_CLAUDE), document.createTextNode(t('claude.empty')));
       log.replaceChildren(e);
     };
-    if (history.length === 0) emptyState();
+    if (history.length === 0 && gemHistory.length === 0) emptyState();
     else renderHistory();
 
     function renderHistory() {
       log.replaceChildren();
+      if (provider === 'gemini') {
+        for (const c of gemHistory) {
+          const text = c.parts.map((p) => p.text).join('');
+          if (c.role === 'user') addUser(text);
+          else if (text) addAssistant().body.innerHTML = renderMarkdown(text);
+        }
+        return;
+      }
       for (const m of history) {
         if (m.role === 'user' && typeof m.content === 'string') addUser(m.content);
         else if (m.role === 'assistant' && Array.isArray(m.content)) {
@@ -181,8 +231,8 @@ function launch(ctx: AppContext): void {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); void send(); }
     });
     sendBtn.addEventListener('click', () => { if (abort) abort.abort(); else void send(); });
-    newBtn.addEventListener('click', () => { abort?.abort(); history = []; emptyState(); ta.focus(); });
-    keyBtn.addEventListener('click', () => { abort?.abort(); clearKey(); apiKey = ''; client = null; history = []; show(); });
+    newBtn.addEventListener('click', () => { abort?.abort(); resetChat(); emptyState(); ta.focus(); });
+    keyBtn.addEventListener('click', () => { abort?.abort(); remove(KEY_STORAGE[provider]); apiKey = ''; client = null; show(); });
 
     async function send() {
       const text = ta.value.trim();
@@ -190,7 +240,8 @@ function launch(ctx: AppContext): void {
       ta.value = '';
       autosize();
       addUser(text);
-      history.push({ role: 'user', content: text });
+      if (provider === 'gemini') gemHistory.push({ role: 'user', parts: [{ text }] });
+      else history.push({ role: 'user', content: text });
       const { m, tools, body } = addAssistant();
       body.append(el('span', 'faisal-claude-typing', t('claude.thinking')));
       scroll();
@@ -202,16 +253,21 @@ function launch(ctx: AppContext): void {
       let frame = 0;
       const paint = () => { frame = 0; body.innerHTML = renderMarkdown(raw); scroll(); };
       try {
-        client ??= await createClient(apiKey);
-        const res = await runTurn(client, history, {
-          onText(d) { raw += d; if (!frame) frame = requestAnimationFrame(paint); },
-          onTool(name, detail) {
+        const handlers = {
+          onText(d: string) { raw += d; if (!frame) frame = requestAnimationFrame(paint); },
+          onTool(name: 'web_search' | 'web_fetch', detail: string) {
             const line = el('div', 'faisal-claude-tool', t(name === 'web_search' ? 'claude.searching' : 'claude.fetching', { q: detail }));
             line.dir = 'auto';
             tools.append(line);
             scroll();
           },
-        }, abort.signal);
+        };
+        let res;
+        if (provider === 'gemini') res = await runGeminiTurn(apiKey, gemHistory, handlers, abort.signal);
+        else {
+          client ??= await createClient(apiKey);
+          res = await runTurn(client, history, handlers, abort.signal);
+        }
         if (frame) cancelAnimationFrame(frame);
         if (res.refused) {
           m.classList.add('error');
@@ -226,6 +282,7 @@ function launch(ctx: AppContext): void {
         const aborted = abort?.signal.aborted;
         // Roll the unanswered user message back so the next turn starts clean.
         while (history.length && history[history.length - 1].role === 'user') history.pop();
+        while (gemHistory.length && gemHistory[gemHistory.length - 1].role === 'user') gemHistory.pop();
         if (aborted) {
           if (raw) paint(); else body.replaceChildren();
           body.append(el('p', 'faisal-claude-typing', t('claude.stopped')));
@@ -264,6 +321,13 @@ function sourcesEl(sources: Source[]): HTMLElement {
 }
 
 async function errorText(err: unknown): Promise<string> {
+  if (err instanceof GeminiError) {
+    if (err.status === 400 && /api key/i.test(err.message)) return t('claude.errAuth');
+    if (err.status === 401 || err.status === 403) return t('claude.errAuth');
+    if (err.status === 429) return t('claude.errRate');
+    return t('claude.errGeneric', { msg: err.message });
+  }
+  if (err instanceof TypeError) return t('claude.errNetwork');
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   if (err instanceof Anthropic.AuthenticationError || err instanceof Anthropic.PermissionDeniedError) return t('claude.errAuth');
   if (err instanceof Anthropic.RateLimitError) return t('claude.errRate');
