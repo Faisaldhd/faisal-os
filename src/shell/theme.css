@@ -125,7 +125,16 @@ html, body {
   height: 100%;
   margin: 0;
   overflow: hidden;
+  /* No horizontal scrolling anywhere in the shell: every surface is sized to the viewport. */
+  overflow-x: clip;
   overscroll-behavior: none;
+}
+
+/* Mobile browser toolbars (and the on-screen keyboard) change the *dynamic* viewport without
+ * resizing the layout viewport, so `height: 100%` leaves the bottom of the desktop under the
+ * toolbar. `100dvh` tracks it; browsers without it keep the `height: 100%` fallback above. */
+@supports (height: 100dvh) {
+  html, body { height: 100dvh; }
 }
 
 body {
@@ -139,6 +148,10 @@ body {
   inset: 0;
   width: 100%;
   height: 100%;
+}
+
+@supports (height: 100dvh) {
+  #faisal-root, .faisal-desktop { height: 100dvh; }
 }
 
 .faisal-desktop {
@@ -550,7 +563,10 @@ body {
   flex: none;
   display: flex;
   gap: 10px;
-  padding: 10px 14px;
+  /* The inline padding lives on the strip itself, not on `.faisal-dock-bar`: a strip that
+   * has to scroll must reach the true viewport edge, or its first/last launcher gets clipped
+   * (the bar's 12px padding used to shorten the strip by 24px at 390px). */
+  padding: 10px 16px;
   margin-block-end: 22px;
   background: rgba(8, 14, 32, 0.38);
   border: 1px solid rgba(240, 207, 122, 0.14);
@@ -583,7 +599,7 @@ body {
   /* Gesture bar / home indicator: lift the dock's own spacing instead of shrinking it. */
   padding-block-start: 6px;
   padding-block-end: calc(10px + env(safe-area-inset-bottom, 0px));
-  padding-inline: calc(12px + env(safe-area-inset-left, 0px)) calc(12px + env(safe-area-inset-right, 0px));
+  padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
   position: relative;
   z-index: 400;
   pointer-events: none;
@@ -591,12 +607,20 @@ body {
 .faisal-dock-pinned {
   margin: 0;
   max-width: 100%;
+  /* A phone cannot fit every launcher: the strip scrolls horizontally instead of cropping an
+   * icon. It must not scroll the desktop with it (`overscroll-behavior-x: contain`), its
+   * scrollbar is hidden, and its own inline padding is inside the scrollport, so the first and
+   * last launcher stay fully reachable. `scroll-snap` is deliberately NOT used: it fights the
+   * free scroll on a strip this short. */
   overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
   scrollbar-width: none;
   pointer-events: auto;
   backdrop-filter: blur(18px) saturate(1.2);
   -webkit-backdrop-filter: blur(18px) saturate(1.2);
 }
+.faisal-dock-pinned::-webkit-scrollbar { display: none; }
 .faisal-dock-pinned .faisal-dock-btn { flex: none; position: relative; }
 .faisal-dock-btn.is-running::after {
   content: "";
@@ -609,11 +633,8 @@ body {
   border-radius: 50%;
   background: var(--faisal-brand-mark-gold, #E3B650);
 }
-@media (max-width: 700px) {
-  .faisal-dock-pinned { gap: 6px; padding: 8px 10px; }
-  .faisal-dock-pinned .faisal-dock-btn,
-  .faisal-dock-pinned .faisal-dock-btn svg { width: 44px; height: 44px; }
-}
+/* The narrow-width dock rules live in the one `@media (max-width: 699px)` query in the
+ * Phase 6 section at the end of this sheet. */
 
 .faisal-overview-empty {
   color: rgba(255, 255, 255, 0.75);
@@ -1407,4 +1428,85 @@ body {
   position: absolute;
   inset: -4px;
   border-radius: 50%;
+}
+
+/* ===================== Phase 6: mobile interaction model =====================
+ * The mobile/touch pass, kept in its own two blocks so it never mixes with the
+ * desktop rules above. Order in this block matters:
+ *   1. @media (max-width: 699px)   narrow reflow (matches device.ts's strict
+ *                                  `width < NARROW_BREAKPOINT`; 699, not 700).
+ *   2. @media (pointer: coarse)    touch targets and grown controls.
+ *   3. @media (orientation: landscape) short-viewport trims (must stay last so it
+ *                                  wins over block 2 where both match).
+ * Logical properties only; no new tokens, effects or animations.
+ * ========================================================================== */
+
+/* Narrow surface: a desktop layout cannot reflow below this width, so each surface
+ * becomes its own scroller and every fixed-width panel turns fluid. */
+@media (max-width: 699px) {
+  /* Search: full width instead of a 480px pill. */
+  .faisal-search { width: calc(100% - 32px); }
+  /* Overview: one window thumbnail per row, and a fixed 3-column app grid so tiles do not
+   * reflow unpredictably while typing in the search box. */
+  .faisal-win-thumb { width: 100%; max-width: 340px; }
+  .faisal-app-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); justify-items: center; }
+  /* Notification centre: edge-to-edge (16px total gutter) instead of a 380px panel.
+   * `inset-inline` + `width: auto` avoids `100vw` overflow caused by a scrollbar. */
+  .faisal-notif-center { inset-inline: 8px; width: auto; transform: none; }
+  [dir="rtl"] .faisal-notif-center { transform: none; }
+  .faisal-notif { min-width: 0; }
+  /* Dock: shrink and tighten so 11 launchers fit ~390px without cropping; below that the
+   * strip scrolls (see `.faisal-dock-pinned`). This block is deliberately last so it also
+   * wins over the coarse-pointer 60px rule above on a narrow touch screen. */
+  .faisal-dock-pinned { gap: 6px; }
+  .faisal-dock-pinned .faisal-dock-btn,
+  .faisal-dock-pinned .faisal-dock-btn svg { width: clamp(36px, 10.5vw, 44px); height: clamp(36px, 10.5vw, 44px); }
+}
+
+/* Touch: every shell control is >=44px in both axes wherever the layout allows it. */
+@media (pointer: coarse) {
+  /* Shell chrome. The topbar grows to the button height so its buttons are 44px tall. */
+  .faisal-topbar { height: max(var(--faisal-topbar-h, 34px), 44px); }
+  .faisal-topbar-btn { min-height: 44px; padding-inline: 16px; }
+
+  /* Dock launchers: painted size, 44 -> 60px (the dock is its own row, nothing to push). */
+  .faisal-dock-btn,
+  .faisal-dock-btn svg { width: 60px; height: 60px; }
+  .faisal-dock-btn.is-running::after { inset-block-end: -6px; }
+
+  /* Window chrome. The circles stay 26px: three of them plus two 4px gaps cannot fit a
+   * 38px-tall titlebar at 44px each. The touch target is an invisible ::after overlay of
+   * 36 x 44px, held short of the 6px resize-handle band so it cannot swallow a resize. */
+  .faisal-titlebar { min-height: 44px; }
+  .faisal-win-btn::after { inset-block: -9px; inset-inline: -5px; }
+
+  /* Overview controls. */
+  .faisal-search { min-height: 44px; padding-block: 12px; }
+  .faisal-app-tile { padding: 12px 6px; }
+
+  /* Menus become touch rows. The accent dots get a real 32px circle (+/-6px = 44px target). */
+  .faisal-ctxmenu-item { min-height: 44px; padding-block: 10px; }
+  .faisal-menu-item { min-height: 44px; }
+  .faisal-toggle-btn { min-height: 44px; }
+  .faisal-accent-dot { width: 32px; height: 32px; }
+  .faisal-accent-dot::after { inset: -6px; }
+
+  /* Notifications. There is no `@media (hover: hover)` reveal anywhere in the shell, so
+   * nothing has to be un-hidden for touch; only the targets and the toast width change. */
+  .faisal-notif-clear { min-height: 44px; padding-block: 8px; }
+  .faisal-notif-x { min-inline-size: 44px; min-block-size: 44px; }
+  .faisal-notif-open { min-height: 44px; }
+  .faisal-notif-dnd { min-height: 44px; }
+  .faisal-notif { max-width: min(380px, calc(100vw - 16px)); }
+
+  /* Dialogs. */
+  .faisal-shell-dialog-btn { min-height: 44px; }
+}
+
+/* A phone in landscape is ~360px tall: 36px of overview padding above 110px thumbnails is
+ * most of the screen. Trim the furniture, not the content. */
+@media (orientation: landscape) {
+  .faisal-overview { padding-block-start: 14px; }
+  .faisal-overview-body { padding-block: 12px calc(12px + env(safe-area-inset-bottom, 0px)); gap: 16px; }
+  .faisal-win-thumb-body { height: 64px; }
 }
