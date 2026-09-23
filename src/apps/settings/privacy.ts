@@ -2,8 +2,11 @@
  * Privacy inventory for the Settings app.
  *
  * Everything here reads or clears the exact storage keys the rest of Fai$al OS
- * really uses — no key is invented and no value is ever shown, only how many
- * items are stored (and, for an AI key, whether one is saved).
+ * really uses — no key is invented, and only counts are shown (plus, for an AI
+ * key, whether one is saved). The one exception is the remembered page URL of an
+ * embedded web app: it is already public in that app's own address bar, so the
+ * Privacy section may list it as plain text — never an AI key, and never a key
+ * that is not one of the known web app ids.
  *
  * Keys and their owners:
  *   faisal.settings.v1            kernel/settings.ts   — settings values, including
@@ -14,6 +17,7 @@
  *   faisal.browser.engine         apps/browser/model.ts — remembered search engine
  *   faisal.groq.apiKey            apps/ai/providers.ts — Groq key
  *   faisal.deepseek.apiKey        apps/ai/providers.ts — DeepSeek key
+ *   faisal.web.<id>.url           apps/web/registry.ts — last visited URL per wired site
  */
 
 export interface StorageLike {
@@ -60,8 +64,32 @@ export const AI_KEY_STORAGE: Record<AiProviderId, string> = {
   deepseek: 'faisal.deepseek.apiKey',
 };
 
+/**
+ * The embedded web apps that remember a last visited URL, in the registry's own
+ * order. Duplicated from apps/web/registry.ts on purpose: the Settings app must
+ * not import (and therefore load) another app, and apps/web must stay unaware of
+ * Settings. `webUrlStorageKey` below produces exactly the key that file's
+ * `lastUrlStorageKey(def)` writes, and a test pins both the ids and the shape.
+ */
+export const WEB_APP_IDS = ['google', 'youtube', 'wikipedia'] as const;
+
+export type WebAppId = (typeof WEB_APP_IDS)[number];
+
+/** `'google'` → `'faisal.web.google.url'`: the key apps/web remembers that site in. */
+export function webUrlStorageKey(id: WebAppId): string {
+  return `faisal.web.${id}.url`;
+}
+
+/**
+ * Every remembered-URL key, in a stable order. These three — and only these
+ * three — are what the count reads and what the clear action deletes: nothing
+ * enumerates localStorage, so a `faisal.web.*` key outside this list is never
+ * shown and never removed from Settings.
+ */
+export const WEB_URL_STORAGE_KEYS: readonly string[] = WEB_APP_IDS.map((id) => webUrlStorageKey(id));
+
 /** What a Privacy action deletes: one app's stored data, or one provider's key. */
-export type ClearTarget = 'notifications' | 'browsing' | AiProviderId;
+export type ClearTarget = 'notifications' | 'browsing' | 'webUrls' | AiProviderId;
 
 export interface PrivacyInventory {
   /** Values stored in the shared settings object (theme, locale, session, DND…). */
@@ -74,6 +102,10 @@ export interface PrivacyInventory {
   geometryCount: number;
   /** Bookmarked URLs the browser app will load. */
   bookmarkCount: number;
+  /** Embedded web apps that would reopen on a remembered page rather than home. */
+  webAppUrlCount: number;
+  /** Those remembered pages, in registry order. Only ever shown as plain text. */
+  webAppUrls: string[];
   /** Per provider: true when a non-empty key is saved. Never the key itself. */
   aiKeysSaved: Record<AiProviderId, boolean>;
 }
@@ -136,16 +168,37 @@ function keySaved(store: StorageLike | null | undefined, key: string): boolean {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+/**
+ * A value the web app would really restore: an absolute http(s) URL. The app's
+ * own `savedUrl` accepts any non-empty string, but its address policy refuses
+ * anything else and opens the site's home page instead — so a corrupt or empty
+ * value is stored, yet nothing is remembered, and it counts as 0 here.
+ */
+const WEB_URL_RE = /^https?:\/\/\S+$/i;
+
+/** Reads the three known keys only; a missing, blocked or corrupt value is skipped. */
+function readWebAppUrls(store: StorageLike | null | undefined): string[] {
+  const urls: string[] = [];
+  for (const key of WEB_URL_STORAGE_KEYS) {
+    const value = raw(store, key);
+    if (typeof value === 'string' && WEB_URL_RE.test(value.trim())) urls.push(value);
+  }
+  return urls;
+}
+
 /** What the browser currently stores for Fai$al OS, counted item by item. */
 export function readPrivacyInventory(store: StorageLike | null | undefined): PrivacyInventory {
   const settings = parsed(store, SETTINGS_KEY);
   const settingsRecord = recordOf(settings);
+  const webAppUrls = readWebAppUrls(store);
   return {
     settingsCount: countSettings(settings),
     sessionCount: countSession(settingsRecord?.['shell.session']),
     notificationCount: countNotifications(parsed(store, NOTIFICATIONS_KEY)),
     geometryCount: countGeometry(parsed(store, GEOMETRY_KEY)),
     bookmarkCount: countBookmarks(parsed(store, BOOKMARKS_KEY)),
+    webAppUrlCount: webAppUrls.length,
+    webAppUrls,
     aiKeysSaved: {
       groq: keySaved(store, AI_KEY_STORAGE.groq),
       deepseek: keySaved(store, AI_KEY_STORAGE.deepseek),
@@ -157,6 +210,7 @@ export function readPrivacyInventory(store: StorageLike | null | undefined): Pri
 export function clearedKeys(target: ClearTarget): string[] {
   if (target === 'notifications') return [NOTIFICATIONS_KEY];
   if (target === 'browsing') return [BOOKMARKS_KEY, ENGINE_KEY];
+  if (target === 'webUrls') return [...WEB_URL_STORAGE_KEYS];
   return [AI_KEY_STORAGE[target]];
 }
 
