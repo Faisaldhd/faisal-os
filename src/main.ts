@@ -79,7 +79,11 @@ function registerServiceWorker(sys: SystemAPI) {
   if (!import.meta.env.PROD || !('serviceWorker' in navigator)) return;
   // The desktop build ships its files locally and updates with the app itself.
   if (nativeWeb()) return;
-  navigator.serviceWorker.register('./sw.js').then((reg) => {
+  // `updateViaCache: 'none'` keeps the browser from answering the update check from its
+  // own HTTP cache: with a cached sw.js the browser can go days without noticing a new
+  // build, which is how a fix that is live stays invisible in an open tab.
+  navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then((reg) => {
+    void reg.update().catch(() => {});
     reg.addEventListener('updatefound', () => {
       const next = reg.installing;
       next?.addEventListener('statechange', () => {
@@ -89,7 +93,56 @@ function registerServiceWorker(sys: SystemAPI) {
         }
       });
     });
+    // The new worker has taken control of this page: it is now serving a different
+    // build than the one this document started with, so reload once to match. The
+    // first registration has no previous controller and must NOT reload.
+    let hadController = navigator.serviceWorker.controller !== null;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return;
+      hadController = false;
+      reloadOnce('new-service-worker');
+    });
   }).catch((err) => console.warn('[sw] registration failed', err));
+  void refreshIfStale();
+}
+
+/**
+ * Makes a deployed fix reach an already-open tab.
+ *
+ * The service worker serves hashed chunks cache-first and the HTML network-first, but a
+ * browser HTTP cache can still answer the navigation with yesterday's `index.html`, which
+ * points at yesterday's chunk names — so the running page keeps executing old code no
+ * matter how often the user reloads normally. This compares the entry chunk the DEPLOYED
+ * HTML names with the one this document actually loaded, and reloads once when they
+ * differ. `sessionStorage` holds the entry name we already reloaded for, so a build that
+ * fails to start can never produce a reload loop, and being offline is simply ignored.
+ */
+async function refreshIfStale(): Promise<void> {
+  try {
+    const running = [...document.querySelectorAll('script[type="module"][src]')]
+      .map((s) => (s as HTMLScriptElement).getAttribute('src') ?? '')
+      .join(' ');
+    if (!running) return;
+    const res = await fetch('./index.html', { cache: 'no-store' });
+    if (!res.ok) return;
+    const deployed = /assets\/index-[A-Za-z0-9_-]+\.js/.exec(await res.text())?.[0];
+    if (!deployed || running.includes(deployed)) return;
+    reloadOnce(deployed);
+  } catch {
+    // Offline, or a host that does not serve index.html: keep running what we have.
+  }
+}
+
+/** Reloads at most once per named build, so a boot failure cannot become a loop. */
+function reloadOnce(build: string): void {
+  try {
+    const KEY = 'faisal.reload.for';
+    if (sessionStorage.getItem(KEY) === build) return;
+    sessionStorage.setItem(KEY, build);
+  } catch {
+    // No sessionStorage (private mode): reloading once is still the right move here.
+  }
+  window.location.reload();
 }
 
 /** A readable, translated failure screen instead of a raw English string on a blank page. */
