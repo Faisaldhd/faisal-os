@@ -78,3 +78,21 @@ when it changes.
 
 Still required before merge: the eight manual browser checks (both themes) listed in the review,
 above all the clock grid pixel alignment and the Hijri sub-line in every cell.
+
+## Agreed next task (owner approved after seeing the blank YouTube frame)
+
+Port the immediate fallback into the BROWSER app (src/apps/browser/**): when the address is a
+site measured to refuse framing (google, youtube, bing, ...), show the same fallback card the
+web app already uses - honest explanation plus "Open in browser" and "Try embedding anyway" -
+instead of creating an iframe that renders a blank grey area with a delayed hint. Reuse
+`isBlockedDomain` from src/apps/browser/url.ts plus the measured list, and share the card
+markup/strings rather than duplicating them. No bypass, no proxy, no header tricks.
+
+Why: the screenshot the owner sent shows the OLD browser app producing a blank frame for
+https://www.youtube.com/ (X-Frame-Options: SAMEORIGIN, measured), while the registered web app
+for YouTube already shows the fallback immediately. Porting it makes the behaviour consistent
+across the OS.
+
+Recommended order after that: finish phases 11-12 (the eight manual checks, both themes, then
+merge wip/phase11-12-review), then phase 13 (grep in a Worker, iframe broker, enforce the
+network permission), then 14-15 (PWA update button, polish, live regression).
