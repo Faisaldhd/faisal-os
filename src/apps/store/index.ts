@@ -58,15 +58,22 @@ function launch(ctx: AppContext) {
   search.type = 'search';
   search.className = 'faisal-store-search';
   search.placeholder = t('store.searchPlaceholder');
+  search.setAttribute('aria-label', t('store.searchPlaceholder'));
   search.autocomplete = 'off';
   search.spellcheck = false;
   header.append(search);
 
   const tabsBar = document.createElement('div');
   tabsBar.className = 'faisal-store-tabs';
+  // The three tabs are real tabs: one tablist, one panel (the scrolling body).
+  tabsBar.setAttribute('role', 'tablist');
+  tabsBar.setAttribute('aria-label', t('store.title'));
 
   const body = document.createElement('div');
   body.className = 'faisal-store-body';
+  body.id = 'faisal-store-panel';
+  body.setAttribute('role', 'tabpanel');
+  body.tabIndex = 0;
 
   root.append(header, tabsBar, body);
   win.content.append(root);
@@ -91,6 +98,10 @@ function launch(ctx: AppContext) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'faisal-store-tab';
+    btn.id = `faisal-store-tab-${tb.id}`;
+    btn.setAttribute('role', 'tab');
+    btn.setAttribute('aria-controls', 'faisal-store-panel');
+    btn.setAttribute('aria-selected', 'false');
     btn.textContent = t(tb.key);
     btn.addEventListener('click', () => {
       tab = tb.id;
@@ -214,6 +225,8 @@ function launch(ctx: AppContext) {
     if (entries.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'faisal-store-empty';
+      // An empty result is a change caused by the search/filter, so it is announced.
+      empty.setAttribute('role', 'status');
       empty.textContent = t(emptyKey);
       body.append(empty);
       return;
@@ -354,6 +367,8 @@ function launch(ctx: AppContext) {
     if (busy) {
       const progress = document.createElement('div');
       progress.className = 'faisal-store-progress';
+      // Install/remove is asynchronous: the "Installing…" line is the status.
+      progress.setAttribute('role', 'status');
       const spinner = document.createElement('span');
       spinner.className = 'faisal-store-spinner';
       const label = document.createElement('span');
@@ -421,7 +436,16 @@ function launch(ctx: AppContext) {
   }
 
   function render() {
-    tabButtons.forEach((btn, id) => btn.classList.toggle('is-active', id === tab));
+    // The visual `is-active` class is not exposed to assistive tech, so the tab
+    // state is mirrored into aria-selected and the panel names its active tab.
+    tabButtons.forEach((btn, id) => {
+      const active = id === tab;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-selected', String(active));
+      btn.tabIndex = active ? 0 : -1;
+    });
+    const activeBtn = tabButtons.get(tab);
+    if (activeBtn) body.setAttribute('aria-labelledby', activeBtn.id);
     body.textContent = '';
     if (detailId) {
       const detailWrap = document.createElement('div');

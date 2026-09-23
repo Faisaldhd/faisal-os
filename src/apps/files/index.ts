@@ -187,6 +187,7 @@ function launch(ctx: AppContext): void {
 
   const sidebarEl = document.createElement('nav');
   sidebarEl.className = 'faisal-files-sidebar';
+  sidebarEl.setAttribute('aria-label', t('files.title'));
 
   const mainEl = document.createElement('div');
   mainEl.className = 'faisal-files-main';
@@ -203,6 +204,9 @@ function launch(ctx: AppContext): void {
 
   const statusEl = document.createElement('div');
   statusEl.className = 'faisal-files-status';
+  // The item/selection count changes in response to every click, so it is the status
+  // region for the view (the empty-folder message is rendered inside the view).
+  statusEl.setAttribute('role', 'status');
 
   mainEl.append(toolbar, crumbs, viewEl, statusEl);
   root.append(sidebarEl, mainEl);
@@ -296,7 +300,12 @@ function launch(ctx: AppContext): void {
 
   function updateSidebarActive() {
     sidebarEl.querySelectorAll<HTMLButtonElement>('.faisal-files-sidebar-item').forEach((b) => {
-      b.classList.toggle('is-active', b.dataset.path === currentPath);
+      const active = b.dataset.path === currentPath;
+      b.classList.toggle('is-active', active);
+      // `aria-current` is the correct signal for the active place in a nav, and the
+      // `is-active` class alone is invisible to a screen reader.
+      if (active) b.setAttribute('aria-current', 'true');
+      else b.removeAttribute('aria-current');
     });
   }
 
@@ -898,10 +907,18 @@ function launch(ctx: AppContext): void {
   function renderGrid() {
     const grid = document.createElement('div');
     grid.className = 'faisal-files-grid';
+    // A list of entries, whether painted as a grid or as rows: `list`/`listitem` is the
+    // semantics the DOM actually has (there is no column/row relationship to expose).
+    // Selection is mirrored into aria-current rather than aria-selected, which
+    // `listitem` does not support — the `is-selected` class alone is invisible to a
+    // screen reader, and the status line announces the selected count.
+    grid.setAttribute('role', 'list');
     entries.forEach((st, i) => {
       const item = document.createElement('div');
       item.className = 'faisal-files-item' + (selection.has(st.path) ? ' is-selected' : '');
       item.dataset.path = st.path;
+      item.setAttribute('role', 'listitem');
+      if (selection.has(st.path)) item.setAttribute('aria-current', 'true');
       const iconWrap = document.createElement('div');
       iconWrap.className = 'faisal-files-item-icon';
       iconWrap.appendChild(icon(st.type === 'dir' ? ICONS.folder : ICONS.file));
@@ -930,9 +947,11 @@ function launch(ctx: AppContext): void {
   function renderList() {
     const list = document.createElement('div');
     list.className = 'faisal-files-list';
+    list.setAttribute('role', 'list');
 
     const header = document.createElement('div');
     header.className = 'faisal-files-list-header';
+    header.setAttribute('role', 'presentation');
     header.append(
       sortHeaderBtn(t('files.name'), 'name'),
       sortHeaderBtn(t('files.size'), 'size'),
@@ -943,6 +962,8 @@ function launch(ctx: AppContext): void {
     entries.forEach((st, i) => {
       const row = document.createElement('div');
       row.className = 'faisal-files-list-row' + (selection.has(st.path) ? ' is-selected' : '');
+      row.setAttribute('role', 'listitem');
+      if (selection.has(st.path)) row.setAttribute('aria-current', 'true');
       const nameCell = document.createElement('div');
       nameCell.className = 'faisal-files-list-name';
       nameCell.appendChild(icon(st.type === 'dir' ? ICONS.folder : ICONS.file));

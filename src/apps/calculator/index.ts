@@ -106,6 +106,14 @@ function launch(ctx: AppContext): void {
   const resultEl = document.createElement('div');
   resultEl.className = 'faisal-calc-result';
   resultEl.dir = 'ltr';
+  // The result changes only when a key is pressed, and nothing else on screen reports
+  // it, so it is the single polite live region for both the computed value and the
+  // error state shown in this same element. `role="status"` already implies
+  // aria-live="polite"; it is set explicitly so the region is unambiguous. The live
+  // region stays here — never on exprEl (every keystroke) or the keypad/history list.
+  resultEl.setAttribute('role', 'status');
+  resultEl.setAttribute('aria-live', 'polite');
+  resultEl.setAttribute('aria-atomic', 'true');
   resultEl.textContent = '0';
   display.append(exprEl, resultEl);
 

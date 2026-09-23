@@ -73,13 +73,22 @@ function launch(ctx: AppContext): void {
   const toolbar = document.createElement('div');
   toolbar.className = 'faisal-img-toolbar';
 
+  // Every toolbar control is icon-only, so the button carries the name and the SVG
+  // drawn inside it is marked decorative: the shape duplicates the label and would
+  // otherwise be announced as a second, unnamed graphic.
+  function decorativeIcon(svg: string): SVGElement {
+    const node = icon(svg);
+    node.setAttribute('aria-hidden', 'true');
+    return node;
+  }
+
   function makeBtn(svgIcon: string, label: string, onClick: () => void): HTMLButtonElement {
     const b = document.createElement('button');
     b.className = 'faisal-img-btn';
     b.type = 'button';
     b.title = label;
     b.setAttribute('aria-label', label);
-    b.appendChild(icon(svgIcon));
+    b.appendChild(decorativeIcon(svgIcon));
     b.addEventListener('click', onClick);
     return b;
   }
@@ -89,6 +98,9 @@ function launch(ctx: AppContext): void {
   const nextBtn = makeBtn(ICONS.next, t('images.next'), () => step(1));
   const metaEl = document.createElement('div');
   metaEl.className = 'faisal-img-meta';
+  // Name, size, dimensions and zoom are repainted on every open/zoom/rotate; this line
+  // is how a screen reader learns which picture is on screen and at what zoom.
+  metaEl.setAttribute('role', 'status');
   const spacer = document.createElement('div');
   spacer.className = 'faisal-img-spacer';
   const zoomOutBtn = makeBtn(ICONS.zoomOut, t('images.zoomOut'), () => setZoom(typeof zoom === 'number' ? zoom / 1.25 : 1 / 1.25));
@@ -109,11 +121,18 @@ function launch(ctx: AppContext): void {
   const stage = document.createElement('div');
   stage.className = 'faisal-img-stage';
   stage.tabIndex = 0;
+  // Focusable scroll container: it needs a name of its own, and the displayed picture
+  // is reported through the meta line below (the <img> itself is decorative).
+  stage.setAttribute('role', 'group');
+  stage.setAttribute('aria-label', t('images.title'));
 
   const frame = document.createElement('div');
   frame.className = 'faisal-img-frame';
   const imgEl = document.createElement('img');
   imgEl.alt = '';
+  // The picture is described by the meta line next to it (the caption), so the <img>
+  // adds nothing to the a11y tree; decoration only.
+  imgEl.setAttribute('aria-hidden', 'true');
   imgEl.draggable = false;
   frame.appendChild(imgEl);
 
@@ -121,14 +140,14 @@ function launch(ctx: AppContext): void {
   prevNav.className = 'faisal-img-navbtn faisal-img-prev';
   prevNav.type = 'button';
   prevNav.setAttribute('aria-label', t('images.prev'));
-  prevNav.appendChild(icon(ICONS.prev));
+  prevNav.appendChild(decorativeIcon(ICONS.prev));
   prevNav.addEventListener('click', () => step(-1));
 
   const nextNav = document.createElement('button');
   nextNav.className = 'faisal-img-navbtn faisal-img-next';
   nextNav.type = 'button';
   nextNav.setAttribute('aria-label', t('images.next'));
-  nextNav.appendChild(icon(ICONS.next));
+  nextNav.appendChild(decorativeIcon(ICONS.next));
   nextNav.addEventListener('click', () => step(1));
 
   stage.append(frame, prevNav, nextNav);
@@ -178,8 +197,12 @@ function launch(ctx: AppContext): void {
     actualBtn.disabled = mode !== 'viewer';
     rotateBtn.disabled = mode !== 'viewer';
     fullscreenBtn.disabled = mode !== 'viewer';
-    fullscreenBtn.replaceChildren(icon(fullscreen ? ICONS.exitFullscreen : ICONS.fullscreen));
-    fullscreenBtn.title = fullscreen ? t('images.exitFullscreen') : t('images.fullscreen');
+    fullscreenBtn.replaceChildren(decorativeIcon(fullscreen ? ICONS.exitFullscreen : ICONS.fullscreen));
+    // The name has to follow the state, not just the tooltip: the same button now
+    // leaves fullscreen, and a stale "Fullscreen" name would misdescribe the control.
+    const fsLabel = fullscreen ? t('images.exitFullscreen') : t('images.fullscreen');
+    fullscreenBtn.title = fsLabel;
+    fullscreenBtn.setAttribute('aria-label', fsLabel);
   }
 
   function computeFitScale(): number {
@@ -325,6 +348,10 @@ function launch(ctx: AppContext): void {
 
     const grid = document.createElement('div');
     grid.className = 'faisal-img-grid';
+    // A list of pictures: `list`/`listitem` matches the DOM (the tiles are buttons with
+    // no column relationship), and the thumbnails below it are decorative <img alt="">.
+    // The counter inside a thumbnail is still its own accessible name.
+    grid.setAttribute('role', 'list');
 
     galleryObserver = new IntersectionObserver((observed) => {
       for (const entry of observed) {
@@ -341,6 +368,7 @@ function launch(ctx: AppContext): void {
       btn.className = 'faisal-img-thumb';
       btn.type = 'button';
       btn.dataset.path = img.path;
+      btn.setAttribute('role', 'listitem');
       const pic = document.createElement('div');
       pic.className = 'faisal-img-thumb-pic';
       const nameEl = document.createElement('div');
@@ -364,6 +392,10 @@ function launch(ctx: AppContext): void {
       const im = document.createElement('img');
       im.src = url;
       im.alt = '';
+      // The tile's accessible name is the file name text beside it; the preview is
+      // purely decorative. alt="" alone is not sufficient — the pixels come from file
+      // data and carry no name — so the thumbnail is hidden from assistive tech.
+      im.setAttribute('aria-hidden', 'true');
       im.loading = 'lazy';
       container.replaceChildren(im);
     } catch {

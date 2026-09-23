@@ -81,8 +81,16 @@
   padding: 18px 20px;
   border-radius: var(--faisal-radius, 10px);
   margin-block-end: 16px;
-  background: linear-gradient(135deg, #22386f 0%, #16264f 55%, #0b1530 100%);
-  color: #f7f1e3;
+  /* Brand tokens, not literals: the banner now follows `data-theme` like the rest of
+   * the OS. The gradient stops are the same #22386f → #16264f → #0b1530 ramp (only
+   * tokenised in Phase 11), so light mode is pixel-identical. */
+  background: linear-gradient(
+    135deg,
+    var(--faisal-brand-royal) 0%,
+    var(--faisal-brand-navy) 55%,
+    var(--faisal-brand-midnight) 100%
+  );
+  color: var(--faisal-brand-ivory);
   position: relative;
   overflow: hidden;
   cursor: pointer;
@@ -116,7 +124,7 @@
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: #e3b650;
+  color: var(--faisal-brand-gold);
   text-transform: uppercase;
 }
 
@@ -139,10 +147,17 @@
   flex: 0 0 auto;
   padding: 7px 16px;
   border-radius: 999px;
-  background: #e3b650;
-  color: #16264f;
+  background: var(--faisal-brand-gold);
+  color: var(--faisal-brand-navy);
   font-weight: 700;
   font-size: 12.5px;
+}
+
+/* The CTA is a span inside the banner button, so the ring is drawn on the banner;
+ * this only keeps a ring on the CTA itself if it ever becomes focusable. */
+.faisal-store-banner-cta:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring-invert, #F0CF7A);
+  outline-offset: 2px;
 }
 
 /* The banner is a dark gradient, so it uses the light ring; the rest sit on --faisal-surface. */

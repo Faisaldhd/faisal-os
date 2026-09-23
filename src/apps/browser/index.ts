@@ -63,6 +63,9 @@ function launch(ctx: AppContext): void {
   tabStrip.className = 'faisal-browser-tabstrip';
   const tabList = document.createElement('div');
   tabList.className = 'faisal-browser-tablist';
+  // Every window tab is a real tab; the page area below is their shared panel.
+  tabList.setAttribute('role', 'tablist');
+  tabList.setAttribute('aria-label', t('browser.title'));
   const newTabBtn = iconButton(ICON_PLUS, t('browser.newTab'));
   newTabBtn.classList.add('faisal-browser-newtab');
   tabStrip.append(tabList, newTabBtn);
@@ -84,6 +87,7 @@ function launch(ctx: AppContext): void {
   addressInput.dir = 'ltr';
   addressInput.className = 'faisal-browser-address';
   addressInput.placeholder = t('browser.addressPlaceholder');
+  addressInput.setAttribute('aria-label', t('browser.addressPlaceholder'));
   addressInput.autocomplete = 'off';
   addressInput.spellcheck = false;
   addressForm.append(addressInput);
@@ -93,6 +97,7 @@ function launch(ctx: AppContext): void {
   const engineSelect = document.createElement('select');
   engineSelect.className = 'faisal-browser-engine';
   engineSelect.title = t('browser.engineLabel');
+  engineSelect.setAttribute('aria-label', t('browser.engineLabel'));
   const engineOptions: { id: SearchEngine; key: string }[] = [
     { id: 'wikipedia', key: 'browser.engineWikipedia' },
     { id: 'duckduckgo', key: 'browser.engineDuckDuckGo' },
@@ -117,6 +122,8 @@ function launch(ctx: AppContext): void {
   // ── page area (one body per tab, only the active one visible) ──
   const pageArea = document.createElement('div');
   pageArea.className = 'faisal-browser-pagearea';
+  pageArea.id = 'faisal-browser-panel';
+  pageArea.setAttribute('role', 'tabpanel');
 
   root.append(tabStrip, toolbar, pageArea);
   win.content.append(root);
@@ -158,11 +165,15 @@ function launch(ctx: AppContext): void {
     searchInput.type = 'text';
     searchInput.className = 'faisal-browser-home-search-input';
     searchInput.placeholder = t('browser.homeSearchPlaceholder');
+    searchInput.setAttribute('aria-label', t('browser.homeSearchPlaceholder'));
     searchInput.autocomplete = 'off';
     searchInput.spellcheck = false;
     const searchBtn = document.createElement('button');
     searchBtn.type = 'submit';
     searchBtn.className = 'faisal-browser-home-search-btn';
+    // Icon-only control: it needs a name of its own (the sibling input's label is
+    // not enough for a screen reader).
+    searchBtn.setAttribute('aria-label', t('browser.go'));
     searchBtn.append(iconButtonEl(ICON_SEARCH));
     searchForm.append(searchInput, searchBtn);
     searchForm.addEventListener('submit', (e) => {
@@ -409,6 +420,10 @@ function launch(ctx: AppContext): void {
     const tabEl = document.createElement('button');
     tabEl.type = 'button';
     tabEl.className = 'faisal-browser-tab';
+    tabEl.id = `faisal-browser-tab-${id}`;
+    tabEl.setAttribute('role', 'tab');
+    tabEl.setAttribute('aria-controls', 'faisal-browser-panel');
+    tabEl.setAttribute('aria-selected', 'false');
     const labelEl = document.createElement('span');
     labelEl.className = 'faisal-browser-tab-label';
     labelEl.textContent = t('browser.home');
@@ -440,9 +455,18 @@ function launch(ctx: AppContext): void {
       const active = tb.id === id;
       tb.tabEl.classList.toggle('is-active', active);
       tb.bodyEl.classList.toggle('is-active', active);
+      // The `is-active` class is invisible to assistive tech: mirror it into
+      // aria-selected / the roving tabindex, and keep the hidden bodies out of the
+      // accessibility tree alongside their `display: none`.
+      tb.tabEl.setAttribute('aria-selected', String(active));
+      tb.tabEl.tabIndex = active ? 0 : -1;
+      tb.bodyEl.setAttribute('aria-hidden', String(!active));
     }
     const tab = activeTab();
-    if (tab) updateChrome(tab);
+    if (tab) {
+      pageArea.setAttribute('aria-labelledby', tab.tabEl.id);
+      updateChrome(tab);
+    }
   }
 
   function closeTab(id: string): void {

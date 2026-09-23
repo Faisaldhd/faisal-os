@@ -224,6 +224,13 @@
   gap: 4px;
 }
 
+/* One row per week (Phase 12): the grid is exposed as a real ARIA grid, so every
+ * `gridcell` needs a `row` parent. `display: contents` keeps the painted 7-column
+ * layout exactly as it was before the rows existed. */
+.faisal-clock-cal-row {
+  display: contents;
+}
+
 .faisal-clock-cal-dow {
   text-align: center;
   font-size: 11px;
