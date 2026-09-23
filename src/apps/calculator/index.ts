@@ -106,6 +106,10 @@ function launch(ctx: AppContext): void {
   const resultEl = document.createElement('div');
   resultEl.className = 'faisal-calc-result';
   resultEl.dir = 'ltr';
+  // The result changes only in response to a key press, and nothing else on screen
+  // reports it, so it is a polite live region (never the expression being typed).
+  resultEl.setAttribute('role', 'status');
+  resultEl.setAttribute('aria-live', 'polite');
   resultEl.textContent = '0';
   display.append(exprEl, resultEl);
 

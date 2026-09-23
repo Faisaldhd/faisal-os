@@ -44,6 +44,9 @@ function launch({ sys, window: win, args }: AppContext): void {
     select.append(o);
   }
   const status = el('span', 'faisal-term-status');
+  // Backend messages ("Connecting…", "Failed to load") appear with no user action of
+  // their own, so the status line is the live region that reports them.
+  status.setAttribute('role', 'status');
   const restart = el('button', 'faisal-term-btn', t('terminal.restart'));
   restart.type = 'button';
   header.append(label, select, status, restart);
@@ -52,6 +55,9 @@ function launch({ sys, window: win, args }: AppContext): void {
   body.dir = 'ltr';
   const host = el('div', 'faisal-term-xterm');
   host.dir = 'ltr';
+  // xterm.js inserts its own textarea as the focus target; naming the host gives that
+  // control an accessible name instead of an unlabelled edit field.
+  host.setAttribute('aria-label', t('terminal.name'));
   body.append(host);
   root.append(header, body);
   win.content.replaceChildren(root);

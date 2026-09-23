@@ -89,6 +89,9 @@ function launch(ctx: AppContext): void {
   const nextBtn = makeBtn(ICONS.next, t('images.next'), () => step(1));
   const metaEl = document.createElement('div');
   metaEl.className = 'faisal-img-meta';
+  // Name, size, dimensions and zoom are repainted on every open/zoom/rotate; this line
+  // is how a screen reader learns which picture is on screen and at what zoom.
+  metaEl.setAttribute('role', 'status');
   const spacer = document.createElement('div');
   spacer.className = 'faisal-img-spacer';
   const zoomOutBtn = makeBtn(ICONS.zoomOut, t('images.zoomOut'), () => setZoom(typeof zoom === 'number' ? zoom / 1.25 : 1 / 1.25));
@@ -109,6 +112,10 @@ function launch(ctx: AppContext): void {
   const stage = document.createElement('div');
   stage.className = 'faisal-img-stage';
   stage.tabIndex = 0;
+  // Focusable scroll container: it needs a name of its own, and the displayed picture
+  // is reported through the meta line below (the <img> itself is decorative).
+  stage.setAttribute('role', 'group');
+  stage.setAttribute('aria-label', t('images.title'));
 
   const frame = document.createElement('div');
   frame.className = 'faisal-img-frame';
@@ -325,6 +332,10 @@ function launch(ctx: AppContext): void {
 
     const grid = document.createElement('div');
     grid.className = 'faisal-img-grid';
+    // A list of pictures: `list`/`listitem` matches the DOM (the tiles are buttons with
+    // no column relationship), and the thumbnails below it are decorative <img alt="">.
+    // The counter inside a thumbnail is still its own accessible name.
+    grid.setAttribute('role', 'list');
 
     galleryObserver = new IntersectionObserver((observed) => {
       for (const entry of observed) {
@@ -341,6 +352,7 @@ function launch(ctx: AppContext): void {
       btn.className = 'faisal-img-thumb';
       btn.type = 'button';
       btn.dataset.path = img.path;
+      btn.setAttribute('role', 'listitem');
       const pic = document.createElement('div');
       pic.className = 'faisal-img-thumb-pic';
       const nameEl = document.createElement('div');
