@@ -21,6 +21,18 @@
     }
     #faisal-boot b { font-size: 30px; letter-spacing: .04em; color: #E3B650; font-weight: 600; }
     #faisal-boot span { letter-spacing: .1em; opacity: .75; }
+    #faisal-boot .faisal-boot-error { display: grid; gap: 10px; max-inline-size: 32rem; padding-inline: 20px; }
+    #faisal-boot .faisal-boot-error p { margin: 0; opacity: .85; }
+    #faisal-boot .faisal-boot-error code {
+      font: 400 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      opacity: .7; overflow-wrap: anywhere; direction: ltr;
+    }
+    #faisal-boot .faisal-boot-error button {
+      justify-self: center; margin-block-start: 6px; padding: 8px 18px; border-radius: 8px;
+      border: 1px solid #E3B650; background: transparent; color: #E3B650;
+      font: inherit; cursor: pointer;
+    }
+    #faisal-boot .faisal-boot-error button:focus-visible { outline: 2px solid #F0CF7A; outline-offset: 2px; }
     @media (prefers-reduced-motion: no-preference) {
       #faisal-boot::after {
         content: ''; inline-size: 132px; block-size: 3px; margin-inline: auto; border-radius: 2px;

@@ -27,6 +27,7 @@ const SHORTCUTS: [keys: string, labelKey: string][] = [
   ['Super', 'settings.sc.overview'],
   ['Ctrl+Alt+T', 'settings.sc.terminal'],
   ['Ctrl+Alt+W', 'settings.sc.close'],
+  ['Ctrl+Alt+Tab', 'settings.sc.switchWindow'],
   ['Super+↑', 'settings.sc.maximize'],
   ['Super+↓', 'settings.sc.restore'],
   ['Super+← / →', 'settings.sc.snap'],

@@ -365,9 +365,22 @@
   flex: 0 0 auto;
 }
 
+/* External files (OS → app) dragged over the file view. */
 .faisal-files-dropzone-active {
   outline: 2px dashed var(--faisal-accent, #3c6eb4);
   outline-offset: -4px;
+}
+
+/* The directory row a dragged entry would be moved into. */
+.faisal-files-item.is-drop-target,
+.faisal-files-list-row.is-drop-target {
+  background: color-mix(in srgb, var(--faisal-accent, #3c6eb4) 18%, transparent);
+  border-color: var(--faisal-accent, #3c6eb4);
+}
+
+.faisal-files-list-row.is-drop-target {
+  outline: 1px solid var(--faisal-accent, #3c6eb4);
+  outline-offset: -1px;
 }
 
 /* Narrow windows (phones, or a small window): places become a scrolling strip on top. */

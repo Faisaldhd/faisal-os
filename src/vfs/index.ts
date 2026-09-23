@@ -345,3 +345,27 @@ async function seed(vfs: VFS): Promise<void> {
   ].join('\n');
   await vfs.writeFile('/home/user/Documents/readme.md', readme);
 }
+
+/**
+ * VFS handle that resolves the real backend on first use.
+ *
+ * Opening IndexedDB and reading every stored node takes time, and the desktop does not need
+ * the file system to draw itself: the boot sequence hands this handle to the shell, mounts it
+ * immediately, and lets the first real file operation wait for the store. Every method is
+ * still async, so callers cannot tell the difference.
+ */
+export function lazyVFS(ready: Promise<VFS>): VFS {
+  const run = <T>(fn: (vfs: VFS) => Promise<T>): Promise<T> => ready.then(fn);
+  return {
+    stat: (path) => run((v) => v.stat(path)),
+    exists: (path) => run((v) => v.exists(path)),
+    readdir: (path) => run((v) => v.readdir(path)),
+    readFile: (path) => run((v) => v.readFile(path)),
+    readText: (path) => run((v) => v.readText(path)),
+    writeFile: (path, data) => run((v) => v.writeFile(path, data)),
+    mkdir: (path, opts) => run((v) => v.mkdir(path, opts)),
+    remove: (path, opts) => run((v) => v.remove(path, opts)),
+    rename: (from, to) => run((v) => v.rename(from, to)),
+    chmod: (path, mode) => run((v) => v.chmod(path, mode)),
+  };
+}

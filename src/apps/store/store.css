@@ -283,50 +283,10 @@
   color: var(--faisal-fg-muted, #565b67);
 }
 
-.faisal-store-uptodate-icon {
-  inline-size: 40px;
-  block-size: 40px;
-  border-radius: 999px;
-  background: rgba(60, 150, 100, 0.15);
-  color: #2e7d4f;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-block-end: 6px;
-}
-
 .faisal-store-uptodate-title {
   font-weight: 700;
   font-size: 14px;
   color: var(--faisal-fg, #1a1d26);
-}
-
-.faisal-store-updates-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin-block-start: 16px;
-  border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
-  border-radius: var(--faisal-radius, 10px);
-  overflow: hidden;
-}
-
-.faisal-store-updates-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
-  background: var(--faisal-surface, #fff);
-}
-
-.faisal-store-updates-row .faisal-store-card-icon { inline-size: 26px; block-size: 26px; }
-
-.faisal-store-updates-row-name { flex: 1 1 auto; font-weight: 600; }
-
-.faisal-store-updates-row-version {
-  font-size: 12px;
-  color: var(--faisal-fg-muted, #565b67);
-  direction: ltr;
 }
 
 /* ── detail view ──────────────────────────────────────────────────── */
