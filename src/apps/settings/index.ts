@@ -9,6 +9,7 @@ import { shellConfirm } from '../../shell/dialog';
 import { RESTORE_KEY } from '../../shell/session';
 import { OS_VERSION } from '../../kernel/version';
 import { nativeWeb, type UpdateState } from '../../shell/native-web';
+import { getSync, type SyncStatus } from '../../shell/sync';
 import {
   AI_PROVIDERS, clearedKeys, clearPrivacyItem, readPrivacyInventory,
   type ClearTarget, type PrivacyInventory,
@@ -31,7 +32,10 @@ const ICON_KEYBOARD =
 const ICON_PRIVACY =
   '<svg viewBox="0 0 24 24"><path d="M12 3l7 3v5.5c0 4.3-2.8 7.4-7 8.5-4.2-1.1-7-4.2-7-8.5V6l7-3z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9.2 12l2 2 3.6-3.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-type SectionId = 'appearance' | 'language' | 'keyboard' | 'privacy' | 'system' | 'about';
+const ICON_SYNC =
+  '<svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 0113.7-5.6L20 8.7M20 4v4.7h-4.7M20 12a8 8 0 01-13.7 5.6L4 15.3M4 20v-4.7h4.7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+type SectionId = 'appearance' | 'language' | 'keyboard' | 'privacy' | 'sync' | 'system' | 'about';
 
 /** Keyboard shortcuts handled by the shell and window manager. */
 const SHORTCUTS: [keys: string, labelKey: string][] = [
@@ -178,6 +182,7 @@ function launch(ctx: AppContext) {
     { id: 'language', labelKey: 'settings.nav.language', icon: ICON_LANGUAGE, render: renderLanguage },
     { id: 'keyboard', labelKey: 'settings.nav.keyboard', icon: ICON_KEYBOARD, render: renderKeyboard },
     { id: 'privacy', labelKey: 'settings.nav.privacy', icon: ICON_PRIVACY, render: renderPrivacy },
+    { id: 'sync', labelKey: 'settings.nav.sync', icon: ICON_SYNC, render: renderSync },
     { id: 'system', labelKey: 'settings.nav.system', icon: ICON_SYSTEM, render: renderSystem },
     { id: 'about', labelKey: 'settings.nav.about', icon: MARK_GLYPH_SVG, render: renderAbout },
   ];
@@ -471,6 +476,100 @@ function launch(ctx: AppContext) {
       group(...actions),
       note('settings.privacy.vsResetNote'),
     );
+  }
+
+  let stopSyncWatch: (() => void) | null = null;
+
+  /** Cloud sync: the owner's own Cloudflare D1, token-gated (src/shell/sync.ts). */
+  function renderSync() {
+    stopSyncWatch?.();
+    stopSyncWatch = null;
+    panel.textContent = '';
+    const h2 = document.createElement('h2');
+    h2.textContent = t('settings.nav.sync');
+    panel.append(h2);
+
+    const intro = document.createElement('p');
+    intro.className = 'faisal-settings-note';
+    intro.textContent = t('settings.sync.intro');
+    panel.append(intro);
+
+    const sync = getSync();
+    if (!sync) return;
+
+    const statusRow = row('settings.sync.status', 'settings.sync.statusDesc');
+    const statusValue = valueNode('');
+    statusValue.setAttribute('role', 'status');
+    statusRow.control.append(statusValue);
+
+    const describe = (s: SyncStatus): string => {
+      if (!s.enabled) return t('settings.sync.off');
+      if (s.running) return t('settings.sync.running');
+      if (s.error) return t(`settings.sync.error.${s.error}`);
+      if (s.lastSync === null) return t('settings.sync.never');
+      const time = new Date(s.lastSync).toLocaleTimeString(sys.locale() === 'ar' ? 'ar-EG-u-nu-latn' : 'en-US', { hour: 'numeric', minute: '2-digit' });
+      const skipped = s.skippedLarge ? ` · ${t('settings.sync.skipped', { n: s.skippedLarge })}` : '';
+      return `${t('settings.sync.last', { time })}${skipped}`;
+    };
+
+    const rows: HTMLElement[] = [statusRow.row];
+    const actionsRow = row(sync.status().enabled ? 'settings.sync.manage' : 'settings.sync.connect', sync.status().enabled ? 'settings.sync.manageDesc' : 'settings.sync.connectDesc');
+    const controls = document.createElement('div');
+    controls.className = 'faisal-settings-sync-controls';
+    actionsRow.control.append(controls);
+    rows.push(actionsRow.row);
+
+    const paint = () => {
+      const s = sync.status();
+      statusValue.textContent = describe(s);
+      controls.textContent = '';
+      if (s.enabled) {
+        const now = document.createElement('button');
+        now.type = 'button';
+        now.className = 'faisal-toggle-btn is-active';
+        now.textContent = t('settings.sync.now');
+        now.disabled = s.running;
+        now.addEventListener('click', () => { void sync.syncNow(); });
+        const stop = document.createElement('button');
+        stop.type = 'button';
+        stop.className = 'faisal-settings-danger-btn';
+        stop.textContent = t('settings.sync.disconnect');
+        stop.addEventListener('click', () => { sync.disable(); renderSync(); });
+        controls.append(now, stop);
+      } else {
+        const input = document.createElement('input');
+        input.type = 'password';
+        input.className = 'faisal-settings-input';
+        input.autocomplete = 'off';
+        input.placeholder = t('settings.sync.tokenPlaceholder');
+        input.setAttribute('aria-label', t('settings.sync.tokenPlaceholder'));
+        const go = document.createElement('button');
+        go.type = 'button';
+        go.className = 'faisal-toggle-btn is-active';
+        go.textContent = t('settings.sync.enable');
+        const submit = async () => {
+          const value = input.value;
+          input.value = '';
+          go.disabled = true;
+          statusValue.textContent = t('settings.sync.checking');
+          const result = await sync.enable(value);
+          go.disabled = false;
+          if (result === 'ok') renderSync();
+          else statusValue.textContent = t(`settings.sync.error.${result}`);
+        };
+        go.addEventListener('click', () => { void submit(); });
+        input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); void submit(); } });
+        controls.append(input, go);
+      }
+    };
+    paint();
+    stopSyncWatch = sync.onStatus(() => { if (panel.isConnected) paint(); else { stopSyncWatch?.(); stopSyncWatch = null; } });
+
+    panel.append(group(...rows));
+    const what = document.createElement('p');
+    what.className = 'faisal-settings-note';
+    what.textContent = t('settings.sync.what');
+    panel.append(what);
   }
 
   function renderSystem() {
