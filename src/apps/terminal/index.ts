@@ -16,8 +16,6 @@ import { TERM_TEXT } from './strings';
 
 type Kind = TerminalBackend['kind'];
 
-const ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="2" y="3.5" width="20" height="17" rx="3.5" fill="#2e3436"/><rect x="2" y="3.5" width="20" height="4" rx="2" fill="#555753"/><path d="M6 11l3 2.5L6 16" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M11 16.5h6" stroke="#8ff0a4" stroke-width="1.6" stroke-linecap="round"/></svg>`;
-
 function cssVar(name: string, fallback: string): string {
   try {
     const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();

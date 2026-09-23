@@ -60,7 +60,6 @@ function launch(ctx: AppContext): void {
   let mode: Mode = 'basic';
   let angleMode: AngleMode = 'deg';
   let arabicDigits = false;
-  let lastResult: number | null = null;
   let history: HistoryEntry[] = [];
 
   const root = document.createElement('div');
@@ -205,7 +204,6 @@ function launch(ctx: AppContext): void {
       history.push({ expr, result: formatted });
       if (history.length > 50) history.shift();
       renderHistory();
-      lastResult = value;
       resultEl.textContent = formatted;
       resultEl.classList.remove('is-error');
       exprEl.textContent = expr;
@@ -218,7 +216,6 @@ function launch(ctx: AppContext): void {
 
   function clearAll() {
     expr = '';
-    lastResult = null;
     render();
   }
 
@@ -369,7 +366,6 @@ function launch(ctx: AppContext): void {
     if (k === 'Escape') { clearAll(); e.preventDefault(); return; }
   });
 
-  void lastResult;
   renderPad();
   renderFnRow();
   setMode('basic');
