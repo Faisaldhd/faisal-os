@@ -55,14 +55,13 @@ export class V86Backend implements TerminalBackend {
     status('loading');
     output(`\x1b[2m${m.loading}\x1b[0m\r\n`);
 
+    // Each asset is served raw (dev / normal hosting) or as base64 text (`<name>.b64.txt`)
+    // for hosts that only serve text/web types. Both are fetched as buffers and handed to v86.
+    const buffers: Partial<Record<keyof typeof V86_ASSETS, ArrayBuffer>> = {};
     const missing: string[] = [];
-    await Promise.all(Object.values(V86_ASSETS).map(async (f) => {
-      try {
-        const r = await fetch(base + f, { method: 'HEAD', cache: 'no-cache' });
-        const type = r.headers.get('content-type') ?? '';
-        // dev servers answer unknown paths with index.html (200 text/html)
-        if (!r.ok || type.includes('text/html')) missing.push(f);
-      } catch { missing.push(f); }
+    await Promise.all((Object.entries(V86_ASSETS) as [keyof typeof V86_ASSETS, string][]).map(async ([key, f]) => {
+      const buf = await loadAsset(base, f);
+      if (buf) buffers[key] = buf; else missing.push(f);
     }));
     if (this.disposed) return;
     if (missing.length) { status('missing'); output(`\x1b[31m${m.missing(missing, base)}\x1b[0m\r\n`.replace(/\n/g, '\r\n').replace(/\r\r/g, '\r')); return; }
@@ -77,9 +76,9 @@ export class V86Backend implements TerminalBackend {
       output(`\x1b[2m${m.booting}\x1b[0m\r\n`);
       const emu = new V86({
         wasm_path: wasm.default,
-        bios: { url: base + V86_ASSETS.bios },
-        vga_bios: { url: base + V86_ASSETS.vgaBios },
-        bzimage: { url: base + V86_ASSETS.kernel },
+        bios: { buffer: buffers.bios },
+        vga_bios: { buffer: buffers.vgaBios },
+        bzimage: { buffer: buffers.kernel },
         cmdline: this.cmdline(),
         memory_size: (this.opts.memoryMB ?? 64) * 1024 * 1024,
         vga_memory_size: 2 * 1024 * 1024,
@@ -138,4 +137,21 @@ export class V86Backend implements TerminalBackend {
     this.emulator = null;
     if (emu) void emu.destroy().catch(() => {});
   }
+}
+
+/** Fetches `<base><name>` as binary, falling back to `<base><name>.b64.txt` (base64). Returns null if neither exists. */
+async function loadAsset(base: string, name: string): Promise<ArrayBuffer | null> {
+  const ok = (r: Response) => r.ok && !(r.headers.get('content-type') ?? '').includes('text/html');
+  try {
+    const r = await fetch(base + name, { cache: 'no-cache' });
+    if (ok(r)) return await r.arrayBuffer();
+  } catch { /* try the text fallback */ }
+  try {
+    const r = await fetch(`${base}${name}.b64.txt`, { cache: 'no-cache' });
+    if (!ok(r)) return null;
+    const bin = atob((await r.text()).replace(/\s+/g, ''));
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.buffer;
+  } catch { return null; }
 }
