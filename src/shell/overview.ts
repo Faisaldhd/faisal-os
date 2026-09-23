@@ -144,12 +144,32 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
   });
 
   search.addEventListener('input', renderApps);
+  /** Moves the highlighted result; arrows follow the grid (and the reading direction). */
+  function select(index: number) {
+    if (!filtered.length) return;
+    selected = Math.max(0, Math.min(filtered.length - 1, index));
+    [...appGrid.children].forEach((tile, i) => tile.classList.toggle('is-selected', i === selected));
+    (appGrid.children[selected] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest' });
+  }
+  function columns(): number {
+    const tiles = [...appGrid.children] as HTMLElement[];
+    const top = tiles[0]?.offsetTop;
+    const n = tiles.findIndex((tile) => tile.offsetTop !== top);
+    return n > 0 ? n : Math.max(1, tiles.length);
+  }
   search.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter' && filtered.length > 0) {
-      sys.apps.launch(filtered[0].id);
-      close();
-    } else if (ev.key === 'Escape') {
-      close();
+    const rtl = getComputedStyle(appGrid).direction === 'rtl';
+    switch (ev.key) {
+      case 'Enter':
+        if (filtered[selected]) { void sys.apps.launch(filtered[selected].id); close(); }
+        break;
+      case 'Escape':
+        close();
+        break;
+      case 'ArrowRight': ev.preventDefault(); select(selected + (rtl ? -1 : 1)); break;
+      case 'ArrowLeft': ev.preventDefault(); select(selected + (rtl ? 1 : -1)); break;
+      case 'ArrowDown': ev.preventDefault(); select(selected + columns()); break;
+      case 'ArrowUp': ev.preventDefault(); select(selected - columns()); break;
     }
   });
 
