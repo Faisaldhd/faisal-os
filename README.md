@@ -39,6 +39,17 @@ npm run desktop:build   # ملف تثبيت في release/ (Windows: NSIS، macOS
 - الأمان: النظام يُخدَّم من أصل خاص `app://faisal-os` في بيئة معزولة بلا Node؛ كل `webview` يُجبَر على بيئة معزولة بلا Node ولا preload وعلى قسم جلسة منفصل `persist:faisal-web`، ولا يحمّل إلا http(s).
 - النسخة المنشورة على GitHub Pages لم تتغير: خارج Electron تبقى `iframe` وبطاقات الرفض كما هي.
 
+### التحديث التلقائي
+
+النسخة المثبّتة تفحص [GitHub Releases](https://github.com/Faisaldhd/faisal-os/releases) عند التشغيل وكل 6 ساعات، وتنزّل الإصدار الجديد في الخلفية ثم تسأل: «إعادة التشغيل الآن» أو «لاحقًا» (يُثبَّت عند الإغلاق). يعمل على Windows وLinux؛ على macOS يتطلب التحديث التلقائي توقيعًا رقميًا من Apple، فهناك يُنزَّل الإصدار الجديد يدويًا.
+
+لإصدار نسخة جديدة:
+
+```bash
+npm version patch          # يرفع الإصدار في package.json وينشئ الوسم v1.0.1
+git push --follow-tags     # سير العمل desktop-release.yml يبني Windows/Linux/macOS وينشر الإصدار
+```
+
 ## What it is
 
 Fai$al OS puts a GNOME-style desktop inside a browser tab: a top bar, a dash, a desktop with shortcuts, an Activities overview, a window manager, notifications, a settings app, and a set of built-in applications backed by a virtual file system. The Arabic interface is the default (`<html lang="ar" dir="rtl">`); English is a runtime switch. Everything is plain DOM and CSS — no React/Vue.
