@@ -26,6 +26,12 @@ Date: 2026-09-23. Scope: kernel, VFS, Files, Editor, Terminal (sim + v86), shell
 | Low | `cat` of a file containing escape sequences sends them to xterm.js. xterm.js has no clipboard (OSC 52) or link handlers enabled, so the effect is limited to screen/title changes. File names are already sanitized. | Optional: filter OSC/DCS sequences from file output. |
 | Info | v86 VM: no network adapter, assets loaded from `./v86/` only, runs under `wasm-unsafe-eval` + `worker-src blob:` (required). Nothing in the VM is persisted. | Keep as is. |
 
+## Browser app (added after the review)
+- CSP `frame-src` changed from `'none'` to `https:` so the Browser app can show websites.
+- Frames only get `https:` URLs from a different origin than the OS (`src/apps/browser/url.ts`, tested). `javascript:`, `data:`, `blob:`, `file:` and same-origin URLs are refused, so `allow-same-origin` in the iframe sandbox never gives a page access to the OS.
+- `referrerpolicy="no-referrer"`; no camera, microphone, location, clipboard or payment permissions; no history stored.
+- Sites that forbid framing are opened in a real browser tab with `rel="noopener noreferrer"`.
+
 ## Done well
 - No `innerHTML`/`eval`/`new Function` with dynamic data anywhere; file names and contents use `textContent`.
 - Paths normalized through one function (`kernel/path.ts`) before every permission check; `..` and prefix tricks (`/home/user2`) are covered by tests.
