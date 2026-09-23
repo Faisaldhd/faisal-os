@@ -55,6 +55,8 @@ Two things make it more than a mock desktop: apps are real capability-scoped mod
 
 <https://faisaldhd.github.io/faisal-os/> — deployed by GitHub Actions on every push to `main` (`.github/workflows/pages.yml` runs `npm ci`, `npm test`, `npm run build`, then publishes `dist/` to GitHub Pages).
 
+**Mirror:** `.github/workflows/cloudflare.yml` also deploys the same build to Cloudflare Pages (`https://faisal-os.pages.dev`) for networks that can't reach GitHub Pages. It is skipped until the repository has the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets.
+
 ### Screenshot
 
 <!-- TODO: add a screenshot asset (for example docs/screenshot.png) and reference it here, e.g.
