@@ -154,6 +154,12 @@ export interface AppManifest {
   opens?: string[];
   category?: AppCategory;
   version?: string;
+  /**
+   * ISO calendar day (`YYYY-MM-DD`) this app was published to the Store. Optional, and
+   * absent for apps that predate the field: the Store then shows no date at all rather
+   * than guessing one. Drives the "new" badge window in `src/apps/store/release.ts`.
+   */
+  releasedAt?: string;
   /** تطبيق أساسي لا يمكن إزالته (الملفات، الطرفية، الإعدادات، المتجر). */
   core?: boolean;
   /** يُثبَّت تلقائياً عند أول تشغيل (الافتراضي true). */

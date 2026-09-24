@@ -111,6 +111,18 @@ export function validateManifest(m: AppManifest): void {
     || m.opens.some((e) => typeof e !== 'string' || (e !== '*' && !e.startsWith('.'))))) {
     throw new Error(`App ${id}: opens must hold extensions like ".txt" (or "*" for any file)`);
   }
+  // A release date is optional, but a malformed one is a bug in the manifest rather than
+  // something to swallow: the Store prints it to the owner, so it must be a real day.
+  if (m.releasedAt !== undefined) {
+    const match = typeof m.releasedAt === 'string' ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(m.releasedAt) : null;
+    const ms = match ? Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) : Number.NaN;
+    const back = new Date(ms);
+    const real = match !== null
+      && back.getUTCFullYear() === Number(match[1])
+      && back.getUTCMonth() === Number(match[2]) - 1
+      && back.getUTCDate() === Number(match[3]);
+    if (!real) throw new Error(`App ${id}: releasedAt must be a real YYYY-MM-DD date`);
+  }
 }
 
 export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {

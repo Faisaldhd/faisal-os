@@ -26,6 +26,7 @@ export const manifest: AppManifest = {
   opens: [...VIDEO_EXTENSIONS],
   category: 'media',
   version: '1.0.0',
+  releasedAt: '2026-09-24',
   core: false,
   defaultInstalled: false,
   singleInstance: false,
