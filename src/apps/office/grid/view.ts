@@ -25,6 +25,7 @@ import { MAX_COLS, MAX_ROWS } from '../../viewer/formats';
 import { el } from '../ui/dom';
 import type { RibbonTab } from '../ui/ribbon';
 import type { BookLook, CellStyle } from './xlsxlook';
+import { hasArabic, startsRtl } from '../writer/docops';
 
 const VIEW_ROWS = 300;
 const VIEW_COLS = 40;
@@ -55,6 +56,26 @@ export function displayValue(value: string, fmt: string | undefined): string {
   const prefix = /^"([^"]*)"/.exec(section)?.[1] ?? (/^[$€£¥]/.exec(section)?.[0] ?? '');
   const suffix = /"([^"]*)"\s*$/.exec(section)?.[1] ?? '';
   return `${prefix}${out}${suffix && suffix !== prefix ? suffix : ''}`;
+}
+
+/**
+ * Whether a sheet is shown right-to-left (column A on the right): the file's own
+ * `rightToLeft` when it states one, otherwise when most of its text cells are
+ * Arabic — how Excel shows an Arabic sheet. Display only; the file is not changed.
+ */
+export function sheetIsRtl(rows: readonly (readonly string[])[], stated: boolean | undefined): boolean {
+  if (stated !== undefined) return stated;
+  let text = 0;
+  let arabic = 0;
+  for (const row of rows.slice(0, 500)) {
+    for (const cell of row) {
+      const v = cell.trim();
+      if (!v || /^-?\d+(\.\d+)?(E[+-]?\d+)?$/i.test(v)) continue;
+      text++;
+      if (hasArabic(v)) arabic++;
+    }
+  }
+  return text > 0 && arabic * 2 > text;
 }
 
 /** Parses TSV (what spreadsheets put on the clipboard) into rows of cells. */
@@ -200,8 +221,16 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   function styleCell(td: HTMLTableCellElement, input: HTMLInputElement, view: HTMLElement, s: CellStyle | undefined, value: string): void {
     const numeric = /^-?\d+(\.\d+)?(E[+-]?\d+)?$/i.test(value.trim()) && value.trim() !== '';
     const h = s?.hAlign ?? (numeric ? 'right' : undefined);
-    const justify = (a: string): string => (a === 'center' || a === 'centerContinuous' ? 'center' : a === 'right' ? 'flex-end' : 'flex-start');
-    if (h) { view.style.justifyContent = justify(h); view.style.textAlign = h === 'centerContinuous' ? 'center' : h; }
+    // The overlay takes the text's own direction, so text too long for its cell is
+    // clipped at its inline end and an Arabic word keeps its beginning visible.
+    const rtl = !numeric && startsRtl(value) === true;
+    view.dir = numeric ? 'ltr' : rtl ? 'rtl' : 'ltr';
+    const physical = (a: string): string => {
+      if (a === 'center' || a === 'centerContinuous') return 'center';
+      const right = a === 'right';
+      return right !== rtl ? 'flex-end' : 'flex-start';
+    };
+    if (h) { view.style.justifyContent = physical(h); view.style.textAlign = h === 'centerContinuous' ? 'center' : h; }
     if (!s) return;
     if (s.fill) td.style.backgroundColor = `#${s.fill}`;
     const color = s.color && s.color !== '000000' ? `#${s.color}` : s.fill ? '#000000' : '';
@@ -236,6 +265,9 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const rows = Math.max(dataRows + (ctx.editable() ? 5 : 0), PAD_ROWS);
     const cols = Math.min(Math.max(dataCols + (ctx.editable() ? 3 : 0), PAD_COLS), VIEW_COLS + 3);
     const frozen = freezeTop === null ? look?.frozenRows ?? 0 : freezeTop ? 1 : 0;
+    const rtlSheet = sheetIsRtl(grid?.rows ?? [], look?.rtl);
+    scroll.dir = rtlSheet ? 'rtl' : 'ltr';
+    root.classList.toggle('is-rtl-sheet', rtlSheet);
 
     const tbl = el('table', 'faisal-office-table fo-grid');
     const colgroup = el('colgroup');

@@ -131,7 +131,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     return lookOf(tpl, seen);
   }
 
-  interface ParaView { dir: 'rtl' | 'ltr'; align: ParagraphAlign | undefined; text: TextLook; marker?: string; spaceBefore: number; spaceAfter: number; line?: number; lineExact: boolean; indStart: number; indEnd: number; firstLine: number; outline?: number; shade?: string }
+  interface ParaView { dir: 'rtl' | 'ltr'; /** Direction guessed from the text for display (the file states none). */ autoDir: boolean; align: ParagraphAlign | undefined; text: TextLook; marker?: string; spaceBefore: number; spaceAfter: number; line?: number; lineExact: boolean; indStart: number; indEnd: number; firstLine: number; outline?: number; shade?: string }
 
   function paraView(i: number, counters: Map<string, number>): ParaView {
     const m = doc();
@@ -142,7 +142,12 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       ? resolveStyle(look.styles, format.style ?? undefined)
       : pl ? { para: pl.para, text: pl.text, outline: pl.outline } : look ? resolveStyle(look.styles, undefined) : { para: {}, text: {}, outline: undefined };
     const para = styled.para;
-    const dir: 'rtl' | 'ltr' = format.dir ? format.dir : para.bidi ? 'rtl' : 'ltr';
+    // The file's own direction wins; a paragraph that states none is shown in the
+    // direction of its first strong letter (Arabic text reads right-to-left), for
+    // display only — the saved XML is untouched until the owner edits it.
+    const stated = format.dir ?? (para.bidi === undefined ? undefined : para.bidi ? 'rtl' : 'ltr');
+    const autoDir = stated === undefined && startsRtl(block ? blockText(block) : '') === true;
+    const dir: 'rtl' | 'ltr' = stated ?? (autoDir ? 'rtl' : 'ltr');
     let marker: string | undefined;
     if (format.list === 'bullet') marker = '•';
     else if (format.list === 'number') {
@@ -154,6 +159,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     const listIndent = (format.list === 'bullet' || format.list === 'number') && !pl?.marker ? 36 : 0;
     return {
       dir,
+      autoDir,
       align: format.align !== undefined ? format.align ?? undefined : para.align,
       text: styled.text,
       marker,
@@ -265,7 +271,8 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     const p = el('div', 'fo-p');
     p.dataset.i = String(i);
     p.dir = view.dir;
-    p.style.textAlign = cssAlign(view.align);
+    // Without w:bidi, Word's left/right are physical edges even for Arabic text.
+    p.style.textAlign = view.autoDir && (view.align === 'left' || view.align === 'right') ? view.align : cssAlign(view.align);
     p.style.fontFamily = fontStack(view.dir === 'rtl' ? view.text.fontCs ?? view.text.font : view.text.font);
     p.style.fontSize = `${(view.dir === 'rtl' ? view.text.szCs ?? view.text.sz : view.text.sz) ?? 11}pt`;
     if (view.text.color) p.style.color = `#${view.text.color}`;
@@ -1058,18 +1065,20 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     ctx.refresh();
   }
 
-  function currentFormat(): { align: ParagraphAlign; dir: 'rtl' | 'ltr'; list?: 'bullet' | 'number' | null; style: string; line?: number } {
+  function currentFormat(): { align: ParagraphAlign; dir: 'rtl' | 'ltr'; logicalRtl: boolean; list?: 'bullet' | 'number' | null; style: string; line?: number } {
     const sel = targetRange();
     const b = sel?.from.b ?? 0;
     const view = paraView(b, new Map());
     const f = doc()?.formats?.[b];
     const logical = view.align ?? 'left';
     // The buttons are visual: in a right-to-left paragraph "start" is the right edge.
-    const visual: ParagraphAlign = view.dir === 'rtl' && (logical === 'left' || logical === 'right') ? (logical === 'left' ? 'right' : 'left') : logical;
+    const logicalRtl = view.dir === 'rtl' && !view.autoDir;
+    const visual: ParagraphAlign = logicalRtl && (logical === 'left' || logical === 'right') ? (logical === 'left' ? 'right' : 'left') : view.align === undefined && view.autoDir ? 'right' : logical;
     const block = doc()?.blocks?.[b];
     return {
       align: visual,
       dir: view.dir,
+      logicalRtl,
       list: f?.list !== undefined ? f.list : lookOf(block)?.marker ? (/\d|[a-z]/i.test(lookOf(block)?.marker ?? '') ? 'number' : 'bullet') : undefined,
       style: f?.style ?? lookOf(block)?.styleId ?? 'Normal',
       line: f?.line ?? view.line,
@@ -1078,7 +1087,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
 
   function align(visual: ParagraphAlign): void {
     const now = currentFormat();
-    const logical = logicalAlign(visual, now.dir === 'rtl');
+    const logical = logicalAlign(visual, now.logicalRtl);
     setParaFormat({ align: logical });
   }
 

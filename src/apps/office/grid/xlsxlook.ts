@@ -35,6 +35,8 @@ export interface SheetLook {
   defaultHeight: number;
   /** "row:col" → formula text with "=" (as stored in the file). */
   formulas: Map<string, string>;
+  /** `<sheetView rightToLeft>` when the file states it (column A on the right). */
+  rtl?: boolean;
 }
 
 export interface BookLook { styles: CellStyle[]; sheets: SheetLook[] }
@@ -169,6 +171,9 @@ export async function readBookLook(bytes: Uint8Array): Promise<BookLook> {
         const hidden = attr(xml, col, 'hidden') === '1';
         for (let c = min; c <= max; c++) if (Number.isFinite(width)) look.widths.set(c - 1, hidden ? 0 : widthPx(width));
       }
+      const view = elementsOf(child(root, 'sheetViews') ?? (root as XmlElement), 'sheetView')[0];
+      const rtlAttr = attr(xml, view, 'rightToLeft');
+      if (rtlAttr !== null) look.rtl = rtlAttr === '1' || rtlAttr === 'true';
       const pane = elementsOf(child(root, 'sheetViews') ?? (root as XmlElement), 'pane')[0];
       if (pane && attr(xml, pane, 'state')?.startsWith('frozen')) {
         look.frozenRows = Number(attr(xml, pane, 'ySplit') ?? 0) || 0;
