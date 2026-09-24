@@ -1725,3 +1725,10 @@ body {
   .faisal-clip-item { min-block-size: 44px; }
   .faisal-clip-del { inline-size: 44px; }
 }
+
+/* Files dragged in from the computer: where they would land (src/shell/file-drop.ts). */
+.faisal-drop-target {
+  outline: 2px dashed var(--faisal-accent, #3c6eb4);
+  outline-offset: -4px;
+}
+.faisal-desktop-icon.faisal-drop-target { outline-offset: 2px; border-radius: 10px; }

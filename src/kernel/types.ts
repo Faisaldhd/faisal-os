@@ -141,7 +141,7 @@ export interface AppManifest {
   icon: string;                    // SVG markup
   permissions: Permission[];
   singleInstance?: boolean;
-  /** امتدادات الملفات التي يفتحها التطبيق (".txt"). */
+  /** امتدادات الملفات التي يفتحها التطبيق (".txt")، و"*" لأي ملف لا يفتحه تطبيق آخر. */
   opens?: string[];
   category?: AppCategory;
   version?: string;

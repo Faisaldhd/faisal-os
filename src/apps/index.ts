@@ -10,6 +10,7 @@ import { manifest as browser } from './browser/manifest';
 import { manifest as ai } from './ai/manifest';
 import { manifest as calculator } from './calculator/manifest';
 import { manifest as images } from './images/manifest';
+import { manifest as viewer } from './viewer/manifest';
 import { manifest as clock } from './clock/manifest';
 import { manifest as monitor } from './monitor/manifest';
 import { manifest as store } from './store/manifest';
@@ -29,6 +30,7 @@ export const BUILTIN_APPS: LazyAppModule[] = [
   lazy(ai, () => import('./ai')),
   lazy(calculator, () => import('./calculator')),
   lazy(images, () => import('./images')),
+  lazy(viewer, () => import('./viewer')),
   lazy(clock, () => import('./clock')),
   lazy(monitor, () => import('./monitor')),
   lazy(store, () => import('./store')),
