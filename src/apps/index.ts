@@ -17,6 +17,7 @@ import { manifest as store } from './store/manifest';
 import { manifest as settings } from './settings/manifest';
 import { manifest as vault } from './vault/manifest';
 import { manifest as stream } from './stream/manifest';
+import { manifest as dsh } from './dsh/manifest';
 
 const lazy = (manifest: LazyAppModule['manifest'], load: () => Promise<{ default: import('../kernel/types').AppModule }>): LazyAppModule =>
   ({ manifest, load: () => load().then((m) => m.default) });
@@ -37,4 +38,5 @@ export const BUILTIN_APPS: LazyAppModule[] = [
   lazy(settings, () => import('./settings')),
   lazy(vault, () => import('./vault')),
   lazy(stream, () => import('./stream')),
+  lazy(dsh, () => import('./dsh')),
 ];
