@@ -20,7 +20,7 @@
  *
  * Recalculation is incremental: a change marks the changed cell; recalc() walks
  * the reverse dependency graph (point references in a map, ranges bucketed by
- * 64-row blocks, tall ranges such as A:A in their own list) to find every
+ * 16-row blocks, tall ranges such as A:A in their own list) to find every
  * affected formula, orders them topologically (iteratively, so a 10,000-long
  * chain is fine), and evaluates each once. Volatile formulas (TODAY, NOW,
  * OFFSET, RAND) are recalculated every time. A reference cycle gives #REF! in
@@ -37,8 +37,8 @@ import {
 
 const SHEET_STRIDE = 2 ** 34;
 const ROW_STRIDE = 16384;
-const BLOCK_SHIFT = 6; // 64-row blocks
-const BIG_RANGE_BLOCKS = 32;
+const BLOCK_SHIFT = 4; // 16-row blocks
+const BIG_RANGE_BLOCKS = 64;
 
 /** One range read by one or more formulas (formulas reading the same range share it). */
 interface RangeDep { key: string; owners: Set<number>; sheetId: number; r1: number; c1: number; r2: number; c2: number; blocks: number[] | null }
