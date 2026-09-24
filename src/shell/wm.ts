@@ -229,11 +229,16 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
    *
    * Callers: maximize/restore, minimize, restore-from-minimize, close and the resize relayout.
    *
+   * It also keeps `has-window` in step: on the compact (phone) shell the desktop icon layer is
+   * hidden while any app is on screen, so an app's surface always covers it and the icons can
+   * never show through or beside it (theme.css). Both classes come from the same call sites.
+   *
    * It emits nothing: the state change that flipped the row already emitted `window:change`,
    * and geometry writes during a relayout are not events either. Apps still see their new size
    * through the per-window ResizeObserver on their content element.
    */
   function syncMaximizedDock() {
+    root.classList.toggle('has-window', [...wins.values()].some((r) => !r.minimized));
     const want = [...wins.values()].some((r) => r.maximized && !r.autoMaximized && !r.minimized);
     if (root.classList.contains('has-maximized-window') === want) return;
     root.classList.toggle('has-maximized-window', want);
@@ -577,6 +582,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
     else if (saved?.maximized) setMaximized(rec, true);
 
     focusWindow(id);
+    syncMaximizedDock(); // the new window changes "is an app on screen" for the compact shell
     return handle;
   }
 
