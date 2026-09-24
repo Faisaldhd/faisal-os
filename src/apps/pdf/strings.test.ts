@@ -3,8 +3,18 @@ import { registeredKeys, setLocale, t } from '../../kernel/i18n';
 import type { Locale } from '../../kernel/types';
 // Vite's `?raw` gives the window's own source as text, with no filesystem access from the
 // test (this repo deliberately has no `@types/node`, so `node:fs` would not type-check).
-import indexSource from './index.ts?raw';
+import windowSource from './index.ts?raw';
 import './strings';
+
+/*
+ * The window is split into several modules (viewer, thumbnails, ribbon…). Every non-test source
+ * file of the app is scanned together with index.ts, so a key written in any of them must exist
+ * and a key used only by one of them is not an orphan. index.ts stays in the set explicitly.
+ */
+const otherSources = import.meta.glob(['./*.ts', '!./*.test.ts', '!./index.ts', '!./strings.ts'], {
+  query: '?raw', import: 'default', eager: true,
+}) as Record<string, string>;
+const indexSource = [windowSource, ...Object.values(otherSources)].join('\n');
 
 /**
  * The PDF namespace is not covered by the repo-wide parity test

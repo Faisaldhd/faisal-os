@@ -1,0 +1,29 @@
+/*
+ * PDF Studio — pointer hover FEEDBACK only (a soft tint under the mouse), kept apart from
+ * pdf.css on purpose: pdf.css is pinned to contain no hover rule at all, because nothing in
+ * this app may be REVEALED by hover. Everything here only tints something that is already
+ * visible and usable, and only for a real hovering pointer.
+ */
+@media (hover: hover) and (pointer: fine) {
+  .faisal-pdf-ibtn:hover:not(:disabled),
+  .faisal-pdf-sbtn:hover:not(:disabled),
+  .faisal-pdf-railbtn:hover,
+  .faisal-pdf-rbtn:hover:not(:disabled),
+  .faisal-pdf-tab:hover,
+  .faisal-pdf-treeitem:hover,
+  .faisal-pdf-resultrow:hover,
+  .faisal-pdf-commentrow:hover,
+  .faisal-pdf-menuitem:hover,
+  .faisal-pdf-stampitem:hover,
+  .faisal-pdf-recentopen:hover,
+  .faisal-pdf-pickrow:hover,
+  .faisal-pdf-thumbmore:hover,
+  .faisal-pdf-pagetoggle:hover,
+  .faisal-pdf-move:hover:not(:disabled),
+  .faisal-pdf-btn:hover:not(.is-primary) { background: var(--app-blue-soft); }
+  .faisal-pdf-thumb:hover:not(.is-selected) { background: var(--app-blue-soft); }
+  .faisal-pdf-starttile:hover { border-color: var(--app-copper); }
+  .faisal-pdf-primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .faisal-pdf-annothit:hover { border-color: var(--app-copper-2); background: rgba(200, 137, 75, .08); }
+  .faisal-pdf-link:hover { background: rgba(91, 141, 239, .12); }
+}
