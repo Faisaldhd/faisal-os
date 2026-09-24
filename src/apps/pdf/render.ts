@@ -22,7 +22,7 @@ export type PdfJsPage = PdfJs.PDFPageProxy;
 const fontUrls = import.meta.glob('../../../node_modules/pdfjs-dist/standard_fonts/*.{pfb,ttf}', {
   query: '?url', import: 'default', eager: true,
 }) as Record<string, string>;
-const wasmUrls = import.meta.glob('../../../node_modules/pdfjs-dist/wasm/*.wasm', {
+const wasmUrls = import.meta.glob('../../../node_modules/pdfjs-dist/wasm/{openjpeg,jbig2,qcms_bg}.wasm', {
   query: '?url', import: 'default', eager: true,
 }) as Record<string, string>;
 
@@ -82,8 +82,8 @@ export async function openForRender(lib: PdfJsLib, bytes: Uint8Array, opts: Open
   const task = lib.getDocument({
     data: bytes.slice(),
     password: opts.password,
-    standardFontDataUrl: 'fonts:',
-    wasmUrl: 'wasm:',
+    standardFontDataUrl: 'bundled-fonts/',
+    wasmUrl: 'bundled-wasm/',
     useWorkerFetch: false,
     BinaryDataFactory: AssetDataFactory,
     isEvalSupported: false,
