@@ -371,11 +371,24 @@
   outline-offset: -4px;
 }
 
-/* The directory row a dragged entry would be moved into. */
+/* The directory row a dragged entry would be moved into: a rim that breathes, so the target is
+ * readable while the pointer is busy holding the dragged row. */
 .faisal-files-item.is-drop-target,
 .faisal-files-list-row.is-drop-target {
-  background: color-mix(in srgb, var(--faisal-accent, #3c6eb4) 18%, transparent);
+  background: color-mix(in srgb, var(--faisal-accent, #3c6eb4) 22%, transparent);
   border-color: var(--faisal-accent, #3c6eb4);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--faisal-accent) 55%, transparent);
+  animation: faisal-files-drop-breathe 1.4s ease-in-out infinite;
+}
+
+@keyframes faisal-files-drop-breathe {
+  0%, 100% { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--faisal-accent) 40%, transparent); }
+  50% { box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--faisal-accent) 80%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .faisal-files-item.is-drop-target,
+  .faisal-files-list-row.is-drop-target { animation: none; }
 }
 
 .faisal-files-list-row.is-drop-target {

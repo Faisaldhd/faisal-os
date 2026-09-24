@@ -458,6 +458,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
       let raf = 0;
       let snapTo: Snap | null = null;
       capturePointer(titlebar, startEv.pointerId);
+      el.classList.add('is-dragging');
 
       const apply = () => {
         raf = 0;
@@ -506,6 +507,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
         window.removeEventListener('pointerup', onUp);
         window.removeEventListener('pointercancel', onUp);
         snapPreview.hidden = true;
+        el.classList.remove('is-dragging');
         if (!detached) return; // a click on a maximized/snapped titlebar
         if (snapTo === 'max') setMaximized(rec, true);
         else if (snapTo) snap(rec, snapTo);
@@ -527,6 +529,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
       const o = readRect(el);
       const target = startEv.target as HTMLElement;
       capturePointer(target, startEv.pointerId);
+      el.classList.add('is-resizing');
       // The handles are placed with logical CSS, so in RTL the "e" grip sits on the physical left.
       const phys = getComputedStyle(el).direction === 'rtl'
         ? dir.replace(/[ew]/g, (c) => (c === 'e' ? 'w' : 'e'))
@@ -559,6 +562,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
         window.removeEventListener('pointercancel', onUp);
+        el.classList.remove('is-resizing');
         remember(rec);
       };
       window.addEventListener('pointermove', onMove);

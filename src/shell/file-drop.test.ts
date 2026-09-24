@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createBus } from '../kernel/bus';
 import { createVFS } from '../vfs';
 import type { VFS } from '../kernel/types';
-import { collectFiles, dropPlace, safeSegment, saveDropped, isExternalFileDrag } from './file-drop';
+import { collectFiles, dropPlace, dropTargetLabel, safeSegment, saveDropped, isExternalFileDrag } from './file-drop';
 
 async function memVFS(opts?: { quota?: { file: number; total: number } }): Promise<VFS> {
   const g = globalThis as { indexedDB?: unknown };
@@ -135,5 +135,24 @@ describe('dropPlace', () => {
     expect(at('files')).toEqual({ kind: 'ignore' });
     expect(at('bg')).toEqual({ kind: 'desktop' });
     expect(dropPlace(null)).toEqual({ kind: 'desktop' });
+  });
+});
+
+describe('dropTargetLabel', () => {
+  it('names a folder tile and a window by what they show', () => {
+    document.body.innerHTML = `<div class="faisal-desktop-icon" id="tile">
+        <span class="faisal-desktop-icon-label">مشروعي</span></div>
+      <div class="faisal-window" id="win">
+        <span class="faisal-titlebar-title">الملفات</span></div>`;
+    const tile = document.getElementById('tile')!;
+    const win = document.getElementById('win')!;
+    expect(dropTargetLabel(tile, 'هنا')).toBe('مشروعي');
+    expect(dropTargetLabel(win, 'هنا')).toBe('الملفات');
+  });
+
+  it('falls back when there is no label, or when it is blank', () => {
+    expect(dropTargetLabel(null, 'هنا')).toBe('هنا');
+    document.body.innerHTML = '<div class="faisal-desktop-icon" id="tile"><span class="faisal-desktop-icon-label">   </span></div>';
+    expect(dropTargetLabel(document.getElementById('tile')!, 'هنا')).toBe('هنا');
   });
 });
