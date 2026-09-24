@@ -27,8 +27,22 @@ import { resolve } from 'node:path';
  * Anything this test cannot see (real rendered geometry) is stated in the report instead of
  * being assumed here.
  */
-const css = readFileSync(resolve(process.cwd(), 'src/apps/photo/photo.css'), 'utf8');
-const indexSource = readFileSync(resolve(process.cwd(), 'src/apps/photo/index.ts'), 'utf8');
+/**
+ * Read a source file with its newlines normalised to `\n`.
+ *
+ * Why this exists: `desktop-release.yml` builds on `windows-latest`, which checks the repo
+ * out with CRLF line endings, while `pr-checks.yml` runs on `ubuntu-latest` with LF. A raw
+ * read therefore made the multi-line `grid-template-areas` assertion below pass on the
+ * pull-request check and fail on the release build — three releases in a row died there
+ * while the PR stayed green. Normalising keeps the assertion just as strong without
+ * pinning the platform, so the same commit is judged the same way on both runners.
+ */
+function readSource(relative: string): string {
+  return readFileSync(resolve(process.cwd(), relative), 'utf8').replace(/\r\n/g, '\n');
+}
+
+const css = readSource('src/apps/photo/photo.css');
+const indexSource = readSource('src/apps/photo/index.ts');
 
 /** The body of a `@media (...) { … }` block, by its condition text. */
 function mediaBlock(condition: string): string {
