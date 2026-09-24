@@ -22,8 +22,56 @@ export interface Grid {
   truncated: boolean;
 }
 
-export interface DocModel { kind: 'docx'; paragraphs: string[] }
-export interface SheetsModel { kind: 'xlsx' | 'csv'; grids: Grid[]; active: number; delimiter: ',' | '\t' }
+/** Paragraph alignment written into Word's `<w:jc>` (المحاذاة). */
+export type ParagraphAlign = 'left' | 'center' | 'right' | 'justify';
+
+/**
+ * The formatting this app can write into a Word paragraph: bold, italic,
+ * underline, font size (points) and alignment, written as `<w:rPr>` and
+ * `<w:pPr><w:jc>`.
+ *
+ * `undefined` means "the owner never touched this property" — the file's own
+ * value stands and is not rewritten. `null` means "remove it", which is how a
+ * property goes back to whatever the file or its styles say.
+ */
+export interface ParagraphFormat {
+  bold?: boolean | null;
+  italic?: boolean | null;
+  underline?: boolean | null;
+  /** Font size in points; Word stores half-points. */
+  size?: number | null;
+  align?: ParagraphAlign | null;
+}
+
+/** The properties a format can carry, in one place for diffing and copying. */
+export const FORMAT_KEYS = ['bold', 'italic', 'underline', 'size', 'align'] as const;
+
+/**
+ * True when two formats say the same thing. `undefined` (leave the file's own
+ * value) and `null` (remove it) compare equal only when a save has already run:
+ * `null` and "the property is absent from the file" describe the same finished
+ * state, while a real value on either side is a difference the save must write.
+ */
+export function sameFormat(a: ParagraphFormat | undefined, b: ParagraphFormat | undefined): boolean {
+  const value = (format: ParagraphFormat | undefined, key: typeof FORMAT_KEYS[number]): unknown => {
+    const raw = format === undefined ? undefined : format[key];
+    return raw === null ? undefined : raw;
+  };
+  return FORMAT_KEYS.every((key) => value(a, key) === value(b, key));
+}
+
+export interface DocModel { kind: 'docx'; paragraphs: string[]; formats?: Record<number, ParagraphFormat> }
+export interface SheetsModel {
+  kind: 'xlsx' | 'csv';
+  grids: Grid[];
+  active: number;
+  delimiter: ',' | '\t';
+  /**
+   * The formulas the owner typed in this session, keyed "sheet:row:col". The cell
+   * itself always holds the computed value; the file keeps the formula in `<f>`.
+   */
+  formulas?: Record<string, string>;
+}
 export interface DeckModel { kind: 'pptx'; slides: string[][] }
 export interface TextModel { kind: 'text'; text: string }
 
@@ -55,10 +103,10 @@ export interface FormatRow { ext: string; level: SupportLevel; note: string }
  * translated sentence built from `level` and the extension instead.
  */
 export const VERIFIED_FORMATS: readonly FormatRow[] = [
-  { ext: '.docx', level: 'edit', note: 'readDocx paragraphs; written back as a fresh OOXML package' },
-  { ext: '.xlsx', level: 'edit', note: 'readXlsx cells; written back as a fresh OOXML package' },
+  { ext: '.docx', level: 'edit', note: 'readDocx paragraphs; saved by patching word/document.xml only' },
+  { ext: '.xlsx', level: 'edit', note: 'readXlsx cells; saved by patching the affected worksheet and shared strings' },
   { ext: '.xlsm', level: 'read-only', note: 'readXlsx works, but saving would drop the macros' },
-  { ext: '.pptx', level: 'edit', note: 'readPptx slide text; written back as a fresh OOXML package' },
+  { ext: '.pptx', level: 'edit', note: 'readPptx slide text; saved by patching the affected slide parts' },
   { ext: '.csv', level: 'edit', note: 'parseCsv with a comma; written back as CSV' },
   { ext: '.tsv', level: 'edit', note: 'parseCsv with a tab; written back as TSV' },
   { ext: '.txt', level: 'edit', note: 'plain UTF-8 text (binary files are refused)' },
@@ -151,7 +199,7 @@ export function insertRow(model: SheetsModel, sheet: number, at: number): Sheets
   const index = Math.max(0, Math.min(at, rows.length));
   const width = gridWidth(grid);
   rows.splice(index, 0, new Array<string>(width).fill(''));
-  return replaceGrid(model, sheet, { ...grid, rows });
+  return shiftFormulas(replaceGrid(model, sheet, { ...grid, rows }), sheet, 'row', index, 1);
 }
 
 /**
@@ -164,7 +212,7 @@ export function removeRow(model: SheetsModel, sheet: number, at: number): Sheets
   if (!grid || at < 0 || at >= grid.rows.length) return model;
   const rows = grid.rows.slice();
   rows.splice(at, 1);
-  return replaceGrid(model, sheet, { ...grid, rows });
+  return shiftFormulas(replaceGrid(model, sheet, { ...grid, rows }), sheet, 'row', at, -1);
 }
 
 /** A sheet keeps its last row: the window greys out "delete row" instead of emptying the grid. */
@@ -197,7 +245,7 @@ export function insertColumn(model: SheetsModel, sheet: number, at: number): She
     return line;
   });
   if (!rows.length) rows.push(['']);
-  return replaceGrid(model, sheet, { ...grid, rows });
+  return shiftFormulas(replaceGrid(model, sheet, { ...grid, rows }), sheet, 'col', index, 1);
 }
 
 /** Removes the column at `at`. A row shorter than `at` has no cell there and is left alone. */
@@ -210,7 +258,7 @@ export function removeColumn(model: SheetsModel, sheet: number, at: number): She
     if (line.length > at) line.splice(at, 1);
     return line;
   });
-  return replaceGrid(model, sheet, { ...grid, rows });
+  return shiftFormulas(replaceGrid(model, sheet, { ...grid, rows }), sheet, 'col', at, -1);
 }
 
 function sheetsEdit(
@@ -294,6 +342,109 @@ export function paragraphEdit(index: number, before: string, after: string): Edi
     apply: (m) => set(m, after),
     revert: (m) => set(m, before),
   };
+}
+
+/** The formatting recorded for one paragraph (empty when the owner never touched it). */
+export function paragraphFormatAt(model: OfficeModel, index: number): ParagraphFormat {
+  return model.kind === 'docx' ? model.formats?.[index] ?? {} : {};
+}
+
+/**
+ * An edit that sets one paragraph's formatting. Bold, italic and underline are
+ * toggles (`true`/`false`), the size and the alignment are choices (or `null` to
+ * hand the property back to the file), and the patch writes exactly that into
+ * `<w:rPr>` and `<w:pPr><w:jc>`.
+ */
+export function paragraphFormatEdit(
+  index: number,
+  before: ParagraphFormat | undefined,
+  after: ParagraphFormat | undefined,
+): Edit {
+  const put = (m: OfficeModel, format: ParagraphFormat | undefined): OfficeModel => {
+    if (m.kind !== 'docx') return m;
+    const formats = { ...(m.formats ?? {}) };
+    if (format === undefined || !FORMAT_KEYS.some((key) => format[key] !== undefined)) delete formats[index];
+    else formats[index] = format;
+    return { ...m, formats };
+  };
+  return {
+    key: `format:${index}`,
+    apply: (m) => put(m, after),
+    revert: (m) => put(m, before),
+  };
+}
+
+/* ──────────────────────────── cell formulas ──────────────────────────── */
+
+/** The key one cell's formula is stored under: "sheet:row:col", zero-based. */
+export function formulaKey(sheet: number, row: number, col: number): string {
+  return `${sheet}:${row}:${col}`;
+}
+
+/** The formula the owner typed in this cell, or undefined for a plain value. */
+export function formulaAt(model: OfficeModel, sheet: number, row: number, col: number): string | undefined {
+  if (model.kind !== 'xlsx' && model.kind !== 'csv') return undefined;
+  return model.formulas?.[formulaKey(sheet, row, col)];
+}
+
+/** Sets or clears one cell's formula, leaving every other formula alone. */
+export function setFormula(model: SheetsModel, sheet: number, row: number, col: number, formula: string | null): SheetsModel {
+  const key = formulaKey(sheet, row, col);
+  const formulas = { ...(model.formulas ?? {}) };
+  if (!formula) delete formulas[key];
+  else formulas[key] = formula;
+  const empty = !Object.keys(formulas).length;
+  return { ...model, formulas: empty ? undefined : formulas };
+}
+
+/** A cell's value together with its formula, as one reversible state. */
+export interface CellState { value: string; formula?: string }
+
+/**
+ * An edit that sets a cell's value and formula together, so undoing a formula
+ * restores the value it had before, not just the text of the formula.
+ */
+export function formulaCellEdit(sheet: number, row: number, col: number, before: CellState, after: CellState): Edit {
+  const put = (m: OfficeModel, state: CellState): OfficeModel => {
+    if (m.kind !== 'xlsx' && m.kind !== 'csv') return m;
+    const withValue = setCellValue(m, sheet, row, col, state.value);
+    return setFormula(withValue, sheet, row, col, state.formula ?? null);
+  };
+  return {
+    key: `cell:${sheet}:${row}:${col}`,
+    apply: (m) => put(m, after),
+    revert: (m) => put(m, before),
+  };
+}
+
+/**
+ * Moves the formula keys of one sheet when its rows or columns move, so a formula
+ * stays attached to the cell the owner typed it in. Entries on the removed line
+ * are dropped; the formula text itself is kept exactly as it was written.
+ */
+function shiftFormulas(
+  model: SheetsModel,
+  sheet: number,
+  axis: 'row' | 'col',
+  at: number,
+  delta: 1 | -1,
+): SheetsModel {
+  if (!model.formulas) return model;
+  const formulas: Record<string, string> = {};
+  for (const [key, formula] of Object.entries(model.formulas)) {
+    const [keySheet, rowText, colText] = key.split(':');
+    const row = Number(rowText);
+    const col = Number(colText);
+    if (Number(keySheet) !== sheet || !Number.isInteger(row) || !Number.isInteger(col)) {
+      formulas[key] = formula;
+      continue;
+    }
+    const line = axis === 'row' ? row : col;
+    if (line === at && delta === -1) continue; // the line that was removed takes its formula with it
+    const moved = line >= at ? line + delta : line;
+    formulas[formulaKey(sheet, axis === 'row' ? moved : row, axis === 'col' ? moved : col)] = formula;
+  }
+  return { ...model, formulas: Object.keys(formulas).length ? formulas : undefined };
 }
 
 /** An edit that replaces one paragraph of a PowerPoint slide. */

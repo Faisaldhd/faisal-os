@@ -14,12 +14,13 @@ import { shellConfirm } from '../../shell/dialog';
 import { registeredKeys, t } from '../../kernel/i18n';
 import { validateManifest } from '../../kernel/apps';
 import type { AppContext, SystemAPI, VFS, WindowHandle } from '../../kernel/types';
-import { MAX_ROWS, readDocx } from '../viewer/formats';
+import { MAX_ROWS, openZip, readDocx, readPptx, readXlsx, zipEntries } from '../viewer/formats';
 import officeApp from './index';
 import { manifest } from './manifest';
 import { OFFICE_EXTENSIONS, VERIFIED_FORMATS } from './model';
 import { serializeModel } from './file';
-import { utf8 } from './zip';
+import { contentTypes } from './ooxml';
+import { readRawZip, utf8, writeZip } from './zip';
 import './strings';
 
 const HOME_FILE = '/home/user/test.csv';
@@ -368,5 +369,406 @@ describe('the office window', () => {
     button(content, t('office.undo'))?.click();
     await settle();
     expect(cells(content).length).toBe(2 * 3);
+  });
+});
+
+/* ─────────────────── the surgical save, through the real window ─────────────────── */
+
+const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+const RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
+const DOC_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+const S_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+const P_NS = 'http://schemas.openxmlformats.org/presentationml/2006/main';
+const A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
+
+/** A tiny PNG-shaped blob: binary content the text model can never represent. */
+const IMAGE = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0xff, 0xfe, 0x7f, 0x00, 0x80]);
+
+/** name → the whole local record (header + name + data), i.e. what "byte-for-byte" means. */
+function recordsOf(bytes: Uint8Array): Map<string, Uint8Array> {
+  const archive = readRawZip(bytes);
+  return new Map(archive.entries.map((entry) => [entry.name, bytes.slice(entry.recordStart, entry.recordEnd)]));
+}
+
+function identicalBytes(a: Uint8Array | undefined, b: Uint8Array | undefined): boolean {
+  return !!a && !!b && a.length === b.length && a.every((value, i) => value === b[i]);
+}
+
+/** Every XML part of the package parses: the "the package still opens" check. */
+async function everyPartParses(bytes: Uint8Array): Promise<boolean> {
+  const zip = openZip(bytes);
+  for (const name of zip.names()) {
+    if (!name.endsWith('.xml') && !name.endsWith('.rels')) continue;
+    const data = await zip.read(name);
+    if (!data) return false;
+    const doc = new DOMParser().parseFromString(new TextDecoder().decode(data), 'application/xml');
+    if (doc.getElementsByTagName('parsererror').length) return false;
+  }
+  return true;
+}
+
+async function partText(bytes: Uint8Array, name: string): Promise<string> {
+  const data = await openZip(bytes).read(name);
+  return new TextDecoder().decode(data ?? new Uint8Array());
+}
+
+/** Waits for the window's own signal that the save finished. */
+async function until(check: () => boolean): Promise<void> {
+  for (let i = 0; i < 400 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** A .docx with a custom style, a real image part and a header — none of which the reader models. */
+function docxFixture(): Uint8Array {
+  const document =
+    `${DECL}<w:document xmlns:w="${W_NS}" xmlns:r="${DOC_REL}"><w:body>` +
+    '<w:p><w:pPr><w:pStyle w:val="Fancy"/></w:pPr>' +
+    '<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Hello </w:t></w:r>' +
+    '<w:r><w:rPr><w:i/></w:rPr><w:t>world</w:t></w:r></w:p>' +
+    '<w:p><w:pPr><w:pStyle w:val="Fancy"/></w:pPr><w:r><w:t>second paragraph</w:t></w:r></w:p>' +
+    '<w:sectPr><w:headerReference w:type="default" r:id="rId9"/><w:pgSz w:w="12240" w:h="15840"/></w:sectPr>' +
+    '</w:body></w:document>';
+  const styles =
+    `${DECL}<w:styles xmlns:w="${W_NS}">` +
+    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>' +
+    '<w:style w:type="paragraph" w:styleId="Fancy"><w:name w:val="Fancy"/><w:rPr><w:color w:val="C00000"/></w:rPr></w:style>' +
+    '</w:styles>';
+  const header = `${DECL}<w:hdr xmlns:w="${W_NS}"><w:p><w:r><w:t>Confidential — {Faisal}</w:t></w:r></w:p></w:hdr>`;
+  return writeZip([
+    {
+      name: '[Content_Types].xml',
+      data: utf8(contentTypes([
+        '<Default Extension="png" ContentType="image/png"/>',
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>',
+        '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>',
+        '<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>',
+      ])),
+    },
+    {
+      name: '_rels/.rels',
+      data: utf8(`${DECL}<Relationships xmlns="${RELS_NS}">` +
+        `<Relationship Id="rId1" Type="${DOC_REL}/officeDocument" Target="word/document.xml"/></Relationships>`),
+    },
+    { name: 'word/document.xml', data: utf8(document) },
+    { name: 'word/styles.xml', data: utf8(styles) },
+    { name: 'word/header1.xml', data: utf8(header) },
+    { name: 'word/media/image1.png', data: IMAGE },
+    {
+      name: 'word/_rels/document.xml.rels',
+      data: utf8(`${DECL}<Relationships xmlns="${RELS_NS}">` +
+        `<Relationship Id="rId9" Type="${DOC_REL}/header" Target="header1.xml"/></Relationships>`),
+    },
+  ]);
+}
+
+/** A two-sheet .xlsx with shared strings, a styled cell and an image part. */
+function xlsxFixture(): Uint8Array {
+  const sheet1 =
+    `${DECL}<worksheet xmlns="${S_NS}"><sheetData>` +
+    '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1"><v>10</v></c></row>' +
+    '<row r="2"><c r="A2" t="s"><v>1</v></c><c r="B2" s="2"><v>20</v></c></row>' +
+    '<row r="3"><c r="A3" t="s"><v>0</v></c><c r="B3"><v>30</v></c></row>' +
+    '</sheetData></worksheet>';
+  const sheet2 = `${DECL}<worksheet xmlns="${S_NS}"><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row></sheetData></worksheet>`;
+  return writeZip([
+    {
+      name: '[Content_Types].xml',
+      data: utf8(contentTypes([
+        '<Default Extension="png" ContentType="image/png"/>',
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>',
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>',
+        '<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>',
+        '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>',
+      ])),
+    },
+    {
+      name: '_rels/.rels',
+      data: utf8(`${DECL}<Relationships xmlns="${RELS_NS}">` +
+        `<Relationship Id="rId1" Type="${DOC_REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>`),
+    },
+    {
+      name: 'xl/workbook.xml',
+      data: utf8(`${DECL}<workbook xmlns="${S_NS}" xmlns:r="${DOC_REL}"><sheets>` +
+        '<sheet name="First" sheetId="1" r:id="rId1"/><sheet name="Second" sheetId="2" r:id="rId2"/>' +
+        '</sheets></workbook>'),
+    },
+    {
+      name: 'xl/_rels/workbook.xml.rels',
+      data: utf8(`${DECL}<Relationships xmlns="${RELS_NS}">` +
+        `<Relationship Id="rId1" Type="${DOC_REL}/worksheet" Target="worksheets/sheet1.xml"/>` +
+        `<Relationship Id="rId2" Type="${DOC_REL}/worksheet" Target="worksheets/sheet2.xml"/>` +
+        '</Relationships>'),
+    },
+    { name: 'xl/sharedStrings.xml', data: utf8(`${DECL}<sst xmlns="${S_NS}" count="3" uniqueCount="2"><si><t>Alpha</t></si><si><t>Beta</t></si></sst>`) },
+    { name: 'xl/styles.xml', data: utf8(`${DECL}<styleSheet xmlns="${S_NS}"><cellXfs count="3"><xf/><xf/><xf/></cellXfs></styleSheet>`) },
+    { name: 'xl/worksheets/sheet1.xml', data: utf8(sheet1) },
+    { name: 'xl/worksheets/sheet2.xml', data: utf8(sheet2) },
+    { name: 'xl/media/image1.png', data: IMAGE },
+  ]);
+}
+
+/** A two-slide .pptx with run properties and an image part. */
+function pptxFixture(): Uint8Array {
+  const slide = (body: string): string =>
+    `${DECL}<p:sld xmlns:a="${A_NS}" xmlns:p="${P_NS}"><p:cSld><p:spTree><p:sp><p:txBody>` +
+    `<a:bodyPr/><a:lstStyle/>${body}</p:txBody></p:sp></p:spTree></p:cSld></p:sld>`;
+  return writeZip([
+    { name: '[Content_Types].xml', data: utf8(contentTypes(['<Default Extension="png" ContentType="image/png"/>'])) },
+    {
+      name: 'ppt/slides/slide1.xml',
+      data: utf8(slide('<a:p><a:pPr algn="ctr"/><a:r><a:rPr lang="ar-SA" b="1"/><a:t>العنوان</a:t></a:r></a:p>')),
+    },
+    {
+      name: 'ppt/slides/slide2.xml',
+      data: utf8(slide(
+        '<a:p><a:r><a:rPr lang="en-US" i="1"/><a:t xml:space="preserve">First </a:t></a:r>' +
+        '<a:r><a:rPr lang="en-US"/><a:t>slide</a:t></a:r></a:p>' +
+        '<a:p><a:r><a:t>Second</a:t></a:r></a:p>',
+      )),
+    },
+    { name: 'ppt/media/image1.png', data: IMAGE },
+    { name: 'ppt/theme/theme1.xml', data: utf8(`${DECL}<a:theme xmlns:a="${A_NS}" name="Office Theme"/>`) },
+  ]);
+}
+
+describe('the office surgical save', () => {
+  it('patches one .docx paragraph and leaves every other entry byte-for-byte', async () => {
+    const fixture = docxFixture();
+    const store = memVfs({ '/home/user/report.docx': fixture });
+    const { content, launch } = harness(store.vfs);
+    launch('/home/user/report.docx');
+    await settle();
+
+    const areas = textareas(content);
+    expect(areas.map((area) => area.value)).toEqual(['Hello world', 'second paragraph']);
+    const first = areas[0];
+    if (!first) return;
+    first.value = 'مرحباً بالعالم';
+    first.dispatchEvent(new Event('input', { bubbles: true }));
+    button(content, t('office.save'))?.click();
+    await until(() => meta(content).includes(t('office.clean')) && store.files.has('/home/user/report.docx.bak'));
+
+    const saved = store.files.get('/home/user/report.docx') ?? new Uint8Array();
+    // (a) every ZIP entry except word/document.xml is byte-identical to the original.
+    const before = recordsOf(fixture);
+    const after = recordsOf(saved);
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    for (const [name, record] of before) {
+      if (name === 'word/document.xml') continue;
+      expect(identicalBytes(record, after.get(name)), name).toBe(true);
+    }
+    // (b) the edited text reads back through the reader, and only it changed.
+    expect(await readDocx(saved)).toEqual(['مرحباً بالعالم', 'second paragraph']);
+    // (c) the package still opens, and what the reader never modelled is still in it.
+    expect(await everyPartParses(saved)).toBe(true);
+    const xml = await partText(saved, 'word/document.xml');
+    expect(xml).toContain('<w:pStyle w:val="Fancy"/>');
+    expect(xml).toContain('<w:rPr><w:b/></w:rPr>');
+    expect(xml).toContain('<w:rPr><w:i/></w:rPr>');
+    expect(xml).toContain('<w:p><w:pPr><w:pStyle w:val="Fancy"/></w:pPr><w:r><w:t>second paragraph</w:t></w:r></w:p>');
+    expect(xml).not.toContain('world');
+    // A patched file grows or shrinks a little; it does not collapse to a minimal package.
+    expect(saved.length).toBeGreaterThan(fixture.length / 2);
+    expect(store.files.get('/home/user/report.docx.bak')).toEqual(fixture);
+  });
+
+  it('patches one .xlsx cell pair and touches only that sheet and the shared strings', async () => {
+    const fixture = xlsxFixture();
+    const store = memVfs({ '/home/user/table.xlsx': fixture });
+    const { content, launch } = harness(store.vfs);
+    launch('/home/user/table.xlsx');
+    await settle();
+
+    expect(cell(content, 1, 0)?.value).toBe('Beta');
+    const text = cell(content, 1, 0);
+    const number = cell(content, 1, 1);
+    if (!text || !number) return;
+    typeValue(text, 'Gamma');
+    typeValue(number, '25');
+    button(content, t('office.save'))?.click();
+    await until(() => meta(content).includes(t('office.clean')) && store.files.has('/home/user/table.xlsx.bak'));
+
+    const saved = store.files.get('/home/user/table.xlsx') ?? new Uint8Array();
+    const before = recordsOf(fixture);
+    const after = recordsOf(saved);
+    expect([...after.keys()].sort()).toEqual([...before.keys()].sort());
+    const changed = [...before.keys()].filter((name) => !identicalBytes(before.get(name), after.get(name)));
+    expect(changed.sort()).toEqual(['xl/sharedStrings.xml', 'xl/worksheets/sheet1.xml']);
+
+    const sheets = await readXlsx(saved);
+    expect(sheets.map((sheet) => sheet.name)).toEqual(['First', 'Second']);
+    expect(sheets[0]?.rows[1]).toEqual(['Gamma', '25']);
+    expect(sheets[1]?.rows[0]).toEqual(['Alpha']);
+    expect(await everyPartParses(saved)).toBe(true);
+
+    // The shared string was appended; the existing entries kept their bytes, and the
+    // cell kept its style attribute.
+    const shared = await partText(saved, 'xl/sharedStrings.xml');
+    expect(shared).toContain('<si><t>Alpha</t></si><si><t>Beta</t></si>');
+    expect(shared).toContain('<si><t xml:space="preserve">Gamma</t></si>');
+    expect(shared).toContain('uniqueCount="3"');
+    expect(await partText(saved, 'xl/worksheets/sheet1.xml')).toContain('<c r="B2" s="2"><v>25</v></c>');
+  });
+
+  it('patches the edited slide of a .pptx and keeps its run properties', async () => {
+    const fixture = pptxFixture();
+    const store = memVfs({ '/home/user/deck.pptx': fixture });
+    const { content, launch } = harness(store.vfs);
+    launch('/home/user/deck.pptx');
+    await settle();
+
+    const areas = textareas(content);
+    expect(areas.map((area) => area.value)).toEqual(['العنوان', 'First slide', 'Second']);
+    const second = areas[2];
+    if (!second) return;
+    second.value = 'الثاني';
+    second.dispatchEvent(new Event('input', { bubbles: true }));
+    button(content, t('office.save'))?.click();
+    await until(() => meta(content).includes(t('office.clean')) && store.files.has('/home/user/deck.pptx.bak'));
+
+    const saved = store.files.get('/home/user/deck.pptx') ?? new Uint8Array();
+    const before = recordsOf(fixture);
+    const after = recordsOf(saved);
+    const changed = [...before.keys()].filter((name) => !identicalBytes(before.get(name), after.get(name)));
+    expect(changed).toEqual(['ppt/slides/slide2.xml']);
+    expect(await readPptx(saved)).toEqual([['العنوان'], ['First slide', 'الثاني']]);
+    expect(await everyPartParses(saved)).toBe(true);
+    const xml = await partText(saved, 'ppt/slides/slide2.xml');
+    expect(xml).toContain('<a:rPr lang="en-US" i="1"/>');
+    expect(xml).toContain('First ');
+    expect(xml).not.toContain('Second');
+  });
+
+  it('warns before a structural edit rebuilds the file, and keeps the original in the .bak', async () => {
+    const fixture = xlsxFixture();
+    const store = memVfs({ '/home/user/table.xlsx': fixture });
+    const { content, launch } = harness(store.vfs);
+    launch('/home/user/table.xlsx');
+    await settle();
+
+    button(content, t('office.addRow'))?.click(); // a row added: not expressible surgically
+    await settle();
+    button(content, t('office.save'))?.click();
+    await until(() => store.files.has('/home/user/table.xlsx.bak'));
+
+    const call = vi.mocked(shellConfirm).mock.calls.find(([options]) => options.title === t('office.rebuildTitle'));
+    expect(call, 'the rebuild warning').toBeDefined();
+    expect(call?.[0].okLabel).toBe(t('office.rebuildOk'));
+    expect(call?.[0].message).toContain('table.xlsx.bak');
+    expect(t('office.rebuildBody', { name: 'x' })).not.toBe('office.rebuildBody');
+
+    const saved = store.files.get('/home/user/table.xlsx') ?? new Uint8Array();
+    // The rebuild wrote a fresh minimal package: the image part is gone from it...
+    expect(zipEntries(saved).map((entry) => entry.name)).not.toContain('xl/media/image1.png');
+    expect(zipEntries(saved).map((entry) => entry.name)).not.toContain('xl/sharedStrings.xml');
+    // ...and the .bak is the only copy of the original.
+    expect(store.files.get('/home/user/table.xlsx.bak')).toEqual(fixture);
+
+    // Cancelling the warning writes nothing at all.
+    const beforeCancel = store.files.get('/home/user/table.xlsx');
+    vi.mocked(shellConfirm).mockResolvedValueOnce(false);
+    button(content, t('office.addRow'))?.click();
+    await settle();
+    button(content, t('office.save'))?.click();
+    await settle();
+    expect(store.files.get('/home/user/table.xlsx')).toEqual(beforeCancel);
+  });
+
+  it('writes paragraph formatting into the .docx from the toolbar, and reads it back on reopen', async () => {
+    const fixture = docxFixture();
+    const store = memVfs({ '/home/user/format.docx': fixture });
+    const { content, launch } = harness(store.vfs);
+    launch('/home/user/format.docx');
+    await settle();
+
+    // The second paragraph has no formatting of its own, so every toggle is an "on".
+    const area = textareas(content)[1];
+    if (!area) return;
+    area.focus();
+    const bold = button(content, t('office.formatBold'));
+    expect(bold?.disabled).toBe(false);
+    bold?.click();
+    button(content, t('office.formatAlignRight'))?.click();
+    const size = content.querySelector<HTMLSelectElement>('select.faisal-office-fsize');
+    if (!size) return;
+    size.value = '14';
+    size.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    expect(bold?.getAttribute('aria-pressed')).toBe('true');
+    expect(content.querySelector('[data-align="right"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(meta(content)).toContain(t('office.dirty'));
+
+    button(content, t('office.save'))?.click();
+    await until(() => meta(content).includes(t('office.clean')) && store.files.has('/home/user/format.docx.bak'));
+
+    const saved = store.files.get('/home/user/format.docx') ?? new Uint8Array();
+    const xml = await partText(saved, 'word/document.xml');
+    expect(xml).toContain('<w:rPr><w:b/></w:rPr>');
+    expect(xml).toContain('<w:jc w:val="right"/>');
+    expect(xml).toContain('<w:sz w:val="28"/>');
+    // Only the document part changed; the styles, header and image travelled along.
+    const before = recordsOf(fixture);
+    const after = recordsOf(saved);
+    expect([...before.keys()].filter((name) => !identicalBytes(before.get(name), after.get(name)))).toEqual(['word/document.xml']);
+    expect(await readDocx(saved)).toEqual(['Hello world', 'second paragraph']);
+
+    // Reopening shows the same formatting, because the toolbar reads the file.
+    const reopened = harness(memVfs({ '/home/user/format.docx': saved }).vfs);
+    reopened.launch('/home/user/format.docx');
+    await settle();
+    textareas(reopened.content)[1]?.focus(); // the formatting belongs to paragraph 2
+    await settle();
+    expect(button(reopened.content, t('office.formatBold'))?.getAttribute('aria-pressed')).toBe('true');
+    expect(reopened.content.querySelector('[data-align="right"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(reopened.content.querySelector<HTMLSelectElement>('select.faisal-office-fsize')?.value).toBe('14');
+  });
+
+  it('computes a formula typed into a cell, shows it, and writes it with its result', async () => {
+    const fixture = xlsxFixture();
+    const store = memVfs({ '/home/user/calc.xlsx': fixture });
+    const { content, launch } = harness(store.vfs);
+    launch('/home/user/calc.xlsx');
+    await settle();
+
+    const target = cell(content, 2, 1); // B3
+    if (!target) return;
+    typeValue(target, '=SUM(B1:B2)');
+    await settle();
+    expect(target.value).toBe('=SUM(B1:B2)'); // the cell shows the formula
+    expect(content.querySelector('.faisal-office-status')?.textContent).toContain('30'); // 10 + 20
+
+    button(content, t('office.save'))?.click();
+    await until(() => meta(content).includes(t('office.clean')) && store.files.has('/home/user/calc.xlsx.bak'));
+
+    const saved = store.files.get('/home/user/calc.xlsx') ?? new Uint8Array();
+    const sheet = await partText(saved, 'xl/worksheets/sheet1.xml');
+    expect(sheet).toContain('<c r="B3"><f>SUM(B1:B2)</f><v>30</v></c>');
+    expect((await readXlsx(saved))[0]?.rows[2]).toEqual(['Alpha', '30']);
+    // Only the sheet changed: the second sheet and the image part are byte-identical.
+    const before = recordsOf(fixture);
+    const after = recordsOf(saved);
+    expect([...before.keys()].filter((name) => !identicalBytes(before.get(name), after.get(name)))).toEqual(['xl/worksheets/sheet1.xml']);
+  });
+
+  it('keeps a formula when a structural edit takes the rebuild path', async () => {
+    const store = memVfs({ '/home/user/calc.xlsx': xlsxFixture() });
+    const { content, launch } = harness(store.vfs);
+    launch('/home/user/calc.xlsx');
+    await settle();
+
+    const target = cell(content, 2, 1); // B3
+    if (!target) return;
+    typeValue(target, '=AVERAGE(B1:B2)'); // 15
+    await settle();
+    button(content, t('office.addRow'))?.click(); // a row added: the rebuild path
+    await settle();
+    button(content, t('office.save'))?.click();
+    await until(() => store.files.has('/home/user/calc.xlsx.bak'));
+
+    expect(vi.mocked(shellConfirm)).toHaveBeenCalledWith(expect.objectContaining({ title: t('office.rebuildTitle') }));
+    const saved = store.files.get('/home/user/calc.xlsx') ?? new Uint8Array();
+    // The rebuilt package writes the formula and the value this app computed.
+    expect(await partText(saved, 'xl/worksheets/sheet1.xml')).toContain('<f>AVERAGE(B1:B2)</f><v>15</v>');
+    expect((await readXlsx(saved))[0]?.rows[2]?.[1]).toBe('15');
   });
 });

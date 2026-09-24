@@ -78,6 +78,54 @@
 }
 .faisal-office-hint { font-size: 12px; opacity: .7; }
 
+/* ───────────────── paragraph formatting (Word) ───────────────── */
+
+/*
+ * One small bar: bold · italic · underline · size · alignment. It wraps instead
+ * of overflowing, and every control is a 44px touch target.
+ */
+.faisal-office-format {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--faisal-surface-2, #283042);
+  border-block-end: 1px solid var(--faisal-border, rgba(255,255,255,.11));
+}
+.faisal-office-fbtn {
+  appearance: none;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--faisal-border, rgba(255,255,255,.18));
+  border-radius: var(--faisal-radius-sm, 6px);
+  background: var(--faisal-surface-3, #343d52);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.faisal-office-fbtn[aria-pressed="true"] {
+  background: var(--faisal-accent, #3c6eb4);
+  color: var(--faisal-accent-fg, #fff);
+  border-color: transparent;
+}
+.faisal-office-fbtn:disabled { opacity: .45; cursor: default; }
+.faisal-office-fbtn:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring-invert, #F0CF7A);
+  outline-offset: 2px;
+}
+.faisal-office-fsize {
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px solid var(--faisal-border, rgba(255,255,255,.18));
+  border-radius: var(--faisal-radius-sm, 6px);
+  background: var(--faisal-surface-3, #343d52);
+  color: inherit;
+  font: inherit;
+}
+
 .faisal-office-notice {
   flex: none;
   margin: 0;
