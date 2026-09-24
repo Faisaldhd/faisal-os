@@ -570,12 +570,6 @@ function launch(ctx: AppContext) {
     const bridge = nativeWeb();
     if (!bridge) return [];
 
-    const appRow = row('settings.about.appVersionLabel');
-    const appValue = document.createElement('span');
-    appValue.className = 'faisal-about-version';
-    appValue.dir = 'ltr';
-    appRow.control.append(appValue);
-
     const updRow = row('settings.about.updatesLabel');
     const status = document.createElement('div');
     status.className = 'faisal-settings-row-desc';
@@ -592,8 +586,7 @@ function launch(ctx: AppContext) {
     let state: UpdateState = { status: 'idle' };
     const show = (next: UpdateState) => {
       state = next;
-      const version = next.version ?? '';
-      status.textContent = t(`settings.about.update.${next.status}`, { version, percent: String(next.percent ?? 0) });
+      status.textContent = t(`settings.about.update.${next.status}`, { percent: String(next.percent ?? 0) });
       bar.hidden = next.status !== 'downloading';
       bar.value = next.percent ?? 0;
       btn.hidden = next.status === 'dev';
@@ -608,11 +601,11 @@ function launch(ctx: AppContext) {
     show(state);
     stopUpdateWatch = bridge.onUpdateStatus(show);
     void bridge.appInfo().then((info) => {
-      appValue.textContent = info.version;
       show(info.update);
     }).catch(() => { /* bridge unavailable: rows stay as rendered */ });
 
-    return [appRow.row, updRow.row];
+    // One version number everywhere (the OS version below); the app only adds its update button.
+    return [updRow.row];
   }
 
   function renderAbout() {
@@ -639,8 +632,7 @@ function launch(ctx: AppContext) {
     tagline.textContent = t('settings.about.tagline');
     block.append(mark, wordmarks, name, arName, tagline);
 
-    // On desktop the app has its own version too, so name this one precisely.
-    const versionRow = row(nativeWeb() ? 'settings.about.osVersionLabel' : 'settings.about.versionLabel');
+    const versionRow = row('settings.about.versionLabel');
     const versionValue = document.createElement('span');
     versionValue.className = 'faisal-about-version';
     versionValue.dir = 'ltr';
