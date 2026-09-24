@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { PDFArray, PDFDocument, StandardFonts, degrees } from 'pdf-lib';
+import { PDFArray, PDFDocument, PDFName, PDFRawStream, StandardFonts, decodePDFRawStream, degrees } from 'pdf-lib';
 import {
-  addWatermark, cropPages, extractPages, imagesToPdf, loadPdf, mergePdfs, removePages, reorderPages,
-  rotatePages, setMetadata, verifyOutput, type DocInfo, type LoadResult, type OpResult,
+  addImageSignature, addText, addTypedSignature, addWatermark, coverRegion, cropPages, duplicatePages,
+  extractPages, fillFormFields, imagesToPdf, insertBlankPage, loadPdf, mergePdfs, readFormFields,
+  removePages, reorderPages, rotatePages, setMetadata, verifyOutput,
+  type DocInfo, type LoadResult, type OpResult,
 } from './pdfdoc';
 import { imagePageLayout } from './ops';
 
@@ -111,6 +113,39 @@ const contentsOf = (doc: PDFDocument, index: number): number => {
   if (contents instanceof PDFArray) return contents.size();
   return contents ? 1 : 0;
 };
+
+/**
+ * A page's content stream decoded back to text. pdf-lib deflates what it draws, so this is
+ * the only way a test can see the operators that really reached the file.
+ */
+function contentOf(doc: PDFDocument, index: number): string {
+  const contents = doc.getPage(index).node.Contents();
+  const refs = contents instanceof PDFArray ? contents.asArray() : contents ? [contents] : [];
+  let out = '';
+  for (const ref of refs) {
+    const stream = doc.context.lookup(ref);
+    if (stream instanceof PDFRawStream) out += new TextDecoder().decode(decodePDFRawStream(stream).decode());
+  }
+  return out;
+}
+
+/** The hex pdf-lib writes for a piece of ASCII text (`hello` → `68656c6c6f`). */
+const hexOf = (text: string): string =>
+  [...new TextEncoder().encode(text)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+
+/** A real AcroForm built by pdf-lib: a nested text field and a checkbox, optionally prefilled. */
+async function makeFormPdf(text = '', checked = false): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const page = doc.addPage([300, 300]);
+  const form = doc.getForm();
+  const name = form.createTextField('owner.name');
+  name.addToPage(page, { x: 20, y: 220, width: 200, height: 24 });
+  if (text) name.setText(text);
+  const agree = form.createCheckBox('agree');
+  agree.addToPage(page, { x: 20, y: 180, width: 18, height: 18 });
+  if (checked) agree.check();
+  return Uint8Array.from(await doc.save({ useObjectStreams: false }));
+}
 
 /* ───────────────────────────── opening ───────────────────────────── */
 
@@ -295,6 +330,283 @@ describe('text watermark', () => {
     const result = await addWatermark(source, [0], { text: 'مسودة', size: 40, opacity: 0.2, rotation: 0 });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe('textNotRenderable');
+  });
+});
+
+/* ───────────────────────── added text ───────────────────────── */
+
+describe('adding text to a page', () => {
+  it('adds a text-showing operator, keeps the page count and still parses', async () => {
+    const source = await makePdf([{ w: 300, h: 300 }, { w: 200, h: 200 }]);
+    const before = await reread(source);
+    expect(contentOf(before, 0)).not.toContain('Tj');
+
+    const result = await addText(source, {
+      page: 0, text: 'INVOICE 2026', size: 18, x: 30, y: 40, font: 'helveticaBold', color: '#ff0000',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.verified).toContain('content[0]=Tj');
+
+    const out = await reread(result.bytes);
+    expect(out.getPageCount()).toBe(2);
+    const stream = contentOf(out, 0);
+    expect(stream).toContain('Tj');
+    expect(stream.toLowerCase()).toContain(hexOf('INVOICE 2026'));
+    expect(stream).toContain('1 0 0 rg');
+    // The untouched page gained no content stream at all.
+    expect(contentsOf(out, 1)).toBe(contentsOf(before, 1));
+  });
+
+  it('refuses Arabic (the standard fonts cannot encode it) and writes nothing', async () => {
+    const source = await makePdf([{ w: 300, h: 300 }]);
+    const result = await addText(source, { page: 0, text: 'فاتورة', size: 18, x: 10, y: 10, font: 'helvetica', color: '#000000' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('textNotRenderable');
+  });
+
+  it('refuses a page that is not in the document and a point outside the page', async () => {
+    const source = await makePdf([{ w: 300, h: 300 }]);
+    const base = { text: 'hi', size: 18, font: 'helvetica', color: '#000000' } as const;
+    expect((await addText(source, { ...base, page: 4, x: 10, y: 10 })).ok).toBe(false);
+    expect((await addText(source, { ...base, page: 0, x: 900, y: 10 })).ok).toBe(false);
+    expect((await addText(source, { ...base, page: 0, x: 10, y: 10 })).ok).toBe(true);
+  });
+
+  it('maps a non-PDF and a broken PDF to the same refusals opening uses', async () => {
+    const base = { page: 0, text: 'hi', size: 18, x: 10, y: 10, font: 'helvetica', color: '#000000' } as const;
+    const notPdf = await addText(bytesOf('hello, not a pdf'), base);
+    expect(notPdf.ok).toBe(false);
+    if (!notPdf.ok) expect(notPdf.code).toBe('notPdf');
+    const broken = await addText(bytesOf('%PDF-1.7\nthis body is not a document at all\n'), base);
+    expect(broken.ok).toBe(false);
+    if (!broken.ok) expect(broken.code).toBe('corrupt');
+  });
+});
+
+/* ─────────────────────── cover a region ─────────────────────── */
+
+describe('covering a region', () => {
+  it('draws a filled rectangle and the rectangle operator is in the produced stream', async () => {
+    const source = await makePdf([{ w: 300, h: 300 }]);
+    const result = await coverRegion(source, {
+      page: 0, shape: 'rect', x: 20, y: 40, width: 120, height: 60, color: '#ffffff',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.verified).toContain('content[0]=re');
+    const out = await reread(result.bytes);
+    expect(out.getPageCount()).toBe(1);
+    const stream = contentOf(out, 0);
+    expect(stream).toContain('20 40 120 60 re');
+    expect(stream).toContain('f');
+    expect(stream).toContain('1 1 1 rg');
+  });
+
+  it('draws an ellipse as a filled bezier path', async () => {
+    const source = await makePdf([{ w: 300, h: 300 }]);
+    const result = await coverRegion(source, {
+      page: 0, shape: 'ellipse', x: 40, y: 40, width: 120, height: 80, color: '#000000',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const stream = contentOf(await reread(result.bytes), 0);
+    expect(stream).toContain('c');
+    expect(stream).toContain('f');
+  });
+
+  it('hides nothing away: the text under the cover is STILL in the file (not redaction)', async () => {
+    const source = await makePdf([{ w: 300, h: 300, label: 'SECRET' }]);
+    const result = await coverRegion(source, {
+      page: 0, shape: 'rect', x: 0, y: 0, width: 300, height: 300, color: '#000000',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const stream = contentOf(await reread(result.bytes), 0);
+    // The cover is drawn AND the original text is still extractable — which is why the window
+    // calls this covering, never redaction.
+    expect(stream).toContain('re');
+    expect(stream.toLowerCase()).toContain(hexOf('SECRET'));
+  });
+
+  it('refuses a region outside the page and one with no area', async () => {
+    const source = await makePdf([{ w: 300, h: 300 }]);
+    expect((await coverRegion(source, { page: 0, shape: 'rect', x: 400, y: 10, width: 50, height: 50, color: '#000' })).ok).toBe(false);
+    expect((await coverRegion(source, { page: 0, shape: 'rect', x: 10, y: 10, width: 0, height: 50, color: '#000' })).ok).toBe(false);
+    expect((await coverRegion(source, { page: 9, shape: 'rect', x: 10, y: 10, width: 50, height: 50, color: '#000' })).ok).toBe(false);
+  });
+});
+
+/* ──────────────── blank page and duplicate ──────────────── */
+
+describe('blank page and duplicate', () => {
+  it('inserts one blank page in the middle and at the end, taking the neighbour size', async () => {
+    const source = await makePdf([{ w: 100, h: 100 }, { w: 200, h: 200 }, { w: 300, h: 300 }]);
+    const middle = await reread(await produced(await insertBlankPage(source, 1)));
+    expect(middle.getPageCount()).toBe(4);
+    expect(sizesOf(middle)).toEqual(['100x100', '200x200', '200x200', '300x300']);
+    const end = await reread(await produced(await insertBlankPage(source, 3)));
+    expect(sizesOf(end)).toEqual(['100x100', '200x200', '300x300', '300x300']);
+    // A position past the end is clamped to the end instead of failing.
+    const beyond = await reread(await produced(await insertBlankPage(source, 99)));
+    expect(sizesOf(beyond)).toEqual(['100x100', '200x200', '300x300', '300x300']);
+  });
+
+  it('duplicates the selected pages right after themselves, same size and rotation', async () => {
+    const source = await makePdf([{ w: 100, h: 100 }, { w: 200, h: 200, rotation: 90 }, { w: 300, h: 300 }]);
+    const result = await duplicatePages(source, [1]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const out = await reread(result.bytes);
+    expect(out.getPageCount()).toBe(4);
+    expect(sizesOf(out)).toEqual(['100x100', '200x200', '200x200', '300x300']);
+    expect(rotationsOf(out)).toEqual([0, 90, 90, 0]);
+  });
+
+  it('duplicates several pages and asserts the exact new count', async () => {
+    const source = await makePdf([{ w: 100, h: 100 }, { w: 200, h: 200 }, { w: 300, h: 300 }]);
+    const out = await reread(await produced(await duplicatePages(source, [0, 2])));
+    expect(out.getPageCount()).toBe(5);
+    expect(sizesOf(out)).toEqual(['100x100', '100x100', '200x200', '300x300', '300x300']);
+  });
+
+  it('refuses to duplicate nothing', async () => {
+    const source = await makePdf([{ w: 100, h: 100 }]);
+    const result = await duplicatePages(source, []);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('emptyResult');
+  });
+});
+
+/* ───────────────────────── form fields ───────────────────────── */
+
+describe('reading and filling a form', () => {
+  it('lists the text field and the checkbox with the values the file carries', async () => {
+    const read = await readFormFields(await makeFormPdf('draft', true));
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.hasForm).toBe(true);
+    expect(read.fields).toEqual([
+      { name: 'owner.name', kind: 'text', value: 'draft', checked: false, multiline: false, readOnly: false },
+      { name: 'agree', kind: 'checkbox', value: '', checked: true, multiline: false, readOnly: false },
+    ]);
+  });
+
+  it('says plainly that a document with no form has none', async () => {
+    const read = await readFormFields(await makePdf([{ w: 200, h: 200 }]));
+    expect(read).toEqual({ ok: true, hasForm: false, fields: [] });
+  });
+
+  it('fills the fields and reads the values back from the produced bytes', async () => {
+    const source = await makeFormPdf();
+    const result = await fillFormFields(source, [
+      { name: 'owner.name', kind: 'text', value: 'Faisal' },
+      { name: 'agree', kind: 'checkbox', checked: true },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.verified).toContain('field[owner.name]="Faisal"');
+
+    // Read back with pdf-lib directly, the way a reader would ask the file.
+    const out = await reread(result.bytes);
+    const form = out.getForm();
+    expect(form.getTextField('owner.name').getText()).toBe('Faisal');
+    expect(form.getCheckBox('agree').isChecked()).toBe(true);
+    // A reader that does not rebuild appearances needs the field's own appearance stream.
+    const widget = form.getTextField('owner.name').acroField.getWidgets()[0];
+    expect(widget.dict.lookup(PDFName.of('AP'))).toBeTruthy();
+  });
+
+  it('can turn a checkbox off and clear a text field again', async () => {
+    const source = await makeFormPdf('filled', true);
+    const out = await reread(await produced(await fillFormFields(source, [
+      { name: 'owner.name', kind: 'text', value: '' },
+      { name: 'agree', kind: 'checkbox', checked: false },
+    ])));
+    const form = out.getForm();
+    expect(form.getTextField('owner.name').getText() ?? '').toBe('');
+    expect(form.getCheckBox('agree').isChecked()).toBe(false);
+  });
+
+  it('writes a value the standard fonts cannot draw and asks the reader to build the appearance', async () => {
+    // Arabic in a form value: pdf-lib's appearance pass would throw on it, so the value is
+    // written anyway and /NeedAppearances tells the reader to draw it from the value.
+    const out = await reread(await produced(await fillFormFields(await makeFormPdf(), [
+      { name: 'owner.name', kind: 'text', value: 'فيصل' },
+    ])));
+    expect(out.getForm().getTextField('owner.name').getText()).toBe('فيصل');
+    expect(out.catalog.getAcroForm()?.dict.get(PDFName.of('NeedAppearances'))).toBeTruthy();
+  });
+
+  it('refuses a document with no AcroForm and an empty list of fills', async () => {
+    const plain = await makePdf([{ w: 200, h: 200 }]);
+    const noForm = await fillFormFields(plain, [{ name: 'x', kind: 'text', value: 'y' }]);
+    expect(noForm.ok).toBe(false);
+    if (!noForm.ok) expect(noForm.code).toBe('noForm');
+    const empty = await fillFormFields(await makeFormPdf(), []);
+    expect(empty.ok).toBe(false);
+    if (!empty.ok) expect(empty.code).toBe('emptyResult');
+  });
+
+  it('maps a non-PDF and a broken PDF to the same refusals opening uses', async () => {
+    const notPdf = await readFormFields(bytesOf('hello, not a pdf'));
+    expect(notPdf.ok).toBe(false);
+    if (!notPdf.ok) expect(notPdf.code).toBe('notPdf');
+    const broken = await readFormFields(bytesOf('%PDF-1.7\nthis body is not a document at all\n'));
+    expect(broken.ok).toBe(false);
+    if (!broken.ok) expect(broken.code).toBe('corrupt');
+  });
+});
+
+/* ───────────────────────── signature ───────────────────────── */
+
+describe('signatures', () => {
+  it('types a signature as large italic text, and the operator is in the produced file', async () => {
+    const source = await makePdf([{ w: 300, h: 300 }]);
+    const result = await addTypedSignature(source, {
+      page: 0, text: 'Faisal', size: 36, x: 40, y: 60, color: '#12294f',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const out = await reread(result.bytes);
+    expect(out.getPageCount()).toBe(1);
+    const stream = contentOf(out, 0);
+    expect(stream).toContain('Tj');
+    expect(stream.toLowerCase()).toContain(hexOf('Faisal'));
+    // The signature is drawn in the italic standard font, not the plain one.
+    expect(stream).toContain('/Times-Italic');
+  });
+
+  it('draws a real PNG signature picture and keeps the page count', async () => {
+    const source = await makePdf([{ w: 300, h: 300 }]);
+    const result = await addImageSignature(source, {
+      page: 0, x: 20, y: 20, width: 120, height: 90, image: { name: 'sign.png', bytes: png() },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.verified).toContain('content[0]=Do');
+    const out = await reread(result.bytes);
+    expect(out.getPageCount()).toBe(1);
+    expect(contentOf(out, 0)).toContain('Do');
+  });
+
+  it('refuses a picture that is not PNG/JPEG, a box off the page, and an empty typed signature', async () => {
+    const source = await makePdf([{ w: 300, h: 300 }]);
+    const gif = await addImageSignature(source, {
+      page: 0, x: 20, y: 20, width: 100, height: 50, image: { name: 'sig.gif', bytes: bytesOf('GIF89a................') },
+    });
+    expect(gif.ok).toBe(false);
+    if (!gif.ok) {
+      expect(gif.code).toBe('imageUnsupported');
+      expect(gif.detail).toContain('sig.gif');
+    }
+    // Half the signature off the right edge would be silently cut, so it is refused instead.
+    const offPage = await addImageSignature(source, {
+      page: 0, x: 260, y: 20, width: 100, height: 50, image: { name: 'sign.png', bytes: png() },
+    });
+    expect(offPage.ok).toBe(false);
+    const empty = await addTypedSignature(source, { page: 0, text: '   ', size: 36, x: 10, y: 10, color: '#000000' });
+    expect(empty.ok).toBe(false);
   });
 });
 

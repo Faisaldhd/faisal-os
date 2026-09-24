@@ -277,6 +277,59 @@
 .faisal-pdf-move.is-wide { font-size: 12px; padding-inline: 10px; }
 .faisal-pdf-move:disabled { opacity: .35; cursor: default; }
 
+/* The print frame is moved off-screen with a real size, never `display: none` and never 0×0:
+   some engines only print a frame that was laid out at a real size. `position: fixed` keeps it
+   out of the layout and out of the scroll range, so it cannot be seen or scrolled to. */
+.faisal-pdf-printframe {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline-start: -10000px;
+  width: 1024px;
+  height: 768px;
+  border: 0;
+  pointer-events: none;
+}
+
+/* ─────────── add-text, cover, page and form controls ─────────── */
+
+/* A colour swatch keeps the 44px touch target of every other field. */
+.faisal-pdf-color { padding: 2px 4px; min-width: 44px; }
+
+/* The sentence that says "covering, not redaction" must not read like fine print. */
+.faisal-pdf-p.is-honest {
+  padding-inline-start: 8px;
+  border-inline-start: 3px solid var(--faisal-focus-ring-invert, #F0CF7A);
+}
+
+.faisal-pdf-formpanel { display: flex; flex-direction: column; gap: 6px; }
+.faisal-pdf-formpanel > .faisal-pdf-hint { flex: 1 1 100%; }
+
+/* A wrapping label: the whole row is the touch target, so radio and checkbox rows stay 44px. */
+.faisal-pdf-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 140px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
+/* The control's own BOX is 44px too, not only the label around it: 22px of content + 11px of
+   padding on each side. Browsers draw the glyph at the content size and centre it in the
+   padding box, so the control still looks normal while the touch target meets the 44px rule.
+   Pinned by `pdf-css.test.ts`. */
+.faisal-pdf-check input[type="radio"],
+.faisal-pdf-check input[type="checkbox"],
+.faisal-pdf-field input[type="radio"],
+.faisal-pdf-field input[type="checkbox"] {
+  box-sizing: content-box;
+  width: 22px;
+  height: 22px;
+  padding: 11px;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
 /* ───────────────────────── file lists, meta, limits ───────────────────────── */
 
 .faisal-pdf-list { display: flex; flex-direction: column; gap: 6px; margin-block: 6px; }

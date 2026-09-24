@@ -3,18 +3,26 @@
  *
  * WHAT IT DOES: opens a `.pdf`, shows it in the browser's own viewer through a blob URL
  * (the same approach as the File Viewer — no pdf.js is bundled), and edits the pages with
- * pdf-lib: merge, split/extract, reorder, delete, rotate, crop, text watermark, metadata
- * and images → PDF. Every operation ends by re-reading the produced bytes before the window
- * says it worked, and saving writes a NEW file unless the owner explicitly asks to replace
- * the original — and then exactly one `.bak` is written first.
+ * pdf-lib: merge, split/extract, reorder, delete, rotate, crop, text watermark, metadata,
+ * images → PDF, and the content tools — ADD TEXT on a page point, ADD A SIGNATURE (typed in a
+ * large italic font, or a PNG/JPEG picture from the device), FILL THE ACOFORM FIELDS the
+ * document already carries, COVER a region (hiding, explicitly not redaction), INSERT A BLANK
+ * PAGE and DUPLICATE the selected pages. PRINT opens the browser's own print dialog for the
+ * working PDF through an off-screen iframe — never `window.print()`, which would print the
+ * whole desktop. Every operation ends by re-reading the produced bytes before the window says
+ * it worked, and saving writes a NEW file unless the owner explicitly asks to replace the
+ * original — and then exactly one `.bak` is written first.
  *
  * WHAT IT REFUSES, and why: encrypted/password-protected PDFs (pdf-lib refuses them),
- * non-PDF files, files that fail to parse, images that are not PNG/JPEG, and watermark text
- * in characters the built-in PDF fonts cannot draw (Arabic included). Each refusal has its
- * own bilingual message and writes nothing.
+ * non-PDF files, files that fail to parse, images that are not PNG/JPEG, filling a document
+ * that has no AcroForm, and text in characters the standard PDF fonts cannot draw (Arabic
+ * included). Each refusal has its own bilingual message and writes nothing.
  *
- * WHAT IT CANNOT DO (also listed in the window): change text that is already in the
- * document, OCR, digital signatures, form filling, or rasterise pages to images.
+ * WHAT IT CANNOT DO (also listed in the window): change or delete text that is already in the
+ * document, true redaction (covering draws over the content — the words stay in the file and
+ * stay extractable), lock or unlock a PDF with a password (pdf-lib has no encryption and no
+ * heavy encryption library will be added), reuse the page's own embedded fonts, OCR, digital
+ * signatures, creating new form fields, or rasterise pages to images.
  *
  * Everything user-visible is set with `textContent`; no `innerHTML` anywhere for file or
  * user content. The only permission is `fs:home`.
@@ -26,12 +34,16 @@ import { t } from '../../kernel/i18n';
 import { nativeWeb } from '../../shell/native-web';
 import { formatBytes } from '../files/format';
 import {
-  buildMergePlan, buildSplitPlan, checkWatermark, cropBoxFor, movePage, parsePageRanges, planSave, sniff,
-  type ImagePageMode, type Margins, type PdfRefusalCode, type RangeError,
+  buildMergePlan, buildSplitPlan, checkAddedText, checkWatermark, coverRectFor, cropBoxFor,
+  insertIndexFor, movePage, parsePageRanges, planSave, sniff, TEXT_FONTS,
+  type AddedTextCheck, type CoverShape, type ImagePageMode, type Margins,
+  type PdfRefusalCode, type RangeError, type TextFont,
 } from './ops';
 import {
-  addWatermark, cropPages, extractPages, imagesToPdf, loadPdf, mergePdfs, removePages, reorderPages,
-  rotatePages, setMetadata, type DocInfo, type OpResult,
+  addImageSignature, addText, addTypedSignature, addWatermark, coverRegion, cropPages, duplicatePages,
+  extractPages, fillFormFields, imagesToPdf, insertBlankPage, loadPdf, mergePdfs, readFormFields,
+  removePages, reorderPages, rotatePages, setMetadata,
+  type DocInfo, type FormFieldInfo, type FormReadResult, type OpResult, type SignatureImageInput,
 } from './pdfdoc';
 import { previewSave, saveBytes } from './save';
 import './strings';
@@ -40,8 +52,9 @@ import './pdf.css';
 /** How many page rows the list draws. Beyond this the range box is the tool (said in the window). */
 const PAGE_ROWS = 400;
 const LIMIT_KEYS = [
-  'pdf.limitTextEdit', 'pdf.limitNoOcr', 'pdf.limitNoSign', 'pdf.limitNoForms', 'pdf.limitNoRaster',
-  'pdf.limitNoFonts', 'pdf.limitEncrypted', 'pdf.limitQuality', 'pdf.limitLarge', 'pdf.limitList',
+  'pdf.limitTextEdit', 'pdf.limitNoRedaction', 'pdf.limitNoOcr', 'pdf.limitNoSign', 'pdf.limitNoForms',
+  'pdf.limitNoRaster', 'pdf.limitNoFonts', 'pdf.limitEncrypted', 'pdf.limitNoPassword', 'pdf.limitQuality',
+  'pdf.limitLarge', 'pdf.limitList',
 ];
 const IMAGE_TYPES = 'image/png,image/jpeg,.png,.jpg,.jpeg';
 const PDF_TYPES = 'application/pdf,.pdf';
@@ -59,15 +72,20 @@ function button(label: string, cls = 'faisal-pdf-btn'): HTMLButtonElement {
   return b;
 }
 
-/** A labelled input row: the label is bound to the field by id, so a tap on the label focuses it. */
-function field(id: string, labelKey: string, input: HTMLElement, hint?: string): HTMLElement {
+/** A labelled node whose label is literal text (a field name from the document, not a key). */
+function fieldNode(id: string, labelText: string, input: HTMLElement, hint?: string): HTMLElement {
   const wrap = el('div', 'faisal-pdf-field');
-  const label = el('label', 'faisal-pdf-label', t(labelKey));
+  const label = el('label', 'faisal-pdf-label', labelText);
   label.htmlFor = id;
   input.id = id;
   wrap.append(label, input);
   if (hint) wrap.append(el('div', 'faisal-pdf-hint', hint));
   return wrap;
+}
+
+/** A labelled input row: the label is bound to the field by id, so a tap on the label focuses it. */
+function field(id: string, labelKey: string, input: HTMLElement, hint?: string): HTMLElement {
+  return fieldNode(id, t(labelKey), input, hint);
 }
 
 function numberInput(id: string, value: number, min: number, max: number, step = 1): HTMLInputElement {
@@ -90,6 +108,27 @@ function textInput(id: string, value = ''): HTMLInputElement {
   input.autocomplete = 'off';
   input.spellcheck = false;
   return input;
+}
+
+/** A colour swatch and its hex value in one control, so a touch device can pick without typing. */
+function colorInput(id: string, value: string): HTMLInputElement {
+  const input = el('input', 'faisal-pdf-input faisal-pdf-color');
+  input.type = 'color';
+  input.id = id;
+  input.value = value;
+  return input;
+}
+
+/** A `<select>` styled like the other fields; `options` are [value, label-key] pairs. */
+function selectInput(id: string, options: [string, string][]): HTMLSelectElement {
+  const select = el('select', 'faisal-pdf-input');
+  select.id = id;
+  for (const [value, labelKey] of options) {
+    const option = el('option', undefined, t(labelKey));
+    option.value = value;
+    select.append(option);
+  }
+  return select;
 }
 
 const refusalKey = (code: string): string => code === 'noBytes'
@@ -158,6 +197,7 @@ function launch(ctx: AppContext): void {
     merge: [] as { name: string; bytes: Uint8Array; pageCount: number; ranges: string }[],
     images: [] as { name: string; bytes: Uint8Array }[],
     imageMode: 'a4' as ImagePageMode,
+    form: null as FormReadResult | null,
     saved: false,
     pane: 'view' as 'view' | 'edit',
     busy: false,
@@ -374,6 +414,14 @@ function launch(ctx: AppContext): void {
   function refreshPages(): void {
     pageList.textContent = '';
     refreshSelection();
+    // A page the owner selected is the page he is working on, so the text/cover forms follow it
+    // (unless he is typing a page number himself).
+    if (state.selection.size) {
+      const first = String(selected()[0] + 1);
+      if (document.activeElement !== textPage) textPage.value = first;
+      if (document.activeElement !== coverPage) coverPage.value = first;
+      if (document.activeElement !== signPage) signPage.value = first;
+    }
     if (!state.info) return;
     const total = state.info.pageCount;
     listLimited.textContent = total > PAGE_ROWS ? t('pdf.pagesLimited', { n: PAGE_ROWS }) : '';
@@ -450,8 +498,10 @@ function launch(ctx: AppContext): void {
     refreshInfo();
     refreshPages();
     refreshView();
+    refreshEditBounds();
     refreshMetadataForm();
     refreshMergeList();
+    await refreshForm();
     void refreshSaveTarget();
   }
 
@@ -459,6 +509,34 @@ function launch(ctx: AppContext): void {
   async function applyOrder(order: number[]): Promise<void> {
     if (!state.info) return;
     await applyOp(() => reorderPages(state.bytes, order), t('pdf.reorderDone'));
+  }
+
+  /**
+   * Keeps the edit forms inside the open document: no page number can point past the last
+   * page, and the coordinate boxes cannot offer a point off the widest/tallest page.
+   */
+  function refreshEditBounds(): void {
+    if (!state.info) return;
+    const count = state.info.pageCount;
+    let widest = 0;
+    let tallest = 0;
+    for (const page of state.info.pages) {
+      if (page.width > widest) widest = page.width;
+      if (page.height > tallest) tallest = page.height;
+    }
+    textPage.max = String(count);
+    coverPage.max = String(count);
+    signPage.max = String(count);
+    blankAt.max = String(count + 1);
+    for (const input of [textX, coverX, signX]) input.max = String(Math.ceil(widest));
+    for (const input of [textY, coverY, signY]) input.max = String(Math.ceil(tallest));
+  }
+
+  /** Re-reads the AcroForm from the working bytes and redraws the panel (or says there is none). */
+  async function refreshForm(): Promise<void> {
+    state.form = await readFormFields(state.bytes);
+    if (closed) return;
+    refreshFormPanel();
   }
 
   const opsIntro = el('h2', 'faisal-pdf-h2', t('pdf.opsTitle'));
@@ -539,7 +617,7 @@ function launch(ctx: AppContext): void {
   );
   const markApply = button(t('pdf.watermarkApply'), 'faisal-pdf-btn is-primary');
   markApply.addEventListener('click', () => {
-    if (!state.selection.size) { setStatus(t('pdf.selectionNone'), true); return; }
+    if (!state.info) return;
     const options = {
       text: markText.value,
       size: Number(markSize.value),
@@ -555,10 +633,311 @@ function launch(ctx: AppContext): void {
       setStatus(message, true);
       return;
     }
-    const count = state.selection.size;
-    void applyOp(() => addWatermark(state.bytes, selected(), options), t('pdf.watermarkDone', { n: count }));
+    // A watermark is a document-wide mark: with nothing selected it goes on every page,
+    // instead of asking the owner to select 51 pages first.
+    const pages = state.selection.size ? selected() : range(state.info.pageCount);
+    void applyOp(() => addWatermark(state.bytes, pages, options), t('pdf.watermarkDone', { n: pages.length }));
   });
   markCard.body.append(actionRow(markApply));
+
+  /* add text */
+  const FONT_LABEL: Record<TextFont, string> = {
+    helvetica: 'pdf.textFontHelvetica',
+    helveticaBold: 'pdf.textFontHelveticaBold',
+    timesRoman: 'pdf.textFontTimesRoman',
+    timesRomanItalic: 'pdf.textFontTimesItalic',
+    courier: 'pdf.textFontCourier',
+  };
+  const textCard = card('pdf.textTitle', 'pdf.textDesc');
+  const textValue = textInput('faisal-pdf-text-value');
+  textValue.dir = 'auto';
+  const textPage = numberInput('faisal-pdf-text-page', 1, 1, 1);
+  const textFont = selectInput('faisal-pdf-text-font', TEXT_FONTS.map((font): [string, string] => [font, FONT_LABEL[font]]));
+  const textSize = numberInput('faisal-pdf-text-size', 18, 4, 400);
+  const textColor = colorInput('faisal-pdf-text-color', '#1a1a1a');
+  const textX = numberInput('faisal-pdf-text-x', 72, 0, 20000);
+  const textY = numberInput('faisal-pdf-text-y', 72, 0, 20000);
+  const textApply = button(t('pdf.textApply'), 'faisal-pdf-btn is-primary');
+  textCard.body.append(
+    field('faisal-pdf-text-value', 'pdf.textValue', textValue),
+    actionRow(field('faisal-pdf-text-page', 'pdf.textPage', textPage), field('faisal-pdf-text-font', 'pdf.textFont', textFont)),
+    actionRow(field('faisal-pdf-text-size', 'pdf.textSize', textSize), field('faisal-pdf-text-color', 'pdf.textColor', textColor)),
+    actionRow(field('faisal-pdf-text-x', 'pdf.textX', textX), field('faisal-pdf-text-y', 'pdf.textY', textY)),
+    actionRow(textApply),
+    el('div', 'faisal-pdf-hint', t('pdf.textNote')),
+  );
+
+  function addedTextMessage(check: Extract<AddedTextCheck, { ok: false }>): string {
+    switch (check.error) {
+      case 'emptyText': return t('pdf.textErrorText');
+      case 'badSize': return t('pdf.textErrorSize');
+      case 'badPoint': return t('pdf.textErrorPoint');
+      case 'badColor': return t('pdf.textErrorColor');
+      case 'badFont': return t('pdf.textErrorFont');
+      default: return t('pdf.textErrorChars', { chars: check.chars ?? '' });
+    }
+  }
+
+  textApply.addEventListener('click', () => {
+    if (!state.info) return;
+    const page = Number(textPage.value) - 1;
+    if (!Number.isInteger(page) || page < 0 || page >= state.info.pageCount) {
+      setStatus(t('pdf.textErrorPage', { count: state.info.pageCount }), true);
+      return;
+    }
+    const input = {
+      page,
+      text: textValue.value,
+      size: Number(textSize.value),
+      x: Number(textX.value),
+      y: Number(textY.value),
+      font: textFont.value as TextFont,
+      color: textColor.value,
+    };
+    const check = checkAddedText(input, state.info.pages[page]);
+    if (!check.ok) { setStatus(addedTextMessage(check), true); return; }
+    void applyOp(() => addText(state.bytes, input), t('pdf.textDone', { n: page + 1 }));
+  });
+
+  /* signature: typed (large italic text) or a picture picked from the device */
+  const signCard = card('pdf.signTitle', 'pdf.signDesc');
+  const signValue = textInput('faisal-pdf-sign-value');
+  signValue.dir = 'auto';
+  const signPage = numberInput('faisal-pdf-sign-page', 1, 1, 1);
+  const signSize = numberInput('faisal-pdf-sign-size', 36, 4, 400);
+  const signColor = colorInput('faisal-pdf-sign-color', '#12294f');
+  const signX = numberInput('faisal-pdf-sign-x', 72, 0, 20000);
+  const signY = numberInput('faisal-pdf-sign-y', 72, 0, 20000);
+  const signApply = button(t('pdf.signApply'), 'faisal-pdf-btn is-primary');
+  const signImageAdd = button(t('pdf.signImageAdd'));
+  const signImageWidth = numberInput('faisal-pdf-sign-image-width', 160, 1, 20000);
+  const signImageHeight = numberInput('faisal-pdf-sign-image-height', 60, 1, 20000);
+  const signImageName = el('div', 'faisal-pdf-line', t('pdf.signImageNone'));
+  const signImageApply = button(t('pdf.signImageApply'), 'faisal-pdf-btn is-primary');
+  let signImage: { name: string; bytes: Uint8Array } | null = null;
+  signCard.body.append(
+    field('faisal-pdf-sign-value', 'pdf.signText', signValue),
+    actionRow(
+      field('faisal-pdf-sign-page', 'pdf.textPage', signPage),
+      field('faisal-pdf-sign-size', 'pdf.textSize', signSize),
+      field('faisal-pdf-sign-color', 'pdf.textColor', signColor),
+    ),
+    actionRow(field('faisal-pdf-sign-x', 'pdf.textX', signX), field('faisal-pdf-sign-y', 'pdf.textY', signY)),
+    actionRow(signApply),
+    el('div', 'faisal-pdf-label', t('pdf.signImage')),
+    actionRow(
+      signImageAdd,
+      field('faisal-pdf-sign-image-width', 'pdf.signImageWidth', signImageWidth),
+      field('faisal-pdf-sign-image-height', 'pdf.signImageHeight', signImageHeight),
+    ),
+    signImageName,
+    actionRow(signImageApply),
+  );
+
+  signApply.addEventListener('click', () => {
+    if (!state.info) return;
+    const page = Number(signPage.value) - 1;
+    if (!Number.isInteger(page) || page < 0 || page >= state.info.pageCount) {
+      setStatus(t('pdf.textErrorPage', { count: state.info.pageCount }), true);
+      return;
+    }
+    const input = {
+      page,
+      text: signValue.value,
+      size: Number(signSize.value),
+      x: Number(signX.value),
+      y: Number(signY.value),
+      color: signColor.value,
+    };
+    const check = checkAddedText({ ...input, font: 'timesRomanItalic' }, state.info.pages[page]);
+    if (!check.ok) { setStatus(addedTextMessage(check), true); return; }
+    void applyOp(() => addTypedSignature(state.bytes, input), t('pdf.signDone', { n: page + 1 }));
+  });
+
+  async function pickSignatureImage(): Promise<void> {
+    if (state.busy) return;
+    const picked = await pickFiles(IMAGE_TYPES);
+    if (closed || !picked.length) return;
+    const file = picked[0];
+    const kind = sniff(file.bytes);
+    if (kind !== 'png' && kind !== 'jpeg') {
+      setStatus(t('pdf.signImageRefused', { code: kind }), true);
+      return;
+    }
+    signImage = file;
+    signImageName.textContent = t('pdf.signImagePicked', { name: file.name });
+    setStatus(t('pdf.signImagePicked', { name: file.name }));
+  }
+
+  signImageAdd.addEventListener('click', () => { void pickSignatureImage(); });
+  signImageApply.addEventListener('click', () => {
+    if (!state.info) return;
+    const image = signImage;
+    if (!image) { setStatus(t('pdf.signImageNone'), true); return; }
+    const page = Number(signPage.value) - 1;
+    if (!Number.isInteger(page) || page < 0 || page >= state.info.pageCount) {
+      setStatus(t('pdf.textErrorPage', { count: state.info.pageCount }), true);
+      return;
+    }
+    const input: SignatureImageInput = {
+      page,
+      x: Number(signX.value),
+      y: Number(signY.value),
+      width: Number(signImageWidth.value),
+      height: Number(signImageHeight.value),
+      image,
+    };
+    const box = coverRectFor(input, state.info.pages[page]);
+    const same = (a: number, b: number): boolean => Math.abs(a - b) <= 0.01;
+    if (!box.ok || !same(box.rect.width, input.width) || !same(box.rect.height, input.height)
+      || !same(box.rect.x, input.x) || !same(box.rect.y, input.y)) {
+      setStatus(t('pdf.signImageErrorRect'), true);
+      return;
+    }
+    void applyOp(() => addImageSignature(state.bytes, input), t('pdf.signImageDone', { n: page + 1 }));
+  });
+
+  /* cover a region — hiding, explicitly NOT redaction */
+  const coverCard = card('pdf.coverTitle', 'pdf.coverDesc');
+  const coverNote = el('p', 'faisal-pdf-p is-honest', t('pdf.coverNote'));
+  const coverPage = numberInput('faisal-pdf-cover-page', 1, 1, 1);
+  const coverWidth = numberInput('faisal-pdf-cover-width', 300, 1, 20000);
+  const coverHeight = numberInput('faisal-pdf-cover-height', 60, 1, 20000);
+  const coverX = numberInput('faisal-pdf-cover-x', 72, 0, 20000);
+  const coverY = numberInput('faisal-pdf-cover-y', 120, 0, 20000);
+  const coverColor = colorInput('faisal-pdf-cover-color', '#ffffff');
+  const coverShapes: Record<CoverShape, HTMLInputElement> = {
+    rect: radio('faisal-pdf-cover-rect'),
+    ellipse: radio('faisal-pdf-cover-ellipse'),
+  };
+  const coverShapeRow = el('div', 'faisal-pdf-row');
+  for (const [shape, labelKey] of [['rect', 'pdf.coverRect'], ['ellipse', 'pdf.coverEllipse']] as [CoverShape, string][]) {
+    const input = coverShapes[shape];
+    input.name = 'faisal-pdf-cover-shape';
+    input.checked = shape === 'rect';
+    // The label wraps its input, so the whole 44px row is a touch target — nothing needs hover.
+    const label = el('label', 'faisal-pdf-check');
+    label.htmlFor = input.id;
+    label.append(input, el('span', 'faisal-pdf-label', t(labelKey)));
+    coverShapeRow.append(label);
+  }
+  const coverApply = button(t('pdf.coverApply'), 'faisal-pdf-btn is-primary');
+  coverCard.body.append(
+    coverNote,
+    el('div', 'faisal-pdf-label', t('pdf.coverShape')), coverShapeRow,
+    actionRow(field('faisal-pdf-cover-page', 'pdf.textPage', coverPage), field('faisal-pdf-cover-width', 'pdf.coverWidth', coverWidth), field('faisal-pdf-cover-height', 'pdf.coverHeight', coverHeight)),
+    actionRow(field('faisal-pdf-cover-x', 'pdf.textX', coverX), field('faisal-pdf-cover-y', 'pdf.textY', coverY), field('faisal-pdf-cover-color', 'pdf.textColor', coverColor)),
+    actionRow(coverApply),
+  );
+  coverApply.addEventListener('click', () => {
+    if (!state.info) return;
+    const page = Number(coverPage.value) - 1;
+    if (!Number.isInteger(page) || page < 0 || page >= state.info.pageCount) {
+      setStatus(t('pdf.coverErrorPage', { count: state.info.pageCount }), true);
+      return;
+    }
+    const shape: CoverShape = coverShapes.ellipse.checked ? 'ellipse' : 'rect';
+    const input = {
+      page,
+      shape,
+      x: Number(coverX.value),
+      y: Number(coverY.value),
+      width: Number(coverWidth.value),
+      height: Number(coverHeight.value),
+      color: coverColor.value,
+    };
+    const box = coverRectFor(input, state.info.pages[page]);
+    if (!box.ok) {
+      setStatus(box.error === 'badRect' ? t('pdf.coverErrorRect') : t('pdf.coverErrorOutside'), true);
+      return;
+    }
+    void applyOp(() => coverRegion(state.bytes, input), t('pdf.coverDone', { n: page + 1 }));
+  });
+
+  /* blank page + duplicate */
+  const pageopsCard = card('pdf.pageopsTitle', 'pdf.pageopsDesc');
+  const blankAt = numberInput('faisal-pdf-blank-at', 1, 1, 1);
+  const blankApply = button(t('pdf.blankApply'), 'faisal-pdf-btn is-primary');
+  const duplicateApply = button(t('pdf.duplicateApply'));
+  pageopsCard.body.append(field('faisal-pdf-blank-at', 'pdf.blankAt', blankAt), actionRow(blankApply, duplicateApply));
+  blankApply.addEventListener('click', () => {
+    if (!state.info) return;
+    const at = insertIndexFor(Number(blankAt.value), state.info.pageCount);
+    void applyOp(() => insertBlankPage(state.bytes, at), t('pdf.blankDone', { n: at + 1 }));
+  });
+  duplicateApply.addEventListener('click', () => {
+    if (!state.selection.size) { setStatus(t('pdf.pageopsNone'), true); return; }
+    const count = state.selection.size;
+    void applyOp(() => duplicatePages(state.bytes, selected()), t('pdf.duplicateDone', { n: count }));
+  });
+
+  /* form fields */
+  const formCard = card('pdf.formTitle', 'pdf.formDesc');
+  const formPanel = el('div', 'faisal-pdf-formpanel');
+  formCard.body.append(formPanel);
+  const formApply = button(t('pdf.formApply'), 'faisal-pdf-btn is-primary');
+  let formInputs: { name: string; kind: 'text' | 'checkbox'; input: HTMLInputElement }[] = [];
+
+  /** One form row: a text box for a text field, a labelled checkbox for a checkbox. */
+  function formRow(field: FormFieldInfo, index: number): HTMLElement {
+    const id = `faisal-pdf-form-${index}`;
+    if (field.kind === 'checkbox') {
+      const check = el('input', 'faisal-pdf-checkbox');
+      check.type = 'checkbox';
+      check.id = id;
+      check.checked = field.checked;
+      check.disabled = field.readOnly;
+      formInputs.push({ name: field.name, kind: 'checkbox', input: check });
+      const label = el('label', 'faisal-pdf-check');
+      label.htmlFor = id;
+      label.append(check, el('span', 'faisal-pdf-label', `${field.name} — ${t('pdf.formCheckbox')}`));
+      const wrap = el('div', 'faisal-pdf-field');
+      wrap.append(label);
+      if (field.readOnly) wrap.append(el('div', 'faisal-pdf-hint', t('pdf.formReadOnly')));
+      return wrap;
+    }
+    const input = textInput(id, field.value);
+    input.dir = 'auto';
+    input.disabled = field.readOnly;
+    formInputs.push({ name: field.name, kind: 'text', input });
+    return fieldNode(id, field.name, input, field.readOnly ? t('pdf.formReadOnly') : undefined);
+  }
+
+  function refreshFormPanel(): void {
+    if (!state.info) { formPanel.textContent = ''; formInputs = []; return; }
+    // Never rebuild the panel while the owner is typing in one of its fields. The apply button
+    // is deliberately excluded, so the panel does refresh after a value is written.
+    const active = document.activeElement;
+    if (active instanceof HTMLInputElement && formPanel.contains(active)) return;
+    formPanel.textContent = '';
+    formInputs = [];
+    const read = state.form;
+    if (!read) return;
+    if (!read.ok) {
+      formPanel.append(el('p', 'faisal-pdf-p is-error', t('pdf.formError', { message: t(refusalKey(read.code)) })));
+      return;
+    }
+    if (!read.hasForm) { formPanel.append(el('p', 'faisal-pdf-p is-muted', t('pdf.formNone'))); return; }
+    const fillable = read.fields.filter((item) => item.kind !== 'other');
+    if (!fillable.length) { formPanel.append(el('p', 'faisal-pdf-p is-muted', t('pdf.formNoneFillable'))); return; }
+    formPanel.append(el('div', 'faisal-pdf-line', t('pdf.formCount', { n: fillable.length })));
+    formPanel.append(el('div', 'faisal-pdf-hint', t('pdf.formAppearanceNote')));
+    fillable.forEach((item, index) => formPanel.append(formRow(item, index)));
+    if (read.fields.length > fillable.length) {
+      formPanel.append(el('div', 'faisal-pdf-hint', t('pdf.formOtherHint', { n: read.fields.length - fillable.length })));
+    }
+    formPanel.append(actionRow(formApply));
+  }
+
+  formApply.addEventListener('click', () => {
+    const fills = formInputs
+      .filter((row) => !row.input.disabled)
+      .map((row) => (row.kind === 'text'
+        ? { name: row.name, kind: 'text' as const, value: row.input.value }
+        : { name: row.name, kind: 'checkbox' as const, checked: row.input.checked }));
+    if (!fills.length) { setStatus(t('pdf.formNoneFillable'), true); return; }
+    void applyOp(() => fillFormFields(state.bytes, fills), t('pdf.formDone', { n: fills.length }));
+  });
 
   /* metadata */
   const metaCard = card('pdf.metadataTitle', 'pdf.metadataDesc');
@@ -727,7 +1106,12 @@ function launch(ctx: AppContext): void {
     input.name = 'faisal-pdf-page-size';
     input.checked = mode === state.imageMode;
     input.addEventListener('change', () => { if (input.checked) state.imageMode = mode; });
-    imageSizeRow.append(field(input.id, MODE_LABEL[mode], input));
+    // Wrapped in a label like every other choice control: the row is a 44px touch target, and
+    // the control itself keeps a 44px box (see `.faisal-pdf-check` in pdf.css).
+    const label = el('label', 'faisal-pdf-check');
+    label.htmlFor = input.id;
+    label.append(input, el('span', 'faisal-pdf-label', t(MODE_LABEL[mode])));
+    imageSizeRow.append(label);
   }
   imageCard.body.append(el('div', 'faisal-pdf-label', t('pdf.imagesPageSize')), imageSizeRow, imageList, actionRow(imageAdd, imageApply));
   imageAdd.addEventListener('click', () => { void addImages(); });
@@ -882,9 +1266,80 @@ function launch(ctx: AppContext): void {
     setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 
+  /**
+   * How long the print frame may stay in the window, in milliseconds. `afterprint` normally
+   * removes it the moment the dialog closes; this is the outer bound for environments that
+   * never fire that event, so the frame and its blob URL can never be left behind for good.
+   * It is deliberately not shorter: removing the frame while a print dialog is still open can
+   * cut the print short, and a slow PDF still has to finish loading before `print()` is called.
+   */
+  const PRINT_FRAME_FALLBACK_MS = 60000;
+
+  /**
+   * Opens the browser's own print dialog for the working PDF, WITHOUT downloading it.
+   *
+   * `window.print()` must NOT be called on the system page: that prints the whole desktop —
+   * the shell, this window's frame and every other open app. Printing has to be asked of the
+   * DOCUMENT's own window, so the bytes go into an off-screen iframe and that frame's
+   * `contentWindow.print()` opens the dialog for the PDF alone.
+   *
+   * Cleanup has three layers, so the frame can never be left in the window for good: the
+   * dialog's own `afterprint` (immediate), the fallback timer started the moment the frame is
+   * created, and the window's `onClose` (which revokes every blob URL it knows). Dropping the
+   * frame also revokes its blob URL right away.
+   *
+   * The frame is positioned off-screen (with a real size) rather than `hidden`: `display: none`
+   * stops some engines from laying the frame's document out, and a frame that was never laid
+   * out cannot print. See `.faisal-pdf-printframe` in `pdf.css`.
+   */
+  function printResult(): void {
+    if (!state.bytes.length) { setStatus(t('pdf.printNoBytes'), true); return; }
+    const nav = navigator as Navigator & { pdfViewerEnabled?: boolean };
+    if (nav.pdfViewerEnabled === false) { setStatus(t('pdf.printNoViewer'), true); return; }
+    const url = URL.createObjectURL(new Blob([state.bytes.slice()], { type: 'application/pdf' }));
+    blobUrls.push(url);
+    const frame = el('iframe', 'faisal-pdf-printframe');
+    frame.title = t('pdf.print');
+    let done = false;
+    let fallback = 0;
+    const drop = (): void => {
+      if (done) return;
+      done = true;
+      window.clearTimeout(fallback);
+      frame.remove();
+      const at = blobUrls.indexOf(url);
+      if (at >= 0) blobUrls.splice(at, 1);
+      URL.revokeObjectURL(url);
+    };
+    // Started here, not inside `load`: a frame whose document never loads, and a browser that
+    // never fires `afterprint`, both end with the frame gone and the URL revoked.
+    fallback = window.setTimeout(drop, PRINT_FRAME_FALLBACK_MS);
+    frame.addEventListener('load', () => {
+      const target = frame.contentWindow;
+      if (!target) { drop(); setStatus(t('pdf.printFailed'), true); return; }
+      try {
+        target.focus();
+        target.print();
+      } catch {
+        drop();
+        setStatus(t('pdf.printFailed'), true);
+        return;
+      }
+      setStatus(t('pdf.printReady'));
+      // The dialog reports back when it closes; the fallback timer above covers the
+      // environments where it never does.
+      target.addEventListener('afterprint', drop, { once: true });
+    }, { once: true });
+    frame.src = url;
+    win.content.append(frame);
+  }
+
   const downloadBtn = button(t('pdf.download'));
   downloadBtn.addEventListener('click', downloadResult);
   actions.append(downloadBtn);
+  const printBtn = button(t('pdf.print'));
+  printBtn.addEventListener('click', printResult);
+  actions.append(printBtn);
   if (!nativeWeb()) {
     const openTab = button(t('pdf.openInTab'));
     openTab.addEventListener('click', () => {
@@ -924,7 +1379,12 @@ function launch(ctx: AppContext): void {
 
   /* ───────────────────────── assembly ───────────────────────── */
 
-  ops.append(infoCard.box, pagesCard.box, deleteCard.box, rotateCard.box, cropCard.box, markCard.box, metaCard.box, splitCard.box, mergeCard.box, imageCard.box, saveCard.box, limitsCard());
+  ops.append(
+    infoCard.box, pagesCard.box,
+    textCard.box, signCard.box, coverCard.box, pageopsCard.box, formCard.box,
+    deleteCard.box, rotateCard.box, cropCard.box, markCard.box, metaCard.box, splitCard.box,
+    mergeCard.box, imageCard.box, saveCard.box, limitsCard(),
+  );
 
   async function openPath(path: string): Promise<void> {
     state.path = path;
@@ -954,10 +1414,12 @@ function launch(ctx: AppContext): void {
     refreshHeader();
     refreshInfo();
     refreshPages();
+    refreshEditBounds();
     refreshMergeList();
     refreshMetadataForm();
     refreshView();
     setPane('view');
+    await refreshForm();
     await refreshSaveTarget();
   }
 
