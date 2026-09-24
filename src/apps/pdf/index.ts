@@ -306,7 +306,7 @@ function launch(ctx: AppContext): void {
     night: false,
     annotations: [] as writer.AnnotationInfo[],
     pendingFields: new Map<string, { widget: FieldWidget; value: string }>(),
-    signature: null as { bytes: Uint8Array; url: string; aspect: number } | null,
+    signature: null as { bytes: Uint8Array; url: string; aspect: number; strokes: Point[][]; pad: Box; color: string } | null,
     picture: null as { name: string; bytes: Uint8Array; url: string; aspect: number } | null,
     stamp: '',
   };
@@ -1474,10 +1474,15 @@ function launch(ctx: AppContext): void {
     const simple = entries.every((e) => e.widget.kind === 'text' || e.widget.kind === 'checkbox');
     let run: () => Promise<OpResult>;
     if (writer.ENGINE_READY) {
+      let font: Uint8Array | undefined;
+      if (entries.some((e) => writer.needsUnicodeFont(e.value))) {
+        try { font = await getArabicFont(); } catch { setStatus(t('pdf.fontUnavailable'), true); return false; }
+      }
+      const opts = font ? { arabicFont: font } : {};
       run = () => writer.fillFields(state.bytes, entries.map((e) => ({
         name: e.widget.name,
         value: e.widget.kind === 'checkbox' ? e.value !== 'Off' && e.value !== '' : e.value,
-      })));
+      })), opts);
     } else if (simple) {
       run = () => fillFormFields(state.bytes, entries.map((e) => (e.widget.kind === 'text'
         ? { name: e.widget.name, kind: 'text' as const, value: e.value }
@@ -1996,7 +2001,7 @@ function launch(ctx: AppContext): void {
       }
       const row = button('', 'faisal-pdf-commentrow');
       const dot = el('span', 'faisal-pdf-swatchdot');
-      dot.style.background = info.color;
+      dot.style.background = info.color ?? 'transparent';
       const text = el('span', 'faisal-pdf-commenttext', info.contents || kindLabel(info.kind ?? 'note'));
       text.dir = 'auto';
       row.append(dot, el('span', 'faisal-pdf-commentkind', kindLabel(info.kind ?? 'note')), text);
@@ -2301,7 +2306,7 @@ function launch(ctx: AppContext): void {
     {
       id: 'edit', label: t('pdf.tabEditRibbon'), groups: [
         { label: t('pdf.groupAdd'), cmds: [toolCmd('text', 'text', 'pdf.toolText'), cmd('picture', 'images', 'pdf.toolImage', () => { void startPicture(); }, { edits: true }), toolCmd('cover', 'cover', 'pdf.toolCover')] },
-        { label: t('pdf.groupMarks'), cmds: [cmd('watermark', 'watermark', 'pdf.watermarkCmd', () => showTask('watermark'), { edits: true })] },
+        { label: t('pdf.groupMarks'), cmds: [cmd('watermark', 'watermark', 'pdf.watermarkCmd', () => showTask('watermark'), { edits: true }), cmd('page-numbers', 'pages', 'pdf.pageNumbersCmd', () => { void applyOp(() => writer.addPageNumbers(state.bytes, {}), t('pdf.pageNumbersDone')); }, { edits: true })] },
         { label: t('pdf.groupDocument'), cmds: [cmd('properties', 'info', 'pdf.propertiesTitle', () => showTask('properties')), cmd('text-card', 'form', 'pdf.advancedText', () => showTask('text'), { edits: true })] },
       ],
     },
@@ -2861,6 +2866,11 @@ function launch(ctx: AppContext): void {
         const size = state.info?.pages[g.page];
         const fit = size ? coverRectFor(rect, size) : { ok: false as const, error: 'outside' as const };
         if (!fit.ok) { setStatus(t('pdf.signImageErrorRect'), true); return false; }
+        const sig = state.signature;
+        if (tool === 'signature' && sig && writer.ENGINE_READY) {
+          const input = { page: g.page, rect: fit.rect, strokes: sig.strokes, padWidth: sig.pad.width, padHeight: sig.pad.height, color: sig.color, width: 2.6 };
+          return applyOp(() => writer.drawnSignature(state.bytes, input), t('pdf.signPlaced', { n: g.page + 1 }), true);
+        }
         const input: SignatureImageInput = { page: g.page, ...fit.rect, image: { name: tool === 'signature' ? 'signature.png' : (state.picture?.name ?? 'image'), bytes: pic.bytes } };
         return applyOp(() => addImageSignature(state.bytes, input), t(tool === 'signature' ? 'pdf.signPlaced' : 'pdf.imagePlaced', { n: g.page + 1 }), true);
       });
@@ -3122,7 +3132,7 @@ function launch(ctx: AppContext): void {
             if (state.signature) URL.revokeObjectURL(state.signature.url);
             const url = URL.createObjectURL(blob);
             blobUrls.push(url);
-            state.signature = { bytes: new Uint8Array(buf), url, aspect: bounds.width / bounds.height };
+            state.signature = { bytes: new Uint8Array(buf), url, aspect: bounds.width / bounds.height, strokes: strokes.map((st) => st.map((p) => ({ x: p.x - bounds.x, y: p.y - bounds.y }))), pad: bounds, color: penColor };
             m.close();
             setTool('signature');
           });
@@ -3224,7 +3234,13 @@ function launch(ctx: AppContext): void {
         close();
         void askText(kindLabel(info.kind ?? 'note'), t('pdf.noteLabel'), info.contents, true).then((text) => {
           if (text === null) return;
-          void applyOp(() => writer.updateAnnotation(state.bytes, info.page, info.index, { contents: text }), t('pdf.annotUpdated'), true);
+          void (async () => {
+            let opts: { arabicFont?: Uint8Array } | undefined;
+            if (writer.needsUnicodeFont(text)) {
+              try { opts = { arabicFont: await getArabicFont() }; } catch { setStatus(t('pdf.fontUnavailable'), true); return; }
+            }
+            await applyOp(() => writer.updateAnnotation(state.bytes, info.page, info.index, { contents: text }, opts), t('pdf.annotUpdated'), true);
+          })();
         });
       });
       row.append(edit);
