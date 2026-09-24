@@ -7,7 +7,7 @@ import { readXlsx } from '../../viewer/formats';
 import { addRowEdit, formulaCellEdit, type SheetsModel } from '../model';
 import { patchPackage, snapshotModel } from '../patch';
 import { utf8, writeZip } from '../zip';
-import { compositeEdit, displayValue, parseTsv, toTsv } from './view';
+import { compositeEdit, displayValue, parseTsv, sheetIsRtl, toTsv } from './view';
 import { readBookLook, shiftFormula } from './xlsxlook';
 
 const S = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -51,6 +51,16 @@ describe('the sheet helpers', () => {
     expect(after.kind === 'xlsx' && after.grids[0].rows).toEqual([['2', 'x']]);
     const back = edit.revert(after);
     expect(back.kind === 'xlsx' && back.grids[0].rows).toEqual([['1', '']]);
+  });
+});
+
+describe('sheet direction', () => {
+  it('follows the file, else shows a mostly-Arabic sheet right-to-left', () => {
+    expect(sheetIsRtl([['البند', 'التكلفة'], ['خوادم', '5000']], undefined)).toBe(true);
+    expect(sheetIsRtl([['Name', 'Qty'], ['محمد', '3']], undefined)).toBe(false);
+    expect(sheetIsRtl([['البند']], false)).toBe(false);
+    expect(sheetIsRtl([['Name']], true)).toBe(true);
+    expect(sheetIsRtl([['1', '2']], undefined)).toBe(false);
   });
 });
 
