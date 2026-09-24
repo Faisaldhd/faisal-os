@@ -378,9 +378,9 @@ export function applyUrlTransform(def: WebAppDef, raw: string): string {
 }
 
 /**
- * The launcher-visible manifest. Registered as a non-core, `defaultInstalled`
- * app on purpose: it shows up in the Store like any other app and can be
- * removed and reinstalled through the ordinary install/uninstall path.
+ * The launcher-visible manifest. Registered as a non-core app that is NOT
+ * installed by default (the owner's choice): it is listed in the Store and
+ * installed, removed and reinstalled through the ordinary install path.
  */
 export function webAppManifest(def: WebAppDef): AppManifest {
   return {
@@ -392,6 +392,8 @@ export function webAppManifest(def: WebAppDef): AppManifest {
     category: 'web',
     singleInstance: true,
     version: '1.0.0',
+    // In the Store only: the owner installs the sites he wants (Store → Install).
+    defaultInstalled: false,
   };
 }
 
