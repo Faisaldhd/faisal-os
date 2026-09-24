@@ -294,7 +294,7 @@ export function createGallery(deps: GalleryDeps): Gallery {
     else if (e.key === 'ArrowRight') { e.preventDefault(); void openViewer(index + (document.dir === 'rtl' ? -1 : 1)); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); void openViewer(index + (document.dir === 'rtl' ? 1 : -1)); }
   });
-  const local = (e: PointerEvent | WheelEvent): Point => {
+  const local = (e: { clientX: number; clientY: number }): Point => {
     const r = vstage.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };

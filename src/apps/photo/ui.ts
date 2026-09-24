@@ -56,6 +56,7 @@ export function slider(
   const head = el('div', 'fp-slider-head');
   const name = el('span', 'fp-slider-name', label);
   const out = el('output', 'fp-slider-value', format(value));
+  out.dir = 'ltr';
   head.append(name, out);
   const input = el('input', 'fp-range');
   input.type = 'range';
