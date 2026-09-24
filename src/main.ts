@@ -7,12 +7,11 @@ import { createBus } from './kernel/bus';
 import { createSettings } from './kernel/settings';
 import { createAppRegistry } from './kernel/apps';
 import { defineStrings, getLocale, setLocale, t } from './kernel/i18n';
-import type { LazyAppModule, Locale, SystemAPI } from './kernel/types';
+import type { Locale, SystemAPI } from './kernel/types';
 
 import { createVFS, lazyVFS } from './vfs';                    // Track B
 import { createWindowManager, mountShell } from './shell';    // Track A
 import { BUILTIN_APPS } from './apps';
-import { WIRED_WEB_APPS, webAppManifest } from './apps/web/registry';
 
 defineStrings('kernel', {
   ar: {
@@ -50,15 +49,6 @@ async function boot() {
   };
 
   BUILTIN_APPS.forEach((a) => apps.register(a));
-  // Embedded web apps (src/apps/web/registry.ts): the manifest is registered now,
-  // the window code loads on first launch and is shared by every site.
-  for (const def of WIRED_WEB_APPS) {
-    const webApp: LazyAppModule = {
-      manifest: webAppManifest(def),
-      load: () => import('./apps/web').then((m) => m.createWebAppModule(def)),
-    };
-    apps.register(webApp);
-  }
   mountShell(root, sys);
   // The static boot screen in index.html has done its job once the shell is mounted.
   document.getElementById('faisal-boot')?.remove();
