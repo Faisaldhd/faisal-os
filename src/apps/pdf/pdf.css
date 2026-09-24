@@ -1336,7 +1336,7 @@
 
   .faisal-pdf-statusbar { --pdf-status-h: 44px; gap: 4px; padding: 0 4px; }
   .faisal-pdf-statusbar .faisal-pdf-sbtn { min-width: 44px; min-height: 44px; }
-  .faisal-pdf-pagebox { min-height: 36px; width: 44px; font-size: 15px; }
+  .faisal-pdf-pagebox { min-height: 44px; width: 48px; font-size: 15px; }
   .faisal-pdf-zoomvalue { min-height: 44px; }
   .faisal-pdf-slider, .faisal-pdf-pagelabel { display: none; }
   .faisal-pdf-status {
