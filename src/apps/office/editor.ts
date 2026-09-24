@@ -21,6 +21,10 @@ export interface EditorContext {
   filePath(): string | null;
   /** The ribbon's File tab: shared by every editor. */
   fileTab(): RibbonTab;
+  /** Writes an exported copy next to the file (a new name, never an overwrite) and offers a download. */
+  exportFile(data: Uint8Array | string, ext: string, mime: string): Promise<void>;
+  /** Prints only `content` (a detached copy of the pages), never the desktop. */
+  print(content: HTMLElement, pageCss: string): void;
 }
 
 export interface StatusInfo {

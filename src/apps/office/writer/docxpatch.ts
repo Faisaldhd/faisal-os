@@ -165,7 +165,8 @@ interface Context {
 }
 
 function textRunMarkup(run: TextRun): string {
-  const rPr = runPropsMarkup(run.rpr ?? '', run.base ?? {}, run.props, hasArabic(run.text));
+  // Newly typed Arabic is marked right-to-left, as Word does; an original run keeps what it had.
+  const rPr = runPropsMarkup(run.rpr ?? '', run.base ?? {}, run.props, run.src === undefined && hasArabic(run.text));
   const body = textParts(run.text).map((part) => {
     if (part.kind === 'tab') return '<w:tab/>';
     if (part.kind === 'br') return '<w:br/>';

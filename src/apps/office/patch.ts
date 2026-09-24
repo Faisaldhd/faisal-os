@@ -485,6 +485,8 @@ interface CellEdit {
   after: string;
   /** The canonical formula for `<f>` (without '='), or null for a plain value. */
   formula: string | null;
+  /** The formula is the file's own, unchanged: keep its `<f>` element exactly, refresh `<v>`. */
+  keepF?: boolean;
 }
 
 interface SharedStrings {
@@ -650,14 +652,18 @@ function cellEditFor(xml: string, target: CellTarget, cell: CellEdit, shared: Sh
       }
     }
   }
-  if (cell.after === '' && cell.formula === null) {
+  if (cell.after === '' && cell.formula === null && !cell.keepF) {
     if (!element) return null;
     return { start: element.start, end: element.end, xml: '' };
   }
 
   let inner: string;
   let type: string | null;
-  if (cell.formula !== null) {
+  const ownF = cell.keepF && element ? element.children.find((c) => localName(c.name) === 'f') : undefined;
+  if (ownF) {
+    inner = `${xml.slice(ownF.start, ownF.end)}<v>${xmlText(cell.after)}</v>`;
+    type = cell.after.startsWith('#') ? 'e' : isNumericText(cell.after) || cell.after === '' ? null : 'str';
+  } else if (cell.formula !== null) {
     // The formula and its computed result: Excel sees the formula, opens the sheet
     // without recalculating, and the value is what this app shows.
     inner = `<f>${xmlText(cell.formula)}</f><v>${xmlText(cell.after)}</v>`;
@@ -713,7 +719,9 @@ async function patchXlsx(archive: RawZip, baseline: SheetsModel, current: Sheets
         // that happens to compute the same value still has to reach the file's `<f>`.
         if (beforeValue === afterValue && beforeFormula === afterFormula) continue;
         const formula = afterFormula ? evaluateFormula(afterFormula, { ...after, rows: after.rows }).canonical : null;
-        cells.push({ row: r, col: c, after: afterValue, formula });
+        const keepF = !!afterFormula && beforeFormula === afterFormula;
+        if (afterFormula && formula === null && !keepF) return null;
+        cells.push({ row: r, col: c, after: afterValue, formula, keepF });
       }
     }
     if (cells.length) edits.set(s, cells);

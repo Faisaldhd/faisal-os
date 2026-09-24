@@ -75,3 +75,14 @@ export function downloadBytes(bytes: Uint8Array | string, name: string, mime: st
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
+
+/** Calls `cb` when the element's size changes (a window resize where ResizeObserver is missing). */
+export function observeSize(target: HTMLElement, cb: () => void): { disconnect(): void } {
+  if (typeof ResizeObserver === 'function') {
+    const observer = new ResizeObserver(() => cb());
+    observer.observe(target);
+    return observer;
+  }
+  window.addEventListener('resize', cb);
+  return { disconnect: () => window.removeEventListener('resize', cb) };
+}
