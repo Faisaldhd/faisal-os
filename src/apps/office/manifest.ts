@@ -35,6 +35,8 @@ export const manifest: AppManifest = {
   permissions: ['fs:home'],
   opens: [...OFFICE_EXTENSIONS],
   category: 'utilities',
+  version: '1.0.0',
+  releasedAt: '2026-09-24',
   core: false,
   defaultInstalled: false,
 };

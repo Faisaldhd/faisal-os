@@ -36,6 +36,7 @@ export const manifest: AppManifest = {
   opens: MANIFEST_OPENS,
   category: 'media',
   version: '1.0.0',
+  releasedAt: '2026-09-24',
   singleInstance: false,
   core: false,
   defaultInstalled: false,
