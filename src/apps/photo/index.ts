@@ -61,7 +61,7 @@ import { SHORTCUTS, describeKeys, matchShortcut, toolKey, type Command, type Too
 import { PICTURES, createGallery, emptyIllustration, isImagePath, pickFile, thumbnail } from './gallery';
 import { History, HISTORY_PRESETS } from './history';
 import {
-  EXPORT_FORMAT_LIST, FORMATS, OPEN_EXTENSIONS, clampQuality, formatForExtension, formatOfTarget,
+  EXPORT_FORMAT_LIST, FORMATS, OPEN_EXTENSIONS, PICKER_ACCEPT, clampQuality, formatForExtension, formatOfTarget,
   type ExportFormat, type SourceFormat,
 } from './formats';
 import { basenameOf, dirnameOf, isWithinHome, stemOf } from './export-file';
@@ -289,7 +289,7 @@ export function launch(ctx: AppContext): void {
 
   const fileInput = el('input');
   fileInput.type = 'file';
-  fileInput.accept = `image/*,${PROJECT_EXT}`;
+  fileInput.accept = PICKER_ACCEPT;
   fileInput.hidden = true;
 
   const galleryHost = el('div', 'fp-gallery-host');

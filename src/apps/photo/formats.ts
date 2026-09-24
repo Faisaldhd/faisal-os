@@ -10,7 +10,7 @@
  */
 import type { Locale } from '../../kernel/types';
 
-export type SourceFormat = 'png' | 'jpeg' | 'webp' | 'gif' | 'bmp' | 'avif' | 'svg';
+export type SourceFormat = 'png' | 'jpeg' | 'webp' | 'gif' | 'bmp' | 'avif' | 'svg' | 'heic';
 export type ExportFormat = 'png' | 'jpeg' | 'webp';
 
 export interface FormatInfo {
@@ -61,9 +61,19 @@ export const FORMATS: Record<SourceFormat, FormatInfo> = {
     id: 'svg', extensions: ['.svg'], mime: 'image/svg+xml',
     canOpen: true, canExport: false, animated: true, needsProbe: false, lossy: false,
   },
+  /*
+   * iPhone photos. No browser decodes HEVC stills reliably, so the editor ships its own codec
+   * (libheif WebAssembly, heic-lib.ts), downloaded only when such a file is opened. That is why
+   * no runtime probe is needed: the decoder is ours, not the browser's. A multi-image file opens
+   * its primary image. Never an export target (PNG/JPEG/WebP only).
+   */
+  heic: {
+    id: 'heic', extensions: ['.heic', '.heif'], mime: 'image/heic',
+    canOpen: true, canExport: false, animated: false, needsProbe: false, lossy: true,
+  },
 };
 
-export const SOURCE_FORMAT_LIST: SourceFormat[] = ['png', 'jpeg', 'webp', 'gif', 'bmp', 'avif', 'svg'];
+export const SOURCE_FORMAT_LIST: SourceFormat[] = ['png', 'jpeg', 'webp', 'gif', 'bmp', 'avif', 'svg', 'heic'];
 export const EXPORT_FORMAT_LIST: ExportFormat[] = ['png', 'jpeg', 'webp'];
 
 /** Everything the editor advertises as openable, for the manifest copy and the open dialog. */
@@ -79,8 +89,17 @@ export const OPEN_EXTENSIONS: string[] = SOURCE_FORMAT_LIST.flatMap((id) => FORM
  * per browser, and a build without an AVIF decoder refuses the file with a message that names
  * the format instead of failing silently. Nothing in this list is claimed without a decode
  * path behind it.
+ *
+ * `.fphoto` (the layered project, project.ts) is declared too, so a project double-clicked in
+ * the Files app opens here. It is a literal rather than an import of `PROJECT_EXT` to keep this
+ * file (which the manifest loads) free of the editor's model; a test pins the two together.
  */
-export const MANIFEST_OPENS: string[] = [...OPEN_EXTENSIONS];
+export const PROJECT_OPEN_EXT = '.fphoto';
+export const MANIFEST_OPENS: string[] = [...OPEN_EXTENSIONS, PROJECT_OPEN_EXT];
+
+/** The `accept` list of the "open from device" picker: every openable extension, spelled out
+ *  because `image/*` alone does not match .heic on most desktop systems (empty MIME type). */
+export const PICKER_ACCEPT = ['image/*', ...OPEN_EXTENSIONS, PROJECT_OPEN_EXT].join(',');
 
 /** The one place an extension becomes a format: lowercased, dot included. */
 export function extensionOf(path: string): string {
@@ -125,7 +144,8 @@ export type RefusalReason =
   | 'runtime-decode'
   | 'decode-failed'
   | 'too-large'
-  | 'out-of-home';
+  | 'out-of-home'
+  | 'decoder-unavailable';
 
 export interface DecodeDecision {
   kind: 'ok' | 'refuse';
@@ -212,6 +232,10 @@ export const REFUSAL_MESSAGES: Record<RefusalReason, { ar: string; en: string }>
   'too-large': {
     ar: 'الصورة أكبر من الحدّ الذي يفتحه المحرّر ({named} بكسل).',
     en: 'The image is larger than the editor opens ({named} pixels).',
+  },
+  'decoder-unavailable': {
+    ar: 'تعذّر تحميل وحدة فك ترميز «{named}» (صور الآيفون). تأكّد من الاتصال بالإنترنت ثم أعد المحاولة، أو حوّل الصورة إلى JPEG.',
+    en: 'The “{named}” decoder (iPhone photos) could not be loaded. Check your connection and try again, or convert the photo to JPEG.',
   },
   'out-of-home': {
     ar: 'لا يسمح المحرّر بالكتابة إلا داخل المجلد الرئيسي /home/user.',

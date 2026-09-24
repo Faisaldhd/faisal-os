@@ -23,8 +23,10 @@ describe('photo manifest — store-only, home-only, honest about formats', () =>
 
   it('declares the extensions the editor really decodes, so the kernel can offer it for a file', () => {
     expect(manifest.opens).toEqual(MANIFEST_OPENS);
-    expect(manifest.opens).toEqual(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif', '.svg']);
-    expect([...(manifest.opens ?? [])].sort()).toEqual([...OPEN_EXTENSIONS].sort());
+    // Phase 2: iPhone photos (.heic/.heif, decoded by the on-demand libheif codec) and the
+    // layered project (.fphoto), so a project double-clicked in the Files app opens here.
+    expect(manifest.opens).toEqual(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif', '.svg', '.heic', '.heif', '.fphoto']);
+    expect([...(manifest.opens ?? [])].sort()).toEqual([...OPEN_EXTENSIONS, '.fphoto'].sort());
   });
 
   it('is a media app with both names, in Arabic and English', () => {
