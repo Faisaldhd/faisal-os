@@ -446,21 +446,34 @@
     overflow: auto;
   }
 
-  /* A single horizontal strip is the only workable shape for nine tools at 320px. */
+  /*
+   * The tool strip sits ABOVE the stage on a phone. Round 1 of this sheet made it a single
+   * horizontal scrolling row here. Measured in Chrome at 320px that was wrong: the row's
+   * content was 626px wide against a 302px client width, so five tools (line, rectangle,
+   * ellipse, arrow, text) sat off-screen behind a horizontal scroll. The owner's rule is
+   * "nothing off-screen", so below 760px the strip becomes a fixed 3-column grid: nine tools
+   * are exactly three rows, every tool is fully visible with no horizontal scroll, and each
+   * cell is at least 52px tall — above the 44px touch-target floor.
+   */
   .faisal-photo-tools {
-    flex-direction: row;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding-block-end: 4px;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    overflow: visible;
+    padding-block-end: 0;
   }
 
   .faisal-photo-tool {
-    flex: 0 0 auto;
-    min-width: 64px;
     flex-direction: column;
     justify-content: center;
+    gap: 4px;
+    min-width: 0;
+    max-inline-size: 100%; /* a cell can never be wider than its column */
+    min-height: 52px;
+    padding: 6px 4px;
     text-align: center;
     font-size: 11px;
+    overflow-wrap: anywhere;
   }
 
   .faisal-photo-inspector {
@@ -469,6 +482,27 @@
 
   .faisal-photo-toolbar .faisal-photo-status {
     flex-basis: 100%;
+  }
+}
+
+/* ───────── very narrow (320–480px): one fully visible tool per grid cell ───────── */
+
+@media (max-width: 480px) {
+  /*
+   * Below 480px the visible word under each tool is what pushed the strip over the edge, so
+   * it is hidden and the icon carries the button. The control keeps its accessible name: the
+   * SVG inside is decorative (aria-hidden) and every tool button carries `aria-label` plus
+   * `aria-pressed`, so a screen reader still announces the tool and whether it is active.
+   * This is a sizing decision, not a decoration one — it is how nine tools fit at 320px with
+   * no element off-screen.
+   */
+  .faisal-photo-tool {
+    font-size: 0;
+  }
+
+  .faisal-photo-tool svg {
+    inline-size: 22px;
+    block-size: 22px;
   }
 }
 

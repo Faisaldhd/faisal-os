@@ -75,6 +75,10 @@ function button(label: string, cls = 'faisal-photo-btn'): HTMLButtonElement {
  */
 function toolButton(label: string, iconMarkup: string): HTMLButtonElement {
   const b = button(label, 'faisal-photo-tool');
+  // Below 480px CSS hides the visible word so nine tools fit at 320px; the name must then
+  // come from the attributes, so the button is never an unnamed icon.
+  b.setAttribute('aria-label', label);
+  b.title = label;
   b.append(renderIcon(iconMarkup));
   return b;
 }
