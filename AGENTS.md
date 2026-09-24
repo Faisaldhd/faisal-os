@@ -1,55 +1,100 @@
-# AGENTS.md — rules for every AI assistant working on Fai$al OS
+# AGENTS.md — تعليمات أي مساعد ذكاء اصطناعي يعمل على Fai$al OS
 
-(Claude, DeepSeek, Copilot, or anyone else. Read this before your first change.)
+(DeepSeek، Claude، Copilot أو غيرهم. اقرأ هذا كاملاً قبل أي عمل.)
 
-Fai$al OS is a desktop OS that runs in the browser (TypeScript + Vite + vitest, no framework).
-Repository: https://github.com/Faisaldhd/faisal-os
+## من أنا وما المشروع
+أنا فيصل، صاحب مشروع Fai$al OS: نظام سطح مكتب كامل يعمل داخل المتصفح.
+- المستودع: https://github.com/Faisaldhd/faisal-os (العمل يكون عبر GitHub).
+- التقنية: TypeScript + Vite + vitest، بدون React/Vue. الواجهة عربية أولاً (RTL) مع إنجليزي.
+- الإصدار الحالي للنظام: 0.2 (في `src/kernel/version.ts` و `src/brand/logo.ts`). لا تغيّره إلا إذا طلبت.
 
-## How a change reaches the owner — both products, together
+## النظام له نسختان من نفس الكود
+1. **الويب:** https://faisal-os.pages.dev (Cloudflare Pages) + نسخة احتياطية على GitHub Pages.
+2. **تطبيق سطح المكتب** (Windows، Electron، مجلد `electron/`): يُصدَر في GitHub Releases،
+   والتطبيق المثبّت يكتشف التحديث وينزّله ويسأل "إعادة التشغيل الآن / لاحقاً".
 
-Two products are built from the **same code** on `main`, and they are published **together**:
+الكود نفسه (`src/`) يعمل في النسختين. السلوك الخاص بالتطبيق فقط يمر عبر `nativeWeb()` في `src/shell/native-web.ts`.
 
-1. A merge to `main` starts `.github/workflows/desktop-release.yml`: tests, the desktop builds, then a new
-   GitHub Release. The installed app finds it, downloads it and asks "Restart now / Later".
-2. **Only after that release succeeds**, the same workflow publishes the web from the same commit:
-   GitHub Pages (`pages.yml`) and Cloudflare Pages (it moves the `release` branch, which is Cloudflare's
-   production branch) → https://faisal-os.pages.dev.
-3. If the desktop build fails, the web is **not** updated either. Fix the failure; never work around it.
+## كيف يصل أي تعديل
+- كل تعديل = فرع جديد من آخر `main` ← Pull Request إلى `main` ← أنا أراجع وأدمج.
+- عند الدمج في `main` يحدث تلقائياً:
+  - `.github/workflows/desktop-release.yml` يبني التطبيق وينشر إصداراً جديداً (رقم الإصدار يُحسب تلقائياً، لا تلمسه).
+  - بعد نجاحه ينشر نفس الـ workflow الويب من نفس النسخة (GitHub Pages، وفرع `release`).
+  - Cloudflare أيضاً ينشر الويب من `main` خلال دقيقتين تقريباً.
+  - النتيجة: الويب والتطبيق يتحدثان معاً خلال دقائق.
+- تعديل ملفات `.md` أو مجلد `docs/` فقط لا ينشر شيئاً.
+- على كل PR يعمل فحصان تلقائياً: **PR checks** (الاختبارات والبناء، `.github/workflows/pr-checks.yml`)
+  و**معاينة Cloudflare** (تعليق فيه رابط preview). لا يُطلب مني الدمج قبل أن ينجح الاثنان.
 
-Publishing one product without the other happens **only when the owner explicitly asks**:
-"Publish web only" (`web-only.yml`, typed confirmation) or Desktop release with `target: app-only`.
-Never trigger these on your own. Never deploy by hand, never commit `dist/`, never bump the app version.
-A change to `.md` files or `docs/` only publishes nothing (neither product changes).
+## كيف تستقبل أوامري (مهم جداً)
+عندما أطلب منك أي تعديل:
+1. أعد صياغة طلبي بسطرين بالعربي لتتأكد أنك فهمته. إذا كان غامضاً فاسألني سؤالاً واحداً واضحاً.
+2. اسألني دائماً قبل التنفيذ: **"تبيه ينزل على الاثنين (الويب والتطبيق)، أو الويب بس، أو التطبيق بس؟"**
+   الافتراضي هو الاثنين.
+   - الاثنين: التعديل في الكود المشترك (`src/`) كالعادة.
+   - الويب بس: اجعل التعديل يعمل فقط عندما `nativeWeb() === null`.
+   - التطبيق بس: اجعل التعديل يعمل فقط عندما `nativeWeb()` موجود، أو داخل `electron/` إن كان خاصاً بالتطبيق.
+   - لا تشغّل workflows النشر اليدوية ("Publish web only" أو "Desktop release" بخيار `app-only`) إلا إذا أمرتك صراحة.
+3. نفّذ في فرع جديد، وافتح PR، وانتظر نجاح الفحوصات.
+4. أرسل لي التقرير (الشكل في الأسفل). **لا تدمج بنفسك، أنا الذي أدمج.**
 
-## Workflow for every task
+## أسلوب العمل المطلوب منك (اشتغل بنفس هذا الأسلوب بالضبط)
+هذا هو الأسلوب الذي أرتاح له وتعوّدت عليه. التزم به في كل رد وكل مهمة:
 
-1. Branch from the latest `main` (e.g. `fix/short-name`) and open a Pull Request into `main`.
-   Never push to `main` directly, never force-push.
-2. Put the change in the shared code under `src/` so it works in both products. Do not touch
-   `electron/` or `.github/workflows/` unless the owner asked for it. If behaviour must differ between
-   web and desktop, branch on `nativeWeb()` from `src/shell/native-web.ts` and say so in the PR.
-3. Wait for the PR checks: **PR checks** (tests + build, `.github/workflows/pr-checks.yml`) and the
-   Cloudflare Pages preview (a bot comment with a preview link). If a check fails, fix it on the same
-   branch; do not open a new PR.
-4. If the PR conflicts with `main`, merge `main` into your branch and resolve it in the same PR.
-5. Do not merge your own PR — the owner merges.
+**في الكلام معي**
+- ردّ بالعربي، باللهجة البسيطة القريبة مني، مختصر وواضح. بلا مقدمات طويلة ولا حشو ولا تكرار.
+- ابدأ بالنتيجة أو الجواب، ثم التفاصيل إن لزمت. استخدم نقاطاً أو جدولاً صغيراً عند الحاجة.
+- إذا احتجت مني شيئاً فاطلبه بخطوات مرقّمة قصيرة، مع روابط مباشرة للصفحة المطلوبة، وقل لي بالضبط وين أضغط.
+- إذا أرسلت لك صورة شاشة فاقرأها بدقة، وقل لي بالضبط وش تشوف ووش الخطوة الجاية.
+- لا تسألني أسئلة كثيرة. سؤال واحد واضح فقط إذا كان الطلب غامضاً فعلاً، والباقي قرّره أنت بأفضل خيار آمن.
+- إذا غلطت أو عقّدت الأمور فاعتذر بجملة واحدة وبسّطها فوراً.
+- لا تدّعي شيئاً لم تفعله أو لم تتحقق منه. "ما قدرت أتحقق من كذا" أفضل من افتراض النجاح.
 
-## Project rules
+**في الشغل**
+- افهم قبل ما تعدّل: اقرأ الكود المتعلق بالطلب أولاً (الملفات، الدوال، الاختبارات الموجودة)، ولا تكتب كوداً بالتخمين.
+- ابحث عن السبب الحقيقي للمشكلة، لا تعالج العرض فقط. اشرح لي السبب بجملة بسيطة.
+- عدّل بأقل قدر ممكن ويحقق المطلوب. لا تعيد كتابة أجزاء تعمل، ولا تضيف ميزات لم أطلبها.
+- اتبع أسلوب الكود الموجود في نفس الملف (التسمية، التعليقات، الطريقة).
+- أي منطق تغيّره: أضف له اختبار vitest. وقبل فتح الـ PR تأكد أن كل الاختبارات والبناء تنجح.
+- جرّب التعديل فعلياً في رابط معاينة Cloudflare، على الكمبيوتر وعلى مقاس الجوال، وتأكد ما في أخطاء في Console.
+- راجع التعديل بنفسك قبل الإرسال كأنك مراجع صارم: وش ممكن ينكسر؟ هل كل النصوص بالعربي والإنجليزي؟ هل يشتغل على الجوال؟
+- الأمان أولاً: لا أسرار في الكود، ولا innerHTML لمحتوى خارجي، ولا تعطِ أي شيء صلاحيات أكثر من اللازم.
+- إذا فشل فحص على الـ PR فأصلحه بنفسك في نفس الفرع حتى يصير ✅، ولا تتركه أحمر.
+- احترم قراراتي: إذا قلت لا أبغى شيئاً (مثل المزامنة) فلا ترجعه ولا تقترحه مرة ثانية.
+- إذا في شيء لا تقدر تسويه (مثلاً إعداد يحتاج حسابي) فقل ذلك بوضوح، وأعطني أبسط طريقة أسويه بنفسي.
 
-- Arabic first (RTL) with English: every user-visible string goes into the matching `strings.ts`
-  in **both** `ar` and `en`.
-- Render text with `textContent`; never put external or user content through `innerHTML`.
-- No API keys, tokens or passwords in code. Keys live only in the user's browser.
-- Add or update a vitest test for logic you change. Never delete, skip or weaken a test to go green.
-- No new dependencies without a strong reason; prefer browser APIs.
-- The OS version shown to users lives in `src/kernel/version.ts` and `src/brand/logo.ts`; change it only when asked.
-- Map: `src/shell/` desktop, top bar, windows, notifications, clipboard · `src/apps/<app>/` one folder per app ·
-  `src/kernel/` core · `src/vfs/` file system · `functions/` Cloudflare functions · `electron/` desktop app only.
+## قواعد لازم تلتزم فيها
+- **راعِ واجهة الجوال في كل تعديل:** يجب أن يعمل على شاشة 320px و390px وعلى الكمبيوتر، بلا تداخل ولا عناصر خارج الشاشة،
+  والأزرار كبيرة بما يكفي للّمس (44px)، ولا شيء يعتمد على hover فقط.
+- كل نص يظهر لي يُضاف في ملف `strings.ts` المناسب بالعربي والإنجليزي معاً.
+- استخدم `textContent` لعرض النصوص، ولا تستخدم `innerHTML` لمحتوى خارجي أو من المستخدم.
+- لا مفاتيح API ولا رموز سرية ولا كلمات مرور في الكود أبداً.
+- أضف أو حدّث اختبار vitest لأي منطق تغيّره، ولا تحذف اختباراً أو تعطّله لكي ينجح البناء.
+- لا مكتبات جديدة بدون سبب قوي.
+- لا تدفع مباشرة إلى `main`، ولا تستخدم force push، ولا تعدّل `.github/workflows/` ولا `electron/` إلا إذا طلبت.
+- إذا ظهر تعارض مع `main`، فادمج `main` في فرعك وحلّه في نفس الـ PR.
+- **لا تعقّد عليّ:** لا تطلب مني إعدادات في Cloudflare أو GitHub إلا إذا كانت ضرورية جداً، واشرحها خطوة خطوة.
+- كن صريحاً: إذا لم تستطع التحقق من شيء فقل ذلك، ولا تفترض أنه نجح.
 
-## Report back after every task
+## ما هو موجود حالياً في النظام (حتى لا تكرره أو تكسره)
+- سطح مكتب وشريط علوي وDock ونوافذ (سحب، تكبير، تصغير، تثبيت على الجوانب) وإشعارات وقفل شاشة.
+- التطبيقات: الملفات، الطرفية (مع Linux حقيقي عبر v86)، المحرر، المتصفح، الصور، الحاسبة، الساعة،
+  مراقب النظام، المتجر، الإعدادات، الخزنة، المتصفح المُبث، وتطبيقات ويب مضمّنة.
+- **Faisal AI:** مساعد بمفتاح المستخدم (GroqCloud أو DeepSeek)، ويعمل كوكيل له أدوات داخل النظام
+  ويسأل المستخدم قبل أي تغيير أو حذف.
+- **الحافظة:** سجل لآخر 25 نصاً منسوخاً، يُفتح بـ Ctrl+Alt+V أو Win+V في وضع ملء الشاشة.
+- **وسيط سحابي** (`functions/proxy`) لقراءة المواقع التي ترفض العرض داخل إطار، بوضع القراءة وبرمز سري.
+- **المزامنة السحابية أُزيلت نهائياً بقراري. لا تُرجعها.**
 
-- The PR link
-- What changed and why (short, in Arabic for the owner)
-- Checks ✅/❌ and the preview link
-- One explicit line: "Reaches the web and the desktop app after merge" — or explain the exception
-- Anything you could not verify, said plainly (never assume success)
+## خريطة المجلدات
+`src/shell/` سطح المكتب والشريط والنوافذ والإشعارات والحافظة ·
+`src/apps/<اسم التطبيق>/` كل تطبيق في مجلده (index.ts + manifest.ts + strings.ts) ·
+`src/kernel/` الأساس · `src/vfs/` نظام الملفات · `functions/` دوال Cloudflare · `electron/` تطبيق سطح المكتب فقط.
+
+## شكل تقريرك بعد كل مهمة (بالعربي)
+- رابط الـ PR
+- ماذا تغيّر ولماذا (مختصر)
+- الفحوصات ✅/❌ ورابط المعاينة
+- ينزل على: الاثنين / الويب بس / التطبيق بس (حسب ما اخترته أنا)
+- هل جرّبته على مقاس الجوال؟
+- أي شيء لم تستطع التحقق منه
