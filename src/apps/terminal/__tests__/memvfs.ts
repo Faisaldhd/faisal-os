@@ -31,6 +31,8 @@ export function createMemVFS(files: Record<string, string> = {}): VFS & { dump()
   const children = (p: string) => [...nodes.keys()].filter((k) => k !== p && dirname(k) === p);
 
   const vfs: VFS & { dump(): string[] } = {
+    // Same shape as the real file system, with small limits: these tests do not care about sizes.
+    quota: { file: 1024 * 1024, total: 8 * 1024 * 1024, tier: 'desktop' },
     async stat(p) { const n = normalize(p); return statOf(n, get(n)); },
     async exists(p) { return nodes.has(normalize(p)); },
     async readdir(p) {

@@ -62,6 +62,7 @@ defineStrings('files', {
     nameEmpty: 'الاسم لا يمكن أن يكون فارغاً',
     nameInvalid: 'اسم غير صالح',
     nameExists: 'هذا الاسم موجود بالفعل',
+    tooLarge: 'الملف أكبر من الحد المسموح ({file})',
     errorGeneric: 'حدث خطأ: {message}',
     copyOf: 'نسخة',
     moveTo: 'نقل إلى…',
@@ -116,6 +117,7 @@ defineStrings('files', {
     nameEmpty: 'Name cannot be empty',
     nameInvalid: 'Invalid name',
     nameExists: 'That name already exists',
+    tooLarge: 'The file is larger than the allowed limit ({file})',
     errorGeneric: 'Error: {message}',
     copyOf: 'copy',
     moveTo: 'Move to…',
@@ -293,6 +295,11 @@ function launch(ctx: AppContext): void {
     for (const f of Array.from(files)) {
       if (closed) return;
       try {
+        // `arrayBuffer()` pulls the whole file into memory, so an over-large one is refused
+        // first and named with the limit in force (the VFS enforces it again as the last line).
+        if (f.size > sys.vfs.quota.file) {
+          throw new Error(t('files.tooLarge', { file: formatBytes(sys.vfs.quota.file, sys.locale()) }));
+        }
         const buf = new Uint8Array(await f.arrayBuffer());
         const name = await uniqueName(vfs, currentPath, sanitizeUploadName(f.name), t('files.copyOf'));
         if (closed) return;

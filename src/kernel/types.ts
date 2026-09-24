@@ -69,6 +69,15 @@ export interface VFS {
   remove(path: string, opts?: { recursive?: boolean }): Promise<void>;
   rename(from: string, to: string): Promise<void>;
   chmod(path: string, mode: number): Promise<void>;
+  /**
+   * الحدود المطبَّقة الآن — تختلف حسب المنصة: متصفح مكتبي، جوال، أو تطبيق سطح المكتب.
+   * مصدرها الواحد `src/vfs/quota.ts`، فيقرأ كل سطح نفس الأرقام بدل ما يحتفظ بنسخته.
+   */
+  readonly quota: {
+    readonly file: number;
+    readonly total: number;
+    readonly tier: 'desktop' | 'mobile' | 'app';
+  };
 }
 
 /* ─────────────────────────── Windows / shell ───────────────────────── */

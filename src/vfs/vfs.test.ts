@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createBus } from '../kernel/bus';
 import { VFSError } from '../kernel/types';
-import { createVFS, lazyVFS } from './index';
+import { createVFS, lazyVFS, quotaFor } from './index';
 
 function freshDbName() {
   // fake-indexeddb persists per-name across the process, so give each
@@ -411,18 +411,43 @@ describe('VFS', () => {
   });
 
   describe('quota', () => {
+    // Small explicit limits: the same code paths, without writing hundreds of megabytes.
+    const small = { file: 4096, total: 1024 * 1024 };
+
     it('rejects a single file larger than the per-file cap', async () => {
-      const vfs = await createVFS(createBus());
-      const big = new Uint8Array(20 * 1024 * 1024 + 1);
-      await expect(vfs.writeFile('/home/user/big.bin', big)).rejects.toMatchObject({ code: 'EINVAL' });
+      const vfs = await createVFS(createBus(), { quota: small });
+      await expect(vfs.writeFile('/home/user/big.bin', new Uint8Array(4097))).rejects.toMatchObject({ code: 'EINVAL' });
+    });
+
+    it('accepts a file exactly at the cap', async () => {
+      const vfs = await createVFS(createBus(), { quota: small });
+      await vfs.writeFile('/home/user/at-cap.bin', new Uint8Array(4096));
+      expect((await vfs.stat('/home/user/at-cap.bin')).size).toBe(4096);
     });
 
     it('rejects writes that would exceed the total quota', async () => {
+      const vfs = await createVFS(createBus(), { quota: { file: 60 * 1024, total: 400 * 1024 } });
+      const chunk = new Uint8Array(60 * 1024);
+      let written = 0;
+      for (let i = 0; i < 10; i += 1) {
+        try { await vfs.writeFile(`/home/user/c${i}.bin`, chunk); written += 1; } catch { break; }
+      }
+      // The cap holds: the store filled up long before ten chunks, and one more always fails.
+      expect(written).toBeGreaterThanOrEqual(6);
+      expect(written).toBeLessThan(10);
+      await expect(vfs.writeFile('/home/user/overflow.bin', chunk)).rejects.toMatchObject({ code: 'EINVAL' });
+    });
+
+    it('defaults to the desktop tier and reports the limits it enforces', async () => {
       const vfs = await createVFS(createBus());
-      const chunk = new Uint8Array(18 * 1024 * 1024); // under the per-file cap
-      await vfs.writeFile('/home/user/c1.bin', chunk);
-      await vfs.writeFile('/home/user/c2.bin', chunk); // 36 MB so far
-      await expect(vfs.writeFile('/home/user/c3.bin', chunk)).rejects.toMatchObject({ code: 'EINVAL' }); // would hit 54 MB
+      expect(vfs.quota).toEqual({ ...quotaFor('desktop'), tier: 'desktop' });
+    });
+
+    it('enforces the tier the kernel picked', async () => {
+      const vfs = await createVFS(createBus(), { tier: 'mobile' });
+      expect(vfs.quota).toEqual({ ...quotaFor('mobile'), tier: 'mobile' });
+      await expect(vfs.writeFile('/home/user/big.bin', new Uint8Array(quotaFor('mobile').file + 1)))
+        .rejects.toMatchObject({ code: 'EINVAL' });
     });
   });
 
