@@ -12,6 +12,7 @@
  */
 import type { SystemAPI } from '../kernel/types';
 import { t } from '../kernel/i18n';
+import { pushEscapeLayer } from './esc';
 
 export const CLIPBOARD_KEY = 'faisal.clipboard.v1';
 export const MAX_ENTRIES = 25;
@@ -174,6 +175,7 @@ export function mountClipboard(sys: SystemAPI): ClipboardPanel {
   /* ── the panel ── */
 
   let panel: HTMLElement | null = null;
+  let releaseEsc: (() => void) | null = null;
   let list: HTMLElement;
   let target: Editable | null = null;
   let active = 0;
@@ -294,16 +296,10 @@ export function mountClipboard(sys: SystemAPI): ClipboardPanel {
     active = 0;
     items()[0]?.focus();
     document.addEventListener('pointerdown', onOutside, true);
-    // Esc closes the panel wherever focus is (even an empty list has nothing to focus).
-    document.addEventListener('keydown', onEscape, true);
+    // Escape belongs to the shell's priority stack (esc.ts): this panel closes first, wherever
+    // focus is — even an empty list has nothing to focus.
+    releaseEsc = pushEscapeLayer(close);
     panel.addEventListener('keydown', onKey);
-  }
-
-  function onEscape(ev: KeyboardEvent) {
-    if (ev.key !== 'Escape' || !panel) return;
-    ev.preventDefault();
-    ev.stopPropagation();
-    close();
   }
 
   function close() {
@@ -311,7 +307,8 @@ export function mountClipboard(sys: SystemAPI): ClipboardPanel {
     panel.remove();
     panel = null;
     document.removeEventListener('pointerdown', onOutside, true);
-    document.removeEventListener('keydown', onEscape, true);
+    releaseEsc?.();
+    releaseEsc = null;
     // Give focus back to where the owner was typing.
     if (target?.isConnected) target.focus();
   }

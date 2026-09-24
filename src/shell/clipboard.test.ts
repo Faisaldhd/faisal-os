@@ -106,4 +106,15 @@ describe('opening the panel from the keyboard', () => {
     panel.close();
     expect(document.querySelector('.faisal-clip')).toBeNull();
   });
+
+  it('closes the panel with Escape', () => {
+    localStorage.clear();
+    const panel = mountClipboard({ notify: () => {} } as unknown as SystemAPI);
+    panel.open();
+    expect(document.querySelector('.faisal-clip')).not.toBeNull();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(panel.isOpen()).toBe(false);
+    expect(document.querySelector('.faisal-clip')).toBeNull();
+  });
 });

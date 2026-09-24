@@ -1,6 +1,7 @@
 import type { SystemAPI } from '../kernel/types';
 import { t } from '../kernel/i18n';
 import { renderIcon } from './icon';
+import { pushEscapeLayer } from './esc';
 
 const AUTO_DISMISS_MS = 5000;
 const HISTORY_KEY = 'faisal.notifications.v1';
@@ -221,9 +222,13 @@ export function mountNotifications(root: HTMLElement, sys: SystemAPI, anchor: HT
     anchor.setAttribute('aria-haspopup', 'dialog');
     document.addEventListener('pointerdown', onOutside, true);
     document.addEventListener('keydown', onKey, true);
-    // Put the keyboard where the eye is; Escape returns it to the top bar.
+    // Escape returns the keyboard to the top bar (esc.ts gives the key to this panel first).
+    releaseEsc = pushEscapeLayer(() => { close(); anchor?.focus(); });
+    // Put the keyboard where the eye is.
     clear.focus();
   }
+
+  let releaseEsc: (() => void) | null = null;
 
   function close() {
     if (!panel) return;
@@ -232,6 +237,8 @@ export function mountNotifications(root: HTMLElement, sys: SystemAPI, anchor: HT
     anchor?.setAttribute('aria-expanded', 'false');
     document.removeEventListener('pointerdown', onOutside, true);
     document.removeEventListener('keydown', onKey, true);
+    releaseEsc?.();
+    releaseEsc = null;
   }
 
   function onOutside(ev: PointerEvent) {
@@ -241,7 +248,6 @@ export function mountNotifications(root: HTMLElement, sys: SystemAPI, anchor: HT
   }
   function onKey(ev: KeyboardEvent) {
     if (!panel) return;
-    if (ev.key === 'Escape') { ev.stopPropagation(); close(); anchor?.focus(); return; }
     if (ev.key !== 'Tab') return;
     // Keep Tab inside the open panel instead of walking the desktop behind it.
     const focusable = panel.querySelectorAll<HTMLElement>('button, input, [tabindex]:not([tabindex="-1"])');

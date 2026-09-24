@@ -3,6 +3,7 @@ import { t } from '../kernel/i18n';
 import { renderIcon } from './icon';
 import { showContextMenu, wireContextMenu } from './contextmenu';
 import { appTileMenuItems, getDashIds } from './desktop';
+import { pushEscapeLayer } from './esc';
 
 const ICON_WINDOW =
   '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="3" y1="8.5" x2="21" y2="8.5" stroke="currentColor" stroke-width="1.6"/></svg>';
@@ -210,9 +211,6 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
         if (hit) { void sys.apps.launch(hit.id); close(); }
         break;
       }
-      case 'Escape':
-        close();
-        break;
       case 'ArrowRight': ev.preventDefault(); move(activeIndex() + (rtl ? -1 : 1)); break;
       case 'ArrowLeft': ev.preventDefault(); move(activeIndex() + (rtl ? 1 : -1)); break;
       case 'ArrowDown': ev.preventDefault(); move(activeIndex() + columns()); break;
@@ -224,9 +222,7 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
     if (ev.target === overlay) close();
   });
 
-  document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && open) close();
-  });
+  let releaseEsc: (() => void) | null = null;
 
   function openFn() {
     open = true;
@@ -235,12 +231,16 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
     renderDock();
     search.value = '';
     renderApps();
+    releaseEsc?.();
+    releaseEsc = pushEscapeLayer(close);
     requestAnimationFrame(() => search.focus());
   }
 
   function close() {
     open = false;
     overlay.classList.remove('is-open');
+    releaseEsc?.();
+    releaseEsc = null;
   }
 
   function toggle() {

@@ -2,6 +2,7 @@ import type { SystemAPI } from '../kernel/types';
 import { HOME } from '../kernel/types';
 import { join } from '../kernel/path';
 import { t } from '../kernel/i18n';
+import { pushEscapeLayer } from './esc';
 
 export const SCREENSHOT_DIR = join(HOME, 'Pictures');
 
@@ -124,15 +125,18 @@ function pickRegion(frame: HTMLCanvasElement): Promise<Rect | null> {
     document.body.append(overlay);
     overlay.focus();
 
+    let releaseEsc: () => void = () => {};
     const done = (r: Rect | null) => {
       overlay.remove();
+      releaseEsc();
       resolve(r);
     };
+    releaseEsc = pushEscapeLayer(() => done(null));
     fullBtn.addEventListener('click', () => done({ x: 0, y: 0, w: frame.width, h: frame.height }));
     cancelBtn.addEventListener('click', () => done(null));
+    // Escape is the shell's; Enter belongs to this overlay.
     overlay.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); done(null); }
-      else if (ev.key === 'Enter') { ev.preventDefault(); done({ x: 0, y: 0, w: frame.width, h: frame.height }); }
+      if (ev.key === 'Enter') { ev.preventDefault(); done({ x: 0, y: 0, w: frame.width, h: frame.height }); }
     });
 
     let start: { x: number; y: number } | null = null;
