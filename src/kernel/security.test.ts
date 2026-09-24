@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { createBus } from './bus';
 import { createSettings } from './settings';
 import { createAppRegistry, scopeVFS } from './apps';
+import { createProcessTable } from './process';
 import { createVFS } from '../vfs';
 import { renderIcon } from '../shell/icon';
 import type { AppContext, SystemAPI, VFS, WindowHandle, WindowManager } from './types';
@@ -73,7 +74,8 @@ describe('app sandbox (kernel capabilities)', () => {
     };
     let sys!: SystemAPI;
     const apps = createAppRegistry(() => sys);
-    sys = { bus, vfs, wm, apps, settings: createSettings(bus), locale: () => 'en', t: (k) => k, notify: () => {} };
+    sys = { bus, vfs, wm, apps, settings: createSettings(bus), locale: () => 'en', t: (k) => k, notify: () => {},
+      proc: createProcessTable(bus, { requestClose: () => {}, killClose: () => {}, isMinimized: () => false, isAlive: () => false }) };
 
     const ctxs: Record<string, AppContext> = {};
     const mk = (id: string, permissions: string[]) => ({

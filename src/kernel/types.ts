@@ -128,6 +128,49 @@ export interface WindowManager {
   toggleMaximize(id: string): void;
 }
 
+/* ───────────────────────────── Processes ───────────────────────────── */
+
+/** يعكس حالة النافذة: تعمل، نائمة (مصغّرة)، أو انتهت. */
+export type ProcessState = 'running' | 'sleeping' | 'exited';
+
+/** إشارتان فقط، كما يحتاجهما المستخدم فعلًا: TERM يطلب الإغلاق وKILL يفرضه. */
+export type ProcessSignal = 'TERM' | 'KILL';
+
+export interface ProcessInfo {
+  pid: number;
+  /** معرّف التطبيق، أو `init` / `faisal-shell` لعمليات النظام. */
+  appId: string;
+  /** فارغ لعمليات النظام. */
+  windowId: string;
+  /** عنوان النافذة لحظة التشغيل. */
+  name: string;
+  state: ProcessState;
+  /** ms epoch. */
+  startedAt: number;
+  /** عمليات النظام (init والصدفة) لا تُقتل. */
+  system?: boolean;
+  /** يُملأ بعد انتهاء العملية: 0 للإغلاق العادي، 128+الإشارة لغير ذلك. */
+  exit?: { code: number; signal?: ProcessSignal; at: number };
+}
+
+/**
+ * جدول العمليات: مصدر واحد لكل ما يقرأ «ما الذي يعمل الآن» — `ps` و`top` و`kill` في الطرفية،
+ * ومراقب النظام، ولاحقًا وكيل الذكاء الاصطناعي.
+ */
+export interface ProcessTable {
+  /** العمليات الحيّة مرتّبة بالمعرّف. */
+  list(): ProcessInfo[];
+  /** المنتهية حديثًا (الأحدث أولًا) لـ`ps -a`. */
+  recent(): ProcessInfo[];
+  /** الحيّة ثم المنتهية. */
+  all(): ProcessInfo[];
+  get(pid: number): ProcessInfo | undefined;
+  /** يرسل إشارة: 0 نجحت، 1 لا عملية أو ممنوعة (كما تُرجع bash). */
+  signal(pid: number, signal: ProcessSignal): number;
+  on(cb: () => void): Unsubscribe;
+  dispose(): void;
+}
+
 /* ───────────────────────────── Apps ───────────────────────────────── */
 
 export type Permission =
@@ -249,6 +292,8 @@ export interface SystemAPI {
   vfs: VFS;
   wm: WindowManager;
   apps: AppRegistry;
+  /** جدول العمليات: ما الذي يعمل الآن، وإشاراته. */
+  proc: ProcessTable;
   settings: Settings;
   locale(): Locale;
   t(key: string, vars?: Record<string, string | number>): string;
