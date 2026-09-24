@@ -62,6 +62,7 @@
     "icon": "public/icons/icon-512.png"
   },
   "dependencies": {
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "pdf-lib": "^1.17.1"
   }
 }
