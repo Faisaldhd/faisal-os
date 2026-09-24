@@ -63,6 +63,7 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.9",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.3.289"
   }
 }

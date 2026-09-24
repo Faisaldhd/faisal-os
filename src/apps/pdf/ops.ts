@@ -132,6 +132,27 @@ export function movePage(order: readonly number[], from: number, to: number): nu
   return next;
 }
 
+/**
+ * Moves a block of pages (a thumbnail drag of several selected pages) so that it lands before
+ * the page that was at `before` (0-based; `count` means "at the end"). The moved pages keep
+ * their own order; the result is the new order as indices of the old document.
+ */
+export function moveBlock(count: number, pages: readonly number[], before: number): number[] {
+  const moving = [...new Set(pages)].filter((p) => Number.isInteger(p) && p >= 0 && p < count).sort((a, b) => a - b);
+  const all = Array.from({ length: count }, (_, i) => i);
+  if (!moving.length) return all;
+  const set = new Set(moving);
+  const target = Math.min(Math.max(Math.trunc(before), 0), count);
+  const rest = all.filter((p) => !set.has(p));
+  const at = rest.filter((p) => p < target).length;
+  return [...rest.slice(0, at), ...moving, ...rest.slice(at)];
+}
+
+/** True when an order is the identity (nothing to write). */
+export function isIdentityOrder(order: readonly number[]): boolean {
+  return order.every((p, i) => p === i);
+}
+
 export type DeleteResult = { ok: true; order: number[] } | { ok: false; error: 'none' | 'allPages' };
 
 /** `pages` are 0-based indices into `order` (the current page positions), not page labels. */
