@@ -16,7 +16,7 @@ export const BRAND = {
   name: 'Fai$al',
   nameAr: 'فيصل',
   product: 'Fai$al OS',
-  version: '0.3',
+  version: '0.3.1',
   colors: {
     midnight: '#0B1530',
     ink: '#0E1A3A',
