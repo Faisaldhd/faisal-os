@@ -153,10 +153,10 @@ describe('webAppManifest', () => {
     }
   });
 
-  it('is non-core and default-installed, so it appears in the Store like any app', () => {
+  it('is non-core and NOT installed by default: listed in the Store for the owner to install', () => {
     const m = webAppManifest(wikipedia);
     expect(m.core).toBeUndefined();
-    expect(m.defaultInstalled).toBeUndefined();
+    expect(m.defaultInstalled).toBe(false);
   });
 
   it('accepts any new def without touching anything else', () => {
@@ -193,10 +193,12 @@ describe('webAppManifest', () => {
         def.id,
       ).not.toThrow();
     }
-    // Every registered app really is in the registry, one per def, all category web.
-    expect(registry.list()).toHaveLength(WIRED_WEB_APPS.length);
-    expect(registry.list().every((m) => m.category === 'web')).toBe(true);
-    expect(registry.list().map((m) => m.id).sort()).toEqual([...WIRED_WEB_APPS].map(webAppId).sort());
+    // Every registered app really is in the catalog, one per def, all category web —
+    // and none of them is installed until the owner installs it from the Store.
+    expect(registry.catalog()).toHaveLength(WIRED_WEB_APPS.length);
+    expect(registry.catalog().every((m) => m.category === 'web')).toBe(true);
+    expect(registry.catalog().map((m) => m.id).sort()).toEqual([...WIRED_WEB_APPS].map(webAppId).sort());
+    expect(registry.list()).toHaveLength(0);
   });
 
   it('is an ordinary registry entry: installable and uninstallable like any other app', () => {
@@ -219,8 +221,10 @@ describe('webAppManifest', () => {
         load: async () => ({ manifest: webAppManifest(def), launch() {} }),
       });
     }
-    // Nothing special: they are installed by default, removable, and re-installable.
-    expect(registry.list()).toHaveLength(WIRED_WEB_APPS.length);
+    // Not installed at first; installable from the Store, then removable and re-installable.
+    expect(registry.list()).toHaveLength(0);
+    registry.install('org.faisal.Web.wikipedia');
+    expect(registry.list().map((m) => m.id)).toEqual(['org.faisal.Web.wikipedia']);
     expect(() => registry.uninstall('org.faisal.Web.wikipedia')).not.toThrow();
     expect(registry.list().map((m) => m.id)).not.toContain('org.faisal.Web.wikipedia');
     registry.install('org.faisal.Web.wikipedia');
