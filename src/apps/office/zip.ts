@@ -339,10 +339,32 @@ export async function entryData(archive: RawZip, name: string): Promise<Uint8Arr
  * replaced part is recompressed (deflate), and its data descriptor is dropped
  * because its sizes are known before its header is written.
  */
-export async function rebuildZip(archive: RawZip, replacements: ReadonlyMap<string, Uint8Array>): Promise<Uint8Array> {
+export async function rebuildZip(
+  archive: RawZip,
+  replacements: ReadonlyMap<string, Uint8Array>,
+  additions: ReadonlyMap<string, Uint8Array> = new Map(),
+  removals: ReadonlySet<string> = new Set(),
+): Promise<Uint8Array> {
   for (const name of replacements.keys()) {
     if (!archive.entries.some((e) => e.name === name)) throw new Error(`zip: no such entry to replace: ${name}`);
   }
+  for (const name of additions.keys()) {
+    if (archive.entries.some((e) => e.name === name && !removals.has(name))) throw new Error(`zip: entry already exists: ${name}`);
+  }
+  // New parts are appended as fresh entries (deflated, stamped with the time of the
+  // first entry so the archive keeps one consistent date).
+  const sample = archive.entries[0];
+  const added: RawZipEntry[] = [...additions.keys()].map((name) => {
+    const nameBytes = utf8(name);
+    return {
+      name, nameBytes, method: METHOD_DEFLATE, flags: FLAG_UTF8, crc: 0, compressed: 0, size: 0, localOffset: 0,
+      time: sample?.time ?? 0, date: sample?.date ?? 0x21, versionMadeBy: sample?.versionMadeBy ?? VERSION,
+      versionNeeded: VERSION, diskStart: 0, internalAttrs: 0, externalAttrs: 0,
+      extra: new Uint8Array(0), comment: new Uint8Array(0), recordStart: 0, recordEnd: 0,
+    };
+  });
+  const all = [...archive.entries.filter((e) => !removals.has(e.name)), ...added];
+  const content = new Map<string, Uint8Array>([...replacements, ...additions]);
 
   interface Written { entry: RawZipEntry; replaced: boolean; method: number; flags: number; crc: number; compressed: number; size: number }
   const locals: Uint8Array[] = [];
@@ -350,9 +372,9 @@ export async function rebuildZip(archive: RawZip, replacements: ReadonlyMap<stri
   const offsets: number[] = [];
   let at = 0;
 
-  for (const entry of archive.entries) {
+  for (const entry of all) {
     offsets.push(at);
-    const replacement = replacements.get(entry.name);
+    const replacement = content.get(entry.name);
     if (!replacement) {
       const copy = archive.bytes.slice(entry.recordStart, entry.recordEnd);
       locals.push(copy);

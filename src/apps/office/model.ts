@@ -10,6 +10,8 @@
  * readers in `src/apps/viewer/formats.ts` actually do.
  */
 import { extensionOf } from '../viewer/formats';
+import type { DocBlock } from './writer/types';
+import { diffText, replaceText } from './writer/docops';
 
 /** The four shapes a file can have once read, plus plain text. */
 export type OfficeKind = 'docx' | 'xlsx' | 'pptx' | 'csv' | 'text';
@@ -41,10 +43,18 @@ export interface ParagraphFormat {
   /** Font size in points; Word stores half-points. */
   size?: number | null;
   align?: ParagraphAlign | null;
+  /** Paragraph direction, written as `<w:bidi/>` (the Writer's RTL/LTR buttons). */
+  dir?: 'rtl' | 'ltr' | null;
+  /** The paragraph style id (`<w:pStyle>`): Heading1, Title, Quote… */
+  style?: string | null;
+  /** A bulleted or numbered list (`<w:numPr>`); null takes a style's list away. */
+  list?: 'bullet' | 'number' | null;
+  /** Line spacing as a multiple of a single line (1, 1.15, 1.5, 2). */
+  line?: number | null;
 }
 
 /** The properties a format can carry, in one place for diffing and copying. */
-export const FORMAT_KEYS = ['bold', 'italic', 'underline', 'size', 'align'] as const;
+export const FORMAT_KEYS = ['bold', 'italic', 'underline', 'size', 'align', 'dir', 'style', 'list', 'line'] as const;
 
 /**
  * True when two formats say the same thing. `undefined` (leave the file's own
@@ -60,7 +70,17 @@ export function sameFormat(a: ParagraphFormat | undefined, b: ParagraphFormat | 
   return FORMAT_KEYS.every((key) => value(a, key) === value(b, key));
 }
 
-export interface DocModel { kind: 'docx'; paragraphs: string[]; formats?: Record<number, ParagraphFormat> }
+export interface DocModel {
+  kind: 'docx';
+  paragraphs: string[];
+  formats?: Record<number, ParagraphFormat>;
+  /**
+   * The rich paragraphs (runs with their own formatting, stable ids), parallel to
+   * `paragraphs` when the Writer opened the file. Absent in the plain model the
+   * older save path and its tests use.
+   */
+  blocks?: DocBlock[];
+}
 export interface SheetsModel {
   kind: 'xlsx' | 'csv';
   grids: Grid[];
@@ -71,6 +91,12 @@ export interface SheetsModel {
    * itself always holds the computed value; the file keeps the formula in `<f>`.
    */
   formulas?: Record<string, string>;
+  /**
+   * How many row/column insertions or deletions the model holds relative to the
+   * file (they move cells, so the save must rebuild). Typing past the last row or
+   * column only grows the sheet and does not count. Absent when zero.
+   */
+  moved?: number;
 }
 export interface DeckModel { kind: 'pptx'; slides: string[][] }
 export interface TextModel { kind: 'text'; text: string }
@@ -268,6 +294,18 @@ function sheetsEdit(
   return model.kind === 'xlsx' || model.kind === 'csv' ? change(model) : model;
 }
 
+/** A structural edit: the change, plus the `moved` counter going up (apply) or down (revert). */
+function structural(model: OfficeModel, delta: 1 | -1, change: (m: SheetsModel) => SheetsModel): OfficeModel {
+  return sheetsEdit(model, (s) => {
+    const next = change(s);
+    const moved = (s.moved ?? 0) + delta;
+    const out: SheetsModel = { ...next };
+    if (moved) out.moved = moved;
+    else delete out.moved;
+    return out;
+  });
+}
+
 /** An edit that sets one cell, remembering the value it replaced. */
 export function cellEdit(sheet: number, row: number, col: number, before: string, after: string): Edit {
   return {
@@ -280,8 +318,8 @@ export function cellEdit(sheet: number, row: number, col: number, before: string
 /** An edit that inserts a row, capturing the index so undo removes exactly it. */
 export function addRowEdit(sheet: number, at: number): Edit {
   return {
-    apply: (m) => sheetsEdit(m, (s) => insertRow(s, sheet, at)),
-    revert: (m) => sheetsEdit(m, (s) => removeRow(s, sheet, at)),
+    apply: (m) => structural(m, 1, (s) => insertRow(s, sheet, at)),
+    revert: (m) => structural(m, -1, (s) => removeRow(s, sheet, at)),
   };
 }
 
@@ -289,8 +327,8 @@ export function addRowEdit(sheet: number, at: number): Edit {
 export function deleteRowEdit(sheet: number, at: number, row: string[]): Edit {
   const value = row.slice();
   return {
-    apply: (m) => sheetsEdit(m, (s) => removeRow(s, sheet, at)),
-    revert: (m) => sheetsEdit(m, (s) => {
+    apply: (m) => structural(m, 1, (s) => removeRow(s, sheet, at)),
+    revert: (m) => structural(m, -1, (s) => {
       const grid = s.grids[sheet];
       if (!grid) return s;
       const rows = grid.rows.slice();
@@ -303,8 +341,8 @@ export function deleteRowEdit(sheet: number, at: number, row: string[]): Edit {
 /** An edit that inserts a column. */
 export function addColumnEdit(sheet: number, at: number): Edit {
   return {
-    apply: (m) => sheetsEdit(m, (s) => insertColumn(s, sheet, at)),
-    revert: (m) => sheetsEdit(m, (s) => removeColumn(s, sheet, at)),
+    apply: (m) => structural(m, 1, (s) => insertColumn(s, sheet, at)),
+    revert: (m) => structural(m, -1, (s) => removeColumn(s, sheet, at)),
   };
 }
 
@@ -312,8 +350,8 @@ export function addColumnEdit(sheet: number, at: number): Edit {
 export function deleteColumnEdit(sheet: number, at: number, values: string[]): Edit {
   const kept = values.slice();
   return {
-    apply: (m) => sheetsEdit(m, (s) => removeColumn(s, sheet, at)),
-    revert: (m) => sheetsEdit(m, (s) => {
+    apply: (m) => structural(m, 1, (s) => removeColumn(s, sheet, at)),
+    revert: (m) => structural(m, -1, (s) => {
       const grid = s.grids[sheet];
       if (!grid) return s;
       const rows = grid.rows.map((r, i) => {
@@ -334,8 +372,15 @@ export function paragraphEdit(index: number, before: string, after: string): Edi
     if (m.kind !== 'docx') return m;
     const paragraphs = m.paragraphs.slice();
     while (paragraphs.length <= index) paragraphs.push('');
+    const previous = paragraphs[index] ?? '';
     paragraphs[index] = text;
-    return { ...m, paragraphs };
+    // The rich runs follow the plain text: the change lands in the run it touches.
+    const blocks = m.blocks && m.blocks[index] ? m.blocks.slice() : m.blocks;
+    if (blocks && blocks[index]) {
+      const change = diffText(previous, text);
+      blocks[index] = { ...blocks[index], runs: replaceText(blocks[index].runs, change.start, change.start + change.del, change.ins) };
+    }
+    return blocks ? { ...m, paragraphs, blocks } : { ...m, paragraphs };
   };
   return {
     key: `para:${index}`,
@@ -478,8 +523,8 @@ export function textEdit(before: string, after: string): Edit {
 
 /* ───────────────────────────── history ───────────────────────────── */
 
-/** How many edit steps the user can walk back. The task asks for 30; 50 is cheap. */
-export const HISTORY_LIMIT = 50;
+/** How many edit steps the user can walk back (the suite promises at least 100). */
+export const HISTORY_LIMIT = 200;
 /** Two edits to the same target closer than this merge into one undo step. */
 export const COALESCE_MS = 700;
 
