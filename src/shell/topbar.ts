@@ -3,6 +3,7 @@ import { t } from '../kernel/i18n';
 import { renderIcon } from './icon';
 import { MARK_GLYPH_GOLD_SVG, MARK_GLYPH_SVG } from '../brand/logo';
 import { ACCENTS, BRAND_ACCENT_ID, applyTheme, applyAccent, type ThemeMode } from './appearance';
+import { pushEscapeLayer } from './esc';
 
 const ICON_SYSTEM =
   '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4" fill="currentColor"/><path d="M4 20c1.2-4.2 4.6-6 8-6s6.8 1.8 8 6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>';
@@ -107,10 +108,14 @@ export function mountTopbar(
 
   let menuEl: HTMLElement | null = null;
 
+  let releaseEsc: (() => void) | null = null;
+
   function closeMenu() {
     menuEl?.remove();
     menuEl = null;
     menuBtn.setAttribute('aria-expanded', 'false');
+    releaseEsc?.();
+    releaseEsc = null;
   }
 
   function buildMenu(): HTMLElement {
@@ -258,14 +263,14 @@ export function mountTopbar(
     menuEl = buildMenu();
     document.body.append(menuEl);
     menuBtn.setAttribute('aria-expanded', 'true');
+    // Escape closes the menu first while it is open (esc.ts).
+    releaseEsc?.();
+    releaseEsc = pushEscapeLayer(closeMenu);
   });
   document.addEventListener('pointerdown', (ev) => {
     if (menuEl && !menuEl.contains(ev.target as Node) && ev.target !== menuBtn && !menuBtn.contains(ev.target as Node)) {
       closeMenu();
     }
-  });
-  document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && menuEl) closeMenu();
   });
 
   return bar;

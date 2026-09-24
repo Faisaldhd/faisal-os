@@ -1,5 +1,7 @@
 /** Small in-shell modal dialog (never window.confirm/alert). Used by context-menu actions. */
 
+import { pushEscapeLayer } from './esc';
+
 export interface ShellConfirmOptions {
   title: string;
   message: string;
@@ -39,20 +41,19 @@ export function shellConfirm(opts: ShellConfirmOptions): Promise<boolean> {
 
     document.body.append(overlay);
 
+    let releaseEsc: (() => void) | null = null;
     const finish = (value: boolean) => {
       overlay.remove();
-      document.removeEventListener('keydown', onKeyDown);
+      releaseEsc?.();
+      releaseEsc = null;
       resolve(value);
     };
-
-    function onKeyDown(ev: KeyboardEvent) {
-      if (ev.key === 'Escape') finish(false);
-    }
 
     cancelBtn.addEventListener('click', () => finish(false));
     okBtn.addEventListener('click', () => finish(true));
     overlay.addEventListener('mousedown', (ev) => { if (ev.target === overlay) finish(false); });
-    document.addEventListener('keydown', onKeyDown);
+    // Escape is the shell's (esc.ts): this dialog closes first when it is on top.
+    releaseEsc = pushEscapeLayer(() => finish(false));
 
     queueMicrotask(() => okBtn.focus());
   });

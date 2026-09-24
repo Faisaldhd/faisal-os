@@ -40,7 +40,6 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   // GNOME behaviour: tapping the Super/Windows key alone toggles Activities; Alt+F1 does too.
   let superAlone = false;
   window.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape' && overview.isOpen()) overview.close();
     if (ev.key === 'Meta' || ev.key === 'OS') { superAlone = !ev.repeat; ev.preventDefault(); return; }
     superAlone = false;
     if (ev.altKey && ev.key === 'F1') { ev.preventDefault(); overview.toggle(); }

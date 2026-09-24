@@ -3,6 +3,8 @@
  * Trusted, shell-owned strings only (textContent, no innerHTML).
  */
 
+import { pushEscapeLayer } from './esc';
+
 export interface ContextMenuItem {
   label?: string;
   icon?: string;
@@ -143,12 +145,15 @@ export function showContextMenu(x: number, y: number, items: ContextMenuItem[], 
     list[activeIndex].el.focus();
   }
 
+  let releaseEsc: (() => void) | null = null;
+
   function close() {
     if (currentMenu?.el !== menu) return;
     currentMenu = null;
     menu.remove();
     document.removeEventListener('pointerdown', onOutsidePointerDown, true);
-    document.removeEventListener('keydown', onKeyDown, true);
+    releaseEsc?.();
+    releaseEsc = null;
     window.removeEventListener('resize', close);
     window.removeEventListener('scroll', close, true);
     window.removeEventListener('blur', close);
@@ -162,10 +167,6 @@ export function showContextMenu(x: number, y: number, items: ContextMenuItem[], 
   function onKeyDown(ev: KeyboardEvent) {
     const list = focusable();
     switch (ev.key) {
-      case 'Escape':
-        ev.preventDefault();
-        close();
-        break;
       case 'ArrowDown':
         ev.preventDefault();
         focusIndex(activeIndex + 1);
@@ -196,7 +197,9 @@ export function showContextMenu(x: number, y: number, items: ContextMenuItem[], 
   }
 
   document.addEventListener('pointerdown', onOutsidePointerDown, true);
+  // Arrow/Home/End/Enter navigation stays on this handler; Escape is the shell's stack (esc.ts).
   document.addEventListener('keydown', onKeyDown, true);
+  releaseEsc = pushEscapeLayer(close);
   window.addEventListener('resize', close);
   window.addEventListener('scroll', close, true);
   window.addEventListener('blur', close);
