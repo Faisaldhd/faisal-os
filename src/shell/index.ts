@@ -34,7 +34,9 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
     () => ({ enabled: lock.isEnabled(), onLock: () => lock.lock(), onManage: () => lock.openManage() }),
     () => clipboard.open(),
   );
-  mountDock(root, sys);
+  // The dock shows as many launchers as fit at the 44px touch minimum; the rest are one tap
+  // away in Activities, so a phone never crops the strip at either end.
+  mountDock(root, sys, { onMore: () => overview.open() });
   mountNotifications(root, sys, topbar.querySelector<HTMLButtonElement>('.faisal-topbar-clock'));
 
   // GNOME behaviour: tapping the Super/Windows key alone toggles Activities; Alt+F1 does too.

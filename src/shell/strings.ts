@@ -357,3 +357,16 @@ defineStrings('shell', {
     'saveas.quota': 'There is not enough space to save this file.',
   },
 });
+
+/* ── Phase 7: the compact shell (mobile layout fixes) ────────────────────────────────────────
+ * Its own `defineStrings('shell', …)` call, appended in a separate block at the end of the file,
+ * so a parallel edit elsewhere in this file merges without touching these keys. */
+defineStrings('shell', {
+  ar: {
+    // The dock's "there are more apps" launcher: whatever did not fit is one tap away.
+    'dock.more': 'المزيد من التطبيقات',
+  },
+  en: {
+    'dock.more': 'More apps',
+  },
+});

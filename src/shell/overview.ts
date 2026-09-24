@@ -3,6 +3,7 @@ import { t } from '../kernel/i18n';
 import { renderIcon } from './icon';
 import { showContextMenu, wireContextMenu } from './contextmenu';
 import { appTileMenuItems, getDashIds } from './desktop';
+import { dockSelection, fitDockStrip, watchShellWidth } from './dock';
 import { pushEscapeLayer } from './esc';
 
 const ICON_WINDOW =
@@ -57,12 +58,14 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
   body.append(winSection, appGrid, webSection, empty);
 
   const dock = document.createElement('div');
-  dock.className = 'faisal-dock';
+  dock.className = 'faisal-dock faisal-dock-strip';
 
   overlay.append(search, body, dock);
   root.append(overlay);
 
   let open = false;
+  /** Measured, not assumed: a narrow desktop window gets the same compact strip as a phone. */
+  let compact = false;
   let filtered: AppManifest[] = [];
   let webFiltered: AppManifest[] = [];
   let selected = 0;
@@ -144,17 +147,22 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
 
   function renderDock() {
     dock.textContent = '';
-    const dashIds = getDashIds(sys);
     const byId = new Map(sys.apps.list().map((a) => [a.id, a] as const));
-    for (const id of dashIds) {
+    // Same rule as the pinned dock: web apps live in the "Web Apps" group.
+    const ids = getDashIds(sys).filter((id) => byId.get(id)?.category !== 'web');
+    const metrics = fitDockStrip(dock, overlay, ids.length, compact);
+    // No "more" button here: the app grid right above IS the full list, so this strip only has
+    // to stay inside the screen. Running apps keep their place at the front, exactly like the
+    // pinned dock, so the two strips show the same launchers in the same order.
+    const { shown } = dockSelection({ ids, running: wm.list().map((w) => w.appId), capacity: metrics.capacity });
+    for (const id of shown) {
       const app = byId.get(id);
       if (!app) continue;
-      // Same rule as the pinned dock: web apps live in the "Web Apps" group.
-      if (app.category === 'web') continue;
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'faisal-dock-btn';
       btn.title = app.name[sys.locale()];
+      btn.setAttribute('aria-label', btn.title);
       btn.append(renderIcon(app.icon));
       btn.addEventListener('click', () => {
         sys.apps.launch(app.id);
@@ -246,6 +254,13 @@ export function mountOverview(root: HTMLElement, sys: SystemAPI, wm: WindowManag
   function toggle() {
     if (open) close(); else openFn();
   }
+
+  // The strip is cut to the width it really has, so it never runs off the screen (a phone used
+  // to get a 1074px dock inside 390px: the first and last launcher were cropped).
+  watchShellWidth(root, (next) => {
+    compact = next;
+    if (open) renderDock();
+  });
 
   return { open: openFn, close, toggle, isOpen: () => open };
 }
