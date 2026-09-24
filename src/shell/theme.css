@@ -1930,4 +1930,391 @@ body {
   }
   .faisal-desktop .faisal-overview { padding-block-end: calc(4px + env(safe-area-inset-bottom, 0px)); }
   .faisal-desktop .faisal-overview .faisal-dock { margin-block-end: 0; }
+/* ═══════════════════ «حفظ باسم / تصدير» — the shared save dialog (src/shell/save-as.ts) ═══════════════════
+ *
+ * One dialog for Office, PDF and Photo. It follows the suite's design bar literally: glass-first
+ * dark surfaces, copper for the active state and the focus ring, calm blue for the primary
+ * action, a 4px spacing scale, the 6/10/14 radii and 140/220ms motion.
+ *
+ * The colours come from `--app-*` when the host app defines them (the four apps do, at their
+ * root) and fall back to theme-aware `--faisal-*` values when the dialog is opened from
+ * somewhere else — so light and dark themes both stay correct, and there is no hard-coded
+ * light-or-dark panel.
+ *
+ * Layout keys off the WINDOW, not the screen: the overlay is mounted inside the app's
+ * `.faisal-window-content` (the shell's `faisal-window` container), so a narrow desktop window
+ * gets the phone layout as well. `@media` repeats the same tokens as a safety net for a host
+ * that is not a window.
+ *
+ * Appended at the end of the file on purpose: this block is independent of everything above it
+ * (another workstream edits this stylesheet in parallel), and it carries its own
+ * reduced-motion / reduced-transparency overrides because the reduced-motion block above is not
+ * “last in the file” any more.
+ */
+.faisal-saveas-overlay {
+  /* Container-query tokens: the compact block below only has to change VALUES. */
+  --sa-ctl: 32px;              /* buttons and inputs, 4px grid */
+  --sa-pad: 24px;
+  --sa-gap: 12px;
+  --sa-dialog-w: min(560px, 100%);
+  --sa-dialog-max-h: min(640px, 92%);
+  --sa-radius: 14px;
+  --sa-align: center;
+  --sa-font: 13px;
+  --sa-fields-dir: row;
+
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  z-index: 60;
+  display: flex;
+  align-items: var(--sa-align);
+  justify-content: center;
+  padding: 16px;
+  overflow: hidden;
+  background: var(--faisal-overlay-bg);
+  animation: faisal-saveas-fade 140ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1));
+
+  /* Design-bar tokens when the host app provides them; theme-aware fallbacks when it does not. */
+  --sa-surface: var(--app-glass, color-mix(in srgb, var(--faisal-surface) 84%, transparent));
+  --sa-solid: var(--faisal-surface);
+  --sa-input: var(--app-glass-strong, color-mix(in srgb, var(--faisal-surface) 94%, transparent));
+  --sa-hairline: var(--app-hairline, var(--faisal-border));
+  --sa-hairline-strong: var(--app-hairline-strong, var(--faisal-border));
+  --sa-copper: var(--app-copper, #C8894B);
+  --sa-copper-2: var(--app-copper-2, #E0A96D);
+  --sa-blue: var(--app-blue, #5B8DEF);
+  --sa-blue-soft: var(--app-blue-soft, rgba(91, 141, 239, .16));
+  --sa-text: var(--app-text, var(--faisal-fg));
+  --sa-text-2: var(--app-text-2, var(--faisal-fg-muted));
+  --sa-danger: var(--app-danger, var(--faisal-danger));
+}
+
+.faisal-saveas {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sa-gap);
+  width: var(--sa-dialog-w);
+  max-width: 100%;
+  min-width: 0;
+  max-height: var(--sa-dialog-max-h);
+  padding: var(--sa-pad);
+  box-sizing: border-box;
+  color: var(--sa-text);
+  font-size: var(--sa-font);
+  line-height: 1.4;
+  background: var(--sa-surface);
+  border: 1px solid var(--sa-hairline);
+  border-radius: var(--sa-radius);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .35);
+  backdrop-filter: blur(18px) saturate(140%);
+  animation: faisal-saveas-in 220ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+
+.faisal-saveas-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.faisal-saveas-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.faisal-saveas-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sa-gap);
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-inline-end: 4px;
+}
+
+/* ── folder bar ── */
+.faisal-saveas-place {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.faisal-saveas-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.faisal-saveas-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  min-height: var(--sa-ctl);
+  padding-inline: 8px;
+  border: none;
+  border-block-end: 2px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sa-text-2);
+  font: inherit;
+  cursor: pointer;
+  transition: background 140ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+.faisal-saveas-crumb:hover { background: var(--sa-blue-soft); }
+.faisal-saveas-crumb.is-current { color: var(--sa-text); border-block-end-color: var(--sa-copper); }
+.faisal-saveas-crumb-sep { color: var(--sa-text-2); flex: none; }
+.faisal-saveas-crumb .faisal-saveas-icon { width: 16px; height: 16px; }
+
+/* ── folder list ── */
+.faisal-saveas-folders {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 88px;
+  max-height: 220px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px;
+  border: 1px solid var(--sa-hairline);
+  border-radius: 10px;
+  background: var(--sa-input);
+}
+.faisal-saveas-folder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--sa-ctl);
+  padding-inline: 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--sa-text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  min-width: 0;
+  transition: background 140ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+.faisal-saveas-folder:hover { background: var(--sa-blue-soft); }
+.faisal-saveas-folder {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.faisal-saveas-empty {
+  margin: 0;
+  padding: 8px;
+  color: var(--sa-text-2);
+}
+
+/* ── new folder ── */
+.faisal-saveas-newfolder {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.faisal-saveas-newfolder .faisal-saveas-input { flex: 1; min-width: 0; }
+
+/* ── fields ── */
+.faisal-saveas-fields {
+  display: flex;
+  flex-direction: var(--sa-fields-dir);
+  gap: var(--sa-gap);
+  min-width: 0;
+}
+.faisal-saveas-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.faisal-saveas-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sa-text-2);
+}
+.faisal-saveas-single { margin: 0; color: var(--sa-text); }
+
+.faisal-saveas-input,
+.faisal-saveas-select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: var(--sa-ctl);
+  padding-inline: 8px;
+  border: 1px solid var(--sa-hairline-strong);
+  border-radius: 6px;
+  background: var(--sa-input);
+  color: var(--sa-text);
+  font: inherit;
+  transition: border-color 140ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+.faisal-saveas-input::placeholder { color: var(--sa-text-2); }
+.faisal-saveas-select { cursor: pointer; }
+
+.faisal-saveas-extras {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* ── target line + replace state ── */
+.faisal-saveas-target {
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--sa-hairline);
+  border-radius: 10px;
+  background: var(--sa-input);
+  color: var(--sa-text-2);
+  overflow-wrap: anywhere;
+}
+.faisal-saveas-target-path { color: var(--sa-text); }
+.faisal-saveas-replace {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--sa-hairline);
+  border-inline-start: 2px solid var(--sa-copper);
+  border-radius: 10px;
+  color: var(--sa-text-2);
+}
+.faisal-saveas-replace-text { flex: 1; min-width: 160px; overflow-wrap: anywhere; }
+
+.faisal-saveas-status {
+  margin: 0;
+  min-height: 20px;
+  color: var(--sa-text-2);
+  overflow-wrap: anywhere;
+}
+.faisal-saveas-status.is-error { color: var(--sa-danger); }
+
+/* ── footer ── */
+.faisal-saveas-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.faisal-saveas-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--sa-ctl);
+  padding-inline: 16px;
+  border: 1px solid var(--sa-hairline-strong);
+  border-radius: 6px;
+  background: var(--sa-input);
+  color: var(--sa-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1)), filter 140ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+.faisal-saveas-btn:hover:not(:disabled) { background: var(--sa-blue-soft); }
+.faisal-saveas-btn.is-primary {
+  /* Design bar: the primary action is the calm blue fill. The label is the design bar's own
+   * canvas navy rather than white, which keeps the pair at 5.6:1 instead of 3.2:1. */
+  background: var(--sa-blue);
+  border-color: transparent;
+  color: #0B1220;
+}
+.faisal-saveas-btn.is-primary:hover:not(:disabled) { filter: brightness(1.08); }
+.faisal-saveas-btn.is-plain { background: transparent; }
+.faisal-saveas-btn:disabled { opacity: .5; cursor: default; }
+
+.faisal-saveas-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--sa-ctl);
+  height: var(--sa-ctl);
+  padding: 0;
+  border: 1px solid var(--sa-hairline-strong);
+  border-radius: 6px;
+  background: var(--sa-input);
+  color: var(--sa-text);
+  cursor: pointer;
+  transition: background 140ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+.faisal-saveas-iconbtn:hover:not(:disabled) { background: var(--sa-blue-soft); }
+.faisal-saveas-iconbtn:disabled { opacity: .5; cursor: default; }
+.faisal-saveas-icon { width: 20px; height: 20px; flex: none; }
+
+/* Keyboard focus is always visible, in copper, on every control of this dialog. */
+.faisal-saveas :is(button, input, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--sa-copper-2);
+  outline-offset: 2px;
+}
+
+@keyframes faisal-saveas-in {
+  from { opacity: 0; transform: translateY(8px) scale(.99); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes faisal-saveas-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* ── window < 700px: bottom sheet, 44px targets, one column ── */
+@container faisal-window (max-width: 700px) {
+  .faisal-saveas-overlay {
+    --sa-ctl: 44px;
+    --sa-pad: 16px;
+    --sa-gap: 12px;
+    --sa-dialog-w: 100%;
+    --sa-dialog-max-h: 90%;
+    --sa-radius: 14px 14px 0 0;
+    --sa-align: flex-end;
+    --sa-font: 15px;
+    --sa-fields-dir: column;
+  }
+  .faisal-saveas-actions { flex-direction: column-reverse; align-items: stretch; }
+  .faisal-saveas-btn { width: 100%; }
+  .faisal-saveas-folders { max-height: 176px; }
+}
+@media (max-width: 700px) {
+  .faisal-saveas-overlay {
+    --sa-ctl: 44px;
+    --sa-pad: 16px;
+    --sa-dialog-w: 100%;
+    --sa-dialog-max-h: 90%;
+    --sa-radius: 14px 14px 0 0;
+    --sa-align: flex-end;
+    --sa-font: 15px;
+    --sa-fields-dir: column;
+  }
+  .faisal-saveas-actions { flex-direction: column-reverse; align-items: stretch; }
+  .faisal-saveas-btn { width: 100%; }
+}
+
+/* Glass needs a backdrop: without one (or when the owner asks for less transparency) the same
+ * layers are drawn opaque instead of turning into unreadable translucency. */
+@supports not (backdrop-filter: blur(1px)) {
+  .faisal-saveas-overlay { --sa-surface: var(--sa-solid); --sa-input: var(--faisal-surface-2); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .faisal-saveas-overlay { --sa-surface: var(--sa-solid); --sa-input: var(--faisal-surface-2); }
+  .faisal-saveas { backdrop-filter: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .faisal-saveas-overlay,
+  .faisal-saveas,
+  .faisal-saveas-crumb,
+  .faisal-saveas-folder,
+  .faisal-saveas-btn,
+  .faisal-saveas-iconbtn,
+  .faisal-saveas-input,
+  .faisal-saveas-select { animation: none; transition: none; }
 }
