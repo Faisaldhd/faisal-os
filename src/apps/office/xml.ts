@@ -5,6 +5,7 @@
  * This file only produces text that is safe inside an OOXML part, and the cell /
  * sheet addressing that Excel needs.
  */
+import type { ParagraphAlign, ParagraphFormat } from './model';
 
 /**
  * Escapes text for XML content and attribute values.
@@ -86,4 +87,45 @@ export function sheetName(raw: string, index: number, taken: ReadonlySet<string>
 /** True when a cell's text is a plain number Excel can store as `<v>` rather than text. */
 export function isNumericText(value: string): boolean {
   return /^-?(\d+(\.\d+)?|\.\d+)([eE][+-]?\d+)?$/.test(value.trim()) && value.trim() !== '';
+}
+
+/* ──────────────────────── paragraph formatting markup ──────────────────────── */
+
+/**
+ * The run properties of a paragraph format, in the order OOXML's schema requires
+ * (`b`, `i`, `sz`/`szCs`, `u`). `true` writes the toggle on, `false` writes it off
+ * explicitly (`w:val="0"`), which is what beats a style's own value, and `null`
+ * removes nothing here — the caller decides about removal.
+ */
+export function runPropertyChildren(format: ParagraphFormat | null | undefined): string[] {
+  if (!format) return [];
+  const out: string[] = [];
+  if (format.bold === true) out.push('<w:b/>');
+  else if (format.bold === false) out.push('<w:b w:val="0"/>');
+  if (format.italic === true) out.push('<w:i/>');
+  else if (format.italic === false) out.push('<w:i w:val="0"/>');
+  if (typeof format.size === 'number') {
+    const half = Math.max(2, Math.round(format.size * 2));
+    out.push(`<w:sz w:val="${half}"/><w:szCs w:val="${half}"/>`);
+  }
+  if (format.underline === true) out.push('<w:u w:val="single"/>');
+  else if (format.underline === false) out.push('<w:u w:val="none"/>');
+  return out;
+}
+
+/** `<w:rPr>…</w:rPr>` for a paragraph format, or an empty string when it says nothing. */
+export function runPropertiesMarkup(format: ParagraphFormat | null | undefined): string {
+  const children = runPropertyChildren(format);
+  return children.length ? `<w:rPr>${children.join('')}</w:rPr>` : '';
+}
+
+/** `justify` is Word's `both`; the other three are written as they are named. */
+export function jcValue(align: ParagraphAlign): string {
+  return align === 'justify' ? 'both' : align;
+}
+
+/** `<w:pPr><w:jc …/></w:pPr>` for the alignment, or an empty string. */
+export function paragraphPropertiesMarkup(format: ParagraphFormat | null | undefined): string {
+  if (!format || format.align === undefined || format.align === null) return '';
+  return `<w:pPr><w:jc w:val="${jcValue(format.align)}"/></w:pPr>`;
 }

@@ -17,6 +17,7 @@ import {
 import { emptyModel, planFor, type FormatPlan, type Grid, type OfficeModel } from './model';
 import { writeDocx, writeXlsx } from './ooxml';
 import { writePptx } from './pptx';
+import { readDocxFormats } from './patch';
 import { utf8 } from './zip';
 
 export type LoadRefusal = 'legacy' | 'unknown' | 'binary' | 'damaged';
@@ -38,8 +39,16 @@ export async function loadOfficeFile(path: string, bytes: Uint8Array): Promise<L
 
   try {
     switch (plan.kind) {
-      case 'docx':
-        return { ok: true, plan, model: { kind: 'docx', paragraphs: await readDocx(bytes) }, empty: false };
+      case 'docx': {
+        const paragraphs = await readDocx(bytes);
+        // What the file already says about bold/italic/size/alignment, so the
+        // toolbar shows the truth and an untouched property is never rewritten.
+        const formats = await readDocxFormats(bytes);
+        return {
+          ok: true, plan, empty: false,
+          model: { kind: 'docx', paragraphs, ...(Object.keys(formats).length ? { formats } : {}) },
+        };
+      }
       case 'xlsx':
         return {
           ok: true, plan, empty: false,
@@ -85,8 +94,8 @@ export function writeDelimited(rows: readonly (readonly string[])[], delimiter: 
 /** The bytes to write for a model: real OOXML for Office files, text for the rest. */
 export function serializeModel(model: OfficeModel): Uint8Array {
   switch (model.kind) {
-    case 'docx': return writeDocx(model.paragraphs);
-    case 'xlsx': return writeXlsx(model.grids);
+    case 'docx': return writeDocx(model.paragraphs, model.formats);
+    case 'xlsx': return writeXlsx(model.grids, model.formulas);
     case 'csv': return utf8(writeDelimited(model.grids[0]?.rows ?? [], model.delimiter));
     case 'pptx': return writePptx(model.slides);
     default: return utf8(model.text);

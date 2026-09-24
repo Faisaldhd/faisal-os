@@ -7,8 +7,8 @@
  * which is exactly why the app says styling, images, charts and macros do not
  * survive a save (the reader never saw them, so they cannot be written back).
  */
-import type { Grid } from './model';
-import { cellName, isNumericText, sheetName, xmlText } from './xml';
+import { formulaKey, type Grid, type ParagraphFormat } from './model';
+import { cellName, isNumericText, paragraphPropertiesMarkup, runPropertiesMarkup, sheetName, xmlText } from './xml';
 import { utf8, writeZip, type ZipInput } from './zip';
 
 const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
@@ -33,19 +33,35 @@ export function contentTypes(overrides: readonly string[]): string {
  * the two things the reader can give back (`formats.ts: paragraphText`). Carriage
  * returns are normalized to newlines first, because XML parsers do that to
  * character data anyway and the reader only ever produces "\n".
+ *
+ * `format` adds the run properties the owner chose (bold, italic, size,
+ * underline) to every run of that paragraph: this writer rebuilds the file from
+ * text, so a paragraph has one formatting, exactly like the surgical patcher.
  */
-function docxRuns(text: string): string {
+function docxRuns(text: string, format?: ParagraphFormat): string {
+  const rPr = runPropertiesMarkup(format);
   let out = '';
   for (const part of text.replace(/\r\n?/g, '\n').split(/([\t\n])/)) {
-    if (part === '\t') out += '<w:r><w:tab/></w:r>';
-    else if (part === '\n') out += '<w:r><w:br/></w:r>';
-    else if (part) out += `<w:r><w:t xml:space="preserve">${xmlText(part)}</w:t></w:r>`;
+    if (part === '\t') out += `<w:r>${rPr}<w:tab/></w:r>`;
+    else if (part === '\n') out += `<w:r>${rPr}<w:br/></w:r>`;
+    else if (part) out += `<w:r>${rPr}<w:t xml:space="preserve">${xmlText(part)}</w:t></w:r>`;
   }
+  // A paragraph with formatting but no text keeps an empty run, so the
+  // formatting is not lost on the way back in.
+  if (!out && rPr) out = `<w:r>${rPr}</w:r>`;
   return out;
 }
 
-export function docxDocument(paragraphs: readonly string[]): string {
-  const body = paragraphs.map((p) => (p ? `<w:p>${docxRuns(p)}</w:p>` : '<w:p/>')).join('');
+/** One paragraph, with its alignment and its runs (an untouched one stays `<w:p/>`). */
+function docxParagraph(text: string, format?: ParagraphFormat): string {
+  const runs = docxRuns(text, format);
+  const pPr = paragraphPropertiesMarkup(format);
+  if (!runs && !pPr) return '<w:p/>';
+  return `<w:p>${pPr}${runs}</w:p>`;
+}
+
+export function docxDocument(paragraphs: readonly string[], formats?: Record<number, ParagraphFormat>): string {
+  const body = paragraphs.map((p, i) => docxParagraph(p, formats?.[i])).join('');
   return `${DECL}<w:document xmlns:w="${W_NS}"><w:body>${body}` +
     '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>' +
     '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>' +
@@ -60,8 +76,8 @@ const DOCX_STYLES = `${DECL}<w:styles xmlns:w="${W_NS}">` +
   '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/></w:style>' +
   '</w:styles>';
 
-/** A minimal Word document: paragraphs only, no styling beyond a default font. */
-export function writeDocx(paragraphs: readonly string[]): Uint8Array {
+/** A minimal Word document: paragraphs only, with the formatting the model carries. */
+export function writeDocx(paragraphs: readonly string[], formats?: Record<number, ParagraphFormat>): Uint8Array {
   const parts: ZipInput[] = [
     {
       name: '[Content_Types].xml',
@@ -76,7 +92,7 @@ export function writeDocx(paragraphs: readonly string[]): Uint8Array {
         `<Relationship Id="rId1" Type="${DOC_REL}/officeDocument" Target="word/document.xml"/>` +
         '</Relationships>'),
     },
-    { name: 'word/document.xml', data: utf8(docxDocument(paragraphs)) },
+    { name: 'word/document.xml', data: utf8(docxDocument(paragraphs, formats)) },
     { name: 'word/styles.xml', data: utf8(DOCX_STYLES) },
     {
       name: 'word/_rels/document.xml.rels',
@@ -96,10 +112,20 @@ export function writeDocx(paragraphs: readonly string[]): Uint8Array {
  * out but every row element is written, which keeps row numbering identical to
  * what the reader gave us. Cell types the reader had already flattened (a boolean
  * became "TRUE") are written as text — the app cannot invent the type back.
+ *
+ * A cell the owner gave a formula keeps it: `<f>` holds the canonical formula and
+ * `<v>` the value this app computed, which is what Excel shows without
+ * recalculating and what every other reader sees.
  */
-export function xlsxSheet(grid: Grid): string {
+export function xlsxSheet(grid: Grid, sheet = 0, formulas?: Record<string, string>): string {
   const rows = grid.rows.map((row, r) => {
     const cells = row.map((value, c) => {
+      const formula = formulas?.[formulaKey(sheet, r, c)];
+      if (formula) {
+        // Excel's <f> holds the formula without the "=" the cell shows.
+        const type = value.startsWith('#') ? ' t="e"' : '';
+        return `<c r="${cellName(r, c)}"${type}><f>${xmlText(formula.replace(/^=/, ''))}</f><v>${xmlText(value)}</v></c>`;
+      }
       if (value === '') return '';
       const ref = cellName(r, c);
       const trimmed = value.trim();
@@ -112,7 +138,7 @@ export function xlsxSheet(grid: Grid): string {
 }
 
 /** A minimal Excel workbook: one worksheet part per grid, inline strings, no styles. */
-export function writeXlsx(grids: readonly Grid[]): Uint8Array {
+export function writeXlsx(grids: readonly Grid[], formulas?: Record<string, string>): Uint8Array {
   const sheets: Grid[] = grids.length ? [...grids] : [{ name: 'Sheet1', rows: [], truncated: false }];
   const taken = new Set<string>();
   const names = sheets.map((grid, i) => {
@@ -149,7 +175,7 @@ export function writeXlsx(grids: readonly Grid[]): Uint8Array {
           `<Relationship Id="rId${i + 1}" Type="${DOC_REL}/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('') +
         '</Relationships>'),
     },
-    ...sheets.map((grid, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: utf8(xlsxSheet(grid)) })),
+    ...sheets.map((grid, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: utf8(xlsxSheet(grid, i, formulas)) })),
   ];
   return writeZip(parts);
 }
