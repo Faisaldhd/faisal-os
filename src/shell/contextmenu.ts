@@ -152,6 +152,10 @@ export function showContextMenu(x: number, y: number, items: ContextMenuItem[], 
     currentMenu = null;
     menu.remove();
     document.removeEventListener('pointerdown', onOutsidePointerDown, true);
+    // The key handler belongs to an OPEN menu. Leaving it bound kept Space/Enter working on a
+    // menu that no longer exists: the first item's action ran and the key was swallowed, which
+    // broke typing in the terminal after any right-click until the page was reloaded.
+    document.removeEventListener('keydown', onKeyDown, true);
     releaseEsc?.();
     releaseEsc = null;
     window.removeEventListener('resize', close);
@@ -165,6 +169,7 @@ export function showContextMenu(x: number, y: number, items: ContextMenuItem[], 
   }
 
   function onKeyDown(ev: KeyboardEvent) {
+    if (currentMenu?.el !== menu) return; // a closed menu must never act on a key
     const list = focusable();
     switch (ev.key) {
       case 'ArrowDown':
