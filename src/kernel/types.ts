@@ -160,6 +160,15 @@ export interface AppManifest {
    * than guessing one. Drives the "new" badge window in `src/apps/store/release.ts`.
    */
   releasedAt?: string;
+  /**
+   * Preferred window geometry. Optional; when absent the window manager's own default
+   * (640x440) is used, and whatever is declared here is clamped to the screen it is opened
+   * on. Honoured by `windowSizeFor` in `src/kernel/apps.ts`.
+   */
+  width?: number;
+  height?: number;
+  minWidth?: number;
+  minHeight?: number;
   /** تطبيق أساسي لا يمكن إزالته (الملفات، الطرفية، الإعدادات، المتجر). */
   core?: boolean;
   /** يُثبَّت تلقائياً عند أول تشغيل (الافتراضي true). */
