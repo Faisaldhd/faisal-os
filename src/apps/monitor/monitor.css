@@ -314,3 +314,10 @@
   color: var(--faisal-fg-muted, #aab1c2);
   font-size: 12px;
 }
+
+/* A 320px window cannot fit five columns: the PID is the one that can go, because the same
+ * number is a `ps` away in the terminal, and a squeezed table is worse than a shorter one. */
+@container faisal-window (max-width: 380px) {
+  .faisal-mon-table th.is-pid,
+  .faisal-mon-table td.faisal-mon-pid { display: none; }
+}

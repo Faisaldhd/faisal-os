@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createBus } from '../../kernel/bus';
 import { createSettings } from '../../kernel/settings';
 import { createAppRegistry } from '../../kernel/apps';
+import { createProcessTable } from '../../kernel/process';
 import { createVFS } from '../../vfs';
 import type { AppContext, SystemAPI, VFS, WindowHandle, WindowManager } from '../../kernel/types';
 
@@ -56,7 +57,8 @@ async function setup() {
   const wm = makeWM();
   let sys!: SystemAPI;
   const apps = createAppRegistry(() => sys);
-  sys = { bus, vfs, wm, apps, settings: createSettings(bus), locale: () => 'en', t: (k) => k, notify: () => {} };
+  sys = { bus, vfs, wm, apps, settings: createSettings(bus), locale: () => 'en', t: (k) => k, notify: () => {},
+    proc: createProcessTable(bus, { requestClose: () => {}, killClose: () => {}, isMinimized: () => false, isAlive: () => false }) };
 
   const ctxs: Record<string, AppContext> = {};
   const mk = (id: string, permissions: string[], core = false) => ({

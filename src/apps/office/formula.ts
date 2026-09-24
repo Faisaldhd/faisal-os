@@ -324,3 +324,16 @@ export function computeFormulaCells(model: SheetsModel): SheetsModel {
   });
   return changed ? { ...model, grids } : model;
 }
+
+/*
+ * The full engine (formula/, 110+ functions, cross-sheet references, incremental
+ * recalculation) lives in ./formula/. It is re-exported here so callers can move
+ * over one call at a time: `computeSheets(model)` replaces `computeFormulaCells`,
+ * and `evaluateInModel(input, model, sheet, self)` replaces `evaluateFormula`
+ * (same { ok, value, canonical } shape). The two legacy functions above keep
+ * their narrow SUM/AVERAGE behaviour until the UI switches.
+ */
+export {
+  Workbook, computeSheets, evaluateInModel, workbookFromModel, parseFormula, formatFormula,
+  translateFormula, shiftFormula, registerFunction, listFunctions,
+} from './formula/index';

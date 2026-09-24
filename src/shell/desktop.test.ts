@@ -45,6 +45,7 @@ function fakeSys(installedIds: string[]): SystemAPI {
     bus: { on: () => () => {}, emit: () => {} },
     vfs: {} as any,
     wm: {} as any,
+    proc: {} as any,
     apps: {
       register: () => {},
       list: () => manifests,

@@ -1,4 +1,4 @@
-import type { VFS } from '../../../kernel/types';
+import type { ProcessInfo, ProcessSignal, VFS } from '../../../kernel/types';
 
 /** Things the shell asks the hosting terminal/OS to do. All optional so tests can omit them. */
 export interface ShellHost {
@@ -10,6 +10,10 @@ export interface ShellHost {
   open?(path: string, isDir: boolean): Promise<boolean>;
   /** Installed apps, for `dnf list`. */
   listApps?(): { id: string; name: string }[];
+  /** The kernel's process table (src/kernel/process.ts), for `ps`, `top` and `kill`. */
+  processes?(includeExited: boolean): ProcessInfo[];
+  /** Signals a process: 0 on success, 1 when there is no such process or it is protected. */
+  signalProcess?(pid: number, signal: ProcessSignal): number;
   /** Window title (GNOME Console shows the working directory). */
   setTitle?(title: string): void;
   /** Terminal size. */

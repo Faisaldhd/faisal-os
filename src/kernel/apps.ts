@@ -125,6 +125,25 @@ export function validateManifest(m: AppManifest): void {
   }
 }
 
+/**
+ * The window size an app asks for, if its manifest declares one.
+ *
+ * Pure and exported so it can be tested without a window manager. Only finite positive
+ * numbers pass through: a typo in a manifest must never produce an invalid geometry, and an
+ * app that declares nothing keeps the window manager's own default (640x440).
+ *
+ * @param m - The app manifest.
+ * @returns The `width`/`height`/`minWidth`/`minHeight` options worth passing on.
+ */
+export function windowSizeFor(m: AppManifest): Partial<Record<'width' | 'height' | 'minWidth' | 'minHeight', number>> {
+  const size: { width?: number; height?: number; minWidth?: number; minHeight?: number } = {};
+  for (const key of ['width', 'height', 'minWidth', 'minHeight'] as const) {
+    const value = m[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) size[key] = value;
+  }
+  return size;
+}
+
 export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
   /** manifest is frozen at register time; code() loads (once) and returns the app's launch function. */
   type Entry = { manifest: AppManifest; code(): Promise<AppModule['launch']> };
@@ -224,6 +243,9 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
         appId,
         title: app.manifest.name[sys.locale()],
         icon: app.manifest.icon,
+        // A manifest may ask for a roomier window (the Store's ~40 tiles need one); the
+        // window manager clamps whatever it is given to the screen it actually has.
+        ...windowSizeFor(app.manifest),
       });
       running.set(appId, [...open, { win, startedAt: Date.now() }]);
       win.onClose(() => {
@@ -236,6 +258,20 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
       const denied = (what: string) => () => { throw new Error(`EACCES: ${what}`); };
       const scoped: SystemAPI = Object.freeze({
         vfs,
+        // Same-user processes may signal each other, exactly like Linux: `kill` works from any
+        // app, while the system's own processes refuse it. A capability gate can narrow this
+        // later without touching the table itself.
+        // A narrow view: same-user processes may signal each other, like Linux, but an app cannot
+        // dispose() the table out from under the whole system (same treatment as register()).
+        proc: Object.freeze({
+          list: sys.proc.list,
+          recent: sys.proc.recent,
+          all: sys.proc.all,
+          get: sys.proc.get,
+          signal: sys.proc.signal,
+          on: sys.proc.on,
+          dispose: denied('apps cannot dispose the process table'),
+        }),
         bus: scopeBus(sys.bus, fsAccess(perms).canRead),
         wm: scopeWM(sys.wm, appId),
         apps: Object.freeze({

@@ -10,6 +10,7 @@ import { defineStrings, getLocale, setLocale, t } from './kernel/i18n';
 import type { LazyAppModule, Locale, SystemAPI } from './kernel/types';
 
 import { createVFS, lazyVFS, storageTierFor } from './vfs';                    // Track B
+import { createProcessTable } from './kernel/process';        // Kernel
 import { createWindowManager, mountShell } from './shell';    // Track A
 import { isCoarsePointer } from './shell/device';
 import { BUILTIN_APPS } from './apps';
@@ -48,11 +49,19 @@ async function boot() {
   const vfsReady = createVFS(bus, { tier });
   const vfs = lazyVFS(vfsReady, tier);
   const wm = createWindowManager(root, bus);
+  // The process table only listens: it turns the lifecycle events the kernel already emits into
+  // the PID/state view that `ps`, `kill`, the System Monitor and the AI agent read.
+  const proc = createProcessTable(bus, {
+    requestClose: (windowId) => wm.get(windowId)?.requestClose(),
+    killClose: (windowId) => { wm.get(windowId)?.close(); },
+    isMinimized: (windowId) => wm.isMinimized(windowId),
+    isAlive: (windowId) => wm.get(windowId) !== undefined,
+  });
 
   let sys!: SystemAPI;
   const apps = createAppRegistry(() => sys);
   sys = {
-    bus, vfs, wm, apps, settings,
+    bus, vfs, wm, apps, proc, settings,
     locale: getLocale,
     t,
     notify: (title, body) => bus.emit('notify', { title, body }),

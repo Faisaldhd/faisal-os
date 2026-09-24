@@ -78,6 +78,18 @@ describe('showContextMenu', () => {
     expect(document.querySelector('.faisal-ctxmenu')).toBeNull();
   });
 
+  it('stops listening for keys once it is closed', () => {
+    let picked = 0;
+    const close = showContextMenu(10, 10, items(() => { picked += 1; }));
+    close();
+    // The key handler used to stay bound: Space re-ran the first item on a menu that no longer
+    // existed and swallowed the key, which broke typing in the terminal after a right-click.
+    const ev = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+    document.dispatchEvent(ev);
+    expect(picked).toBe(0);
+    expect(ev.defaultPrevented).toBe(false);
+  });
+
   it('keyboard navigation (ArrowDown/End/Home) skips disabled items and separators', () => {
     showContextMenu(10, 10, items());
     const menu = document.querySelector('.faisal-ctxmenu')!;

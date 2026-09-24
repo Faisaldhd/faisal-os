@@ -33,6 +33,11 @@
   --faisal-focus-ring: #8F6412;
   --faisal-focus-ring-invert: #F0CF7A;
 
+  /* Success/state ink, for a badge that says "you already have this" rather than one that
+   * points at the brand's action colour. Apps mix their own tint from it with color-mix, so
+   * light/dark parity is inherited instead of being patched per app. */
+  --faisal-success: #2E7D4F;
+
   /* Motion: one curve and two durations for every interaction in the shell, so hover, press,
    * a window drag and a file drop all feel like one system. The reduced-motion block below
    * turns them off for anyone who asks for less movement. */
@@ -80,6 +85,7 @@
     --faisal-brand-mark-gold: #E3B650;
     --faisal-focus-ring: #F0CF7A;
     --faisal-focus-ring-invert: #8F6412;
+    --faisal-success: #7FD9A4;
     --faisal-bg: #151a26;
     --faisal-fg: #eceef3;
     --faisal-fg-muted: #aab1c2;
@@ -107,6 +113,7 @@
   --faisal-brand-mark-gold: #E3B650;
   --faisal-focus-ring: #F0CF7A;
   --faisal-focus-ring-invert: #8F6412;
+  --faisal-success: #7FD9A4;
   --faisal-bg: #151a26;
   --faisal-fg: #eceef3;
   --faisal-fg-muted: #aab1c2;
