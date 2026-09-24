@@ -106,6 +106,21 @@ describe('save-as CSS — the design bar', () => {
     expect(block).toContain('overflow-wrap: anywhere');
   });
 
+  it('keeps the footer visible on a phone: only the body scrolls, every icon is 20px', () => {
+    // The body takes the free height and scrolls; head, status and footer never shrink, so the
+    // footer can not be drawn over the folder list or the format (390×844 and 320×640).
+    const body = ruleBody('.faisal-saveas-body');
+    expect(body).toContain('flex: 1 1 auto');
+    expect(body).toContain('min-height: 0');
+    expect(body).toContain('overflow-y: auto');
+    expect(ruleBody('.faisal-saveas-head,\n.faisal-saveas-status,\n.faisal-saveas-actions')).toContain('flex: none');
+    expect(ruleBody('.faisal-saveas-body > *')).toContain('flex: none');
+    // No icon may fall back to the SVG default size (the download icon once filled the sheet).
+    expect(ruleBody('.faisal-saveas svg')).toContain('width: 20px; height: 20px');
+    expect(source).not.toMatch(/prepend\(renderIcon\(/);
+    expect(source).toContain("svg.setAttribute('width', '20')");
+  });
+
   it('shows a copper focus ring on every control, on keyboard focus', () => {
     expect(block).toContain('outline: 2px solid var(--sa-copper-2)');
     expect(block).toContain('outline-offset: 2px');
