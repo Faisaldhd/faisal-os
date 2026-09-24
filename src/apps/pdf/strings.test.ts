@@ -50,7 +50,7 @@ describe('pdf strings', () => {
   it('carries a message for every refusal the app can produce', () => {
     for (const code of [
       'empty', 'notPdf', 'encrypted', 'corrupt', 'imageUnsupported', 'imageBroken',
-      'textNotRenderable', 'emptyResult', 'outsideHome', 'writeFailed', 'unknown',
+      'textNotRenderable', 'noForm', 'emptyResult', 'outsideHome', 'writeFailed', 'unknown',
     ]) {
       expect(keysIn('ar'), code).toContain(`pdf.refusal${code[0].toUpperCase()}${code.slice(1)}`);
     }
@@ -59,17 +59,31 @@ describe('pdf strings', () => {
   });
 
   it('describes every page operation in both languages', () => {
-    for (const base of ['info', 'delete', 'rotate', 'crop', 'watermark', 'metadata', 'split', 'merge', 'images']) {
+    for (const base of [
+      'info', 'text', 'cover', 'pageops', 'form', 'delete', 'rotate', 'crop', 'watermark',
+      'metadata', 'split', 'merge', 'images',
+    ]) {
       expect(keysIn('ar'), base).toContain(`pdf.${base}Desc`);
       expect(keysIn('en'), base).toContain(`pdf.${base}Desc`);
     }
   });
 
-  it('states the honest limits, including no text editing, no OCR and no signatures', () => {
-    for (const key of ['limitTextEdit', 'limitNoOcr', 'limitNoSign', 'limitNoForms', 'limitNoRaster', 'limitNoFonts']) {
+  it('states the honest limits, including no text editing, no redaction, no OCR and no signatures', () => {
+    for (const key of [
+      'limitTextEdit', 'limitNoRedaction', 'limitNoOcr', 'limitNoSign', 'limitNoForms',
+      'limitNoRaster', 'limitNoFonts',
+    ]) {
       expect(keysIn('ar'), key).toContain(`pdf.${key}`);
       expect(keysIn('en'), key).toContain(`pdf.${key}`);
     }
+  });
+
+  it('labels covering as hiding in both languages, never as redaction', () => {
+    setLocale('ar');
+    expect(t('pdf.coverNote')).toContain('ليست حجباً');
+    setLocale('en');
+    expect(t('pdf.coverNote')).toContain('NOT redaction');
+    setLocale('ar');
   });
 
   it('registers every pdf.* key the window source writes', () => {

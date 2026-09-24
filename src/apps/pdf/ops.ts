@@ -3,9 +3,10 @@
  *
  * Everything decided here is decided without pdf-lib, without the DOM and without
  * the VFS, so a test can pin it exactly: page ranges, page-order edits, the crop
- * rectangle, the watermark placement, the image layout, the save policy (a new file
- * by default, exactly one `.bak` when the owner asks to overwrite) and the mapping
- * from a thrown value to an honest refusal.
+ * rectangle, the watermark placement, added-text placement and colour, the region a
+ * "cover" may draw into, blank-page and duplicate positions, the image layout, the
+ * save policy (a new file by default, exactly one `.bak` when the owner asks to
+ * overwrite) and the mapping from a thrown value to an honest refusal.
  *
  * The impure half lives in `pdfdoc.ts` (pdf-lib) and `save.ts` (VFS); neither makes
  * a decision that is not written down here.
@@ -25,6 +26,7 @@ export type PdfRefusalCode =
   | 'imageUnsupported'  // not a PNG and not a JPEG (GIF/WebP/BMP/…)
   | 'imageBroken'       // a PNG/JPEG signature whose body cannot be decoded
   | 'textNotRenderable' // a character the standard PDF fonts cannot encode
+  | 'noForm'            // the document carries no AcroForm to fill
   | 'emptyResult'       // the operation would leave zero pages
   | 'outsideHome'       // the target path is outside /home/user
   | 'writeFailed'       // the VFS said no
@@ -264,6 +266,116 @@ export function watermarkAnchor(page: Size, textWidth: number, textSize: number,
     x: Math.round((page.width / 2 - half * Math.cos(rad) + rise * Math.sin(rad)) * 100) / 100,
     y: Math.round((page.height / 2 - half * Math.sin(rad) - rise * Math.cos(rad)) * 100) / 100,
   };
+}
+
+/* ──────────────────────── added text ──────────────────────── */
+
+/**
+ * The standard PDF fonts pdf-lib can draw with. They are not embedded as files — every
+ * reader already has them — which is why an Arabic font is not in this list: shipping one
+ * would mean a new dependency. The page's own embedded fonts cannot be reused safely, so
+ * this is said plainly in the window instead of pretending otherwise.
+ */
+export const TEXT_FONTS = ['helvetica', 'helveticaBold', 'timesRoman', 'timesRomanItalic', 'courier'] as const;
+export type TextFont = (typeof TEXT_FONTS)[number];
+
+export interface Rgb { r: number; g: number; b: number }
+
+/**
+ * `#rgb` / `#rrggbb`, with or without the `#`, → channels in 0..1. Anything else is `null`,
+ * never a guess: a wrong colour that "looks close" is worse than refusing the value.
+ */
+export function parseHexColor(value: string): Rgb | null {
+  const hex = value.trim().replace(/^#/, '');
+  const full = /^[0-9a-f]{3}$/i.test(hex) ? [...hex].map((ch) => ch + ch).join('') : hex;
+  if (!/^[0-9a-f]{6}$/i.test(full)) return null;
+  const channel = (at: number): number => Math.round((parseInt(full.slice(at, at + 2), 16) / 255) * 100) / 100;
+  return { r: channel(0), g: channel(2), b: channel(4) };
+}
+
+/** One added piece of text: where, how big, in which standard font and colour. */
+export interface AddedText {
+  text: string;
+  size: number;
+  x: number;
+  y: number;
+  font: TextFont;
+  color: string;
+}
+
+export type AddedTextCheck =
+  | { ok: true; color: Rgb; font: TextFont }
+  | { ok: false; error: 'emptyText' | 'badSize' | 'badPoint' | 'badColor' | 'badFont' | 'unsupportedChars'; chars?: string };
+
+/**
+ * Decides whether the text can be drawn, before pdf-lib is asked. `page` is optional: with it
+ * the point must fall inside the page, because text drawn outside the box would still "add a
+ * content stream" while showing the owner nothing.
+ */
+export function checkAddedText(o: AddedText, page?: Size): AddedTextCheck {
+  if (!o.text.trim()) return { ok: false, error: 'emptyText' };
+  if (!Number.isFinite(o.size) || o.size < 4 || o.size > 400) return { ok: false, error: 'badSize' };
+  if (!Number.isFinite(o.x) || !Number.isFinite(o.y) || o.x < 0 || o.y < 0) return { ok: false, error: 'badPoint' };
+  if (page && (o.x > page.width || o.y > page.height)) return { ok: false, error: 'badPoint' };
+  if (!(TEXT_FONTS as readonly string[]).includes(o.font)) return { ok: false, error: 'badFont' };
+  const color = parseHexColor(o.color);
+  if (!color) return { ok: false, error: 'badColor' };
+  const bad = unsupportedWatermarkChars(o.text);
+  if (bad.length) return { ok: false, error: 'unsupportedChars', chars: bad.join(' ') };
+  return { ok: true, color, font: o.font };
+}
+
+/* ───────────────────── blank pages and duplicates ───────────────────── */
+
+/**
+ * The 1-based "insert before page N" the window shows → a 0-based insert index inside
+ * `0..pageCount`. `pageCount + 1` is "at the end", and anything absurd is clamped rather than
+ * throwing: the position is a convenience, not a reason to fail an edit.
+ */
+export function insertIndexFor(pageNumber: number, pageCount: number): number {
+  if (!Number.isFinite(pageNumber)) return pageCount;
+  return Math.min(Math.max(Math.round(pageNumber) - 1, 0), pageCount);
+}
+
+/**
+ * The reading order after every page at the given 0-based positions is repeated right after
+ * itself: `[0,1,2]` + duplicate page 1 → `[0,1,1,2]`. `order` maps position → page, so the
+ * duplicate lands next to its original instead of at the end of the document.
+ */
+export function duplicateOrder(order: readonly number[], pages: readonly number[]): number[] {
+  const repeat = new Set(pages);
+  const out: number[] = [];
+  order.forEach((page, at) => {
+    out.push(page);
+    if (repeat.has(at)) out.push(page);
+  });
+  return out;
+}
+
+/* ─────────────────────── cover a region (hiding) ─────────────────────── */
+
+export type CoverShape = 'rect' | 'ellipse';
+export interface CoverRegion { x: number; y: number; width: number; height: number }
+export type CoverCheck = { ok: true; rect: CoverRegion } | { ok: false; error: 'badRect' | 'outside' };
+
+const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/**
+ * Clips the region to the page. A region with no area, or one that does not touch the page,
+ * is refused — and no region can be drawn outside the page, so the window can never report a
+ * cover that hides nothing.
+ */
+export function coverRectFor(region: CoverRegion, page: Size): CoverCheck {
+  const { x, y, width, height } = region;
+  if (![x, y, width, height].every((n) => Number.isFinite(n)) || width <= 0 || height <= 0) {
+    return { ok: false, error: 'badRect' };
+  }
+  const left = Math.max(x, 0);
+  const bottom = Math.max(y, 0);
+  const right = Math.min(x + width, page.width);
+  const top = Math.min(y + height, page.height);
+  if (right - left <= 0 || top - bottom <= 0) return { ok: false, error: 'outside' };
+  return { ok: true, rect: { x: round2(left), y: round2(bottom), width: round2(right - left), height: round2(top - bottom) } };
 }
 
 /* ──────────────────────── images → PDF ──────────────────────── */

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  A4, FIT_MAX_SIDE, IMAGE_MARGIN, LETTER,
-  backupPathFor, buildMergePlan, buildSplitPlan, checkOpenable, checkWatermark, copyNameFor, cropBoxFor,
-  deletePages, hasPdfHeader, imagePageLayout, movePage, normalizeDigits, normalizeRotation, parsePageRanges,
+  A4, FIT_MAX_SIDE, IMAGE_MARGIN, LETTER, TEXT_FONTS,
+  backupPathFor, buildMergePlan, buildSplitPlan, checkAddedText, checkOpenable, checkWatermark, copyNameFor,
+  coverRectFor, cropBoxFor, deletePages, duplicateOrder, hasPdfHeader, imagePageLayout, insertIndexFor,
+  movePage, normalizeDigits, normalizeRotation, parseHexColor, parsePageRanges,
   parseRangeGroups, planSave, refusalFromError, rotatePages, sniff, unsupportedWatermarkChars, watermarkAnchor,
 } from './ops';
 
@@ -169,6 +170,98 @@ describe('watermark', () => {
     expect(watermarkAnchor(page, 100, 20, 90)).toEqual({ x: 107.2, y: 100 });
     expect(watermarkAnchor(page, 100, 20, 180)).toEqual({ x: 150, y: 157.2 });
     expect(watermarkAnchor(page, 100, 20, 270)).toEqual({ x: 92.8, y: 200 });
+  });
+});
+
+/* ───────────────────────── added text ───────────────────────── */
+
+describe('added text', () => {
+  it('reads a hex colour as 0..1 channels, with and without the #, and refuses a guess', () => {
+    expect(parseHexColor('#000000')).toEqual({ r: 0, g: 0, b: 0 });
+    expect(parseHexColor('ff0000')).toEqual({ r: 1, g: 0, b: 0 });
+    expect(parseHexColor('#fff')).toEqual({ r: 1, g: 1, b: 1 });
+    expect(parseHexColor('#1a2b3c')).toEqual({ r: 0.1, g: 0.17, b: 0.24 });
+    expect(parseHexColor('red')).toBeNull();
+    expect(parseHexColor('#12345')).toBeNull();
+    expect(parseHexColor('')).toBeNull();
+  });
+
+  it('accepts Latin text in a standard font and reports the colour it resolved', () => {
+    const check = checkAddedText({ text: 'INVOICE 2026', size: 18, x: 24, y: 30, font: 'helvetica', color: '#1a1a1a' });
+    expect(check).toEqual({ ok: true, color: { r: 0.1, g: 0.1, b: 0.1 }, font: 'helvetica' });
+    for (const font of TEXT_FONTS) {
+      expect(checkAddedText({ text: 'x', size: 12, x: 0, y: 0, font, color: '#000' }).ok, font).toBe(true);
+    }
+  });
+
+  it('refuses empty text, an absurd size, a bad font, a bad colour and Arabic', () => {
+    const base = { text: 'hi', size: 18, x: 10, y: 10, font: 'helvetica', color: '#000000' } as const;
+    expect(checkAddedText({ ...base, text: '   ' })).toEqual({ ok: false, error: 'emptyText' });
+    expect(checkAddedText({ ...base, size: 2 })).toEqual({ ok: false, error: 'badSize' });
+    expect(checkAddedText({ ...base, size: 900 })).toEqual({ ok: false, error: 'badSize' });
+    expect(checkAddedText({ ...base, x: -1 })).toEqual({ ok: false, error: 'badPoint' });
+    expect(checkAddedText({ ...base, y: Number.NaN })).toEqual({ ok: false, error: 'badPoint' });
+    expect(checkAddedText({ ...base, color: 'blue' })).toEqual({ ok: false, error: 'badColor' });
+    // A font name the window never offers must not reach pdf-lib.
+    expect(checkAddedText({ ...base, font: 'comic' as never })).toEqual({ ok: false, error: 'badFont' });
+    const arabic = checkAddedText({ ...base, text: 'فاتورة' });
+    expect(arabic.ok).toBe(false);
+    if (!arabic.ok) {
+      expect(arabic.error).toBe('unsupportedChars');
+      expect(arabic.chars).toContain('ف');
+    }
+  });
+
+  it('refuses a point outside the page, because that text would be invisible', () => {
+    const base = { text: 'hi', size: 18, font: 'helvetica', color: '#000000' } as const;
+    expect(checkAddedText({ ...base, x: 20, y: 20 }, { width: 200, height: 300 }).ok).toBe(true);
+    expect(checkAddedText({ ...base, x: 250, y: 20 }, { width: 200, height: 300 })).toEqual({ ok: false, error: 'badPoint' });
+    expect(checkAddedText({ ...base, x: 20, y: 400 }, { width: 200, height: 300 })).toEqual({ ok: false, error: 'badPoint' });
+  });
+});
+
+/* ───────────────── blank pages and duplicates ───────────────── */
+
+describe('blank page and duplicate positions', () => {
+  it('turns the 1-based “insert before page N” into a 0-based insert index', () => {
+    expect(insertIndexFor(1, 3)).toBe(0);
+    expect(insertIndexFor(2, 3)).toBe(1);
+    expect(insertIndexFor(4, 3)).toBe(3);
+    // Clamped rather than throwing: the position is a convenience, not an edit that can fail.
+    expect(insertIndexFor(0, 3)).toBe(0);
+    expect(insertIndexFor(99, 3)).toBe(3);
+    expect(insertIndexFor(Number.NaN, 3)).toBe(3);
+  });
+
+  it('repeats each selected page right after itself', () => {
+    expect(duplicateOrder([0, 1, 2], [1])).toEqual([0, 1, 1, 2]);
+    expect(duplicateOrder([0, 1, 2], [0, 2])).toEqual([0, 0, 1, 2, 2]);
+    expect(duplicateOrder([0, 1], [])).toEqual([0, 1]);
+    // `order` maps position → page, so a reordered document still duplicates in place.
+    expect(duplicateOrder([2, 0, 1], [0])).toEqual([2, 2, 0, 1]);
+  });
+});
+
+/* ─────────────────────── cover a region ─────────────────────── */
+
+describe('cover region', () => {
+  const page = { width: 200, height: 300 };
+
+  it('clips a region to the page it is drawn on', () => {
+    expect(coverRectFor({ x: 10, y: 20, width: 50, height: 40 }, page))
+      .toEqual({ ok: true, rect: { x: 10, y: 20, width: 50, height: 40 } });
+    // Half off the right edge and past the top: the drawn rectangle is the visible part only.
+    expect(coverRectFor({ x: 150, y: 250, width: 100, height: 100 }, page))
+      .toEqual({ ok: true, rect: { x: 150, y: 250, width: 50, height: 50 } });
+    expect(coverRectFor({ x: -20, y: -20, width: 60, height: 60 }, page))
+      .toEqual({ ok: true, rect: { x: 0, y: 0, width: 40, height: 40 } });
+  });
+
+  it('refuses a region with no area and one that does not touch the page', () => {
+    expect(coverRectFor({ x: 0, y: 0, width: 0, height: 40 }, page)).toEqual({ ok: false, error: 'badRect' });
+    expect(coverRectFor({ x: 0, y: 0, width: 50, height: -5 }, page)).toEqual({ ok: false, error: 'badRect' });
+    expect(coverRectFor({ x: 400, y: 10, width: 50, height: 50 }, page)).toEqual({ ok: false, error: 'outside' });
+    expect(coverRectFor({ x: 10, y: 900, width: 50, height: 50 }, page)).toEqual({ ok: false, error: 'outside' });
   });
 });
 

@@ -23,8 +23,8 @@ export const manifest: AppManifest = {
   id: 'org.faisal.Pdf',
   name: { ar: 'مستندات PDF', en: 'PDF Documents' },
   description: {
-    ar: 'افتح PDF وادمج وقسّم وأدر الصفحات: ترتيب وحذف وتدوير وقص وعلامة مائية وبيانات وصفية وصور إلى PDF',
-    en: 'Open, merge, split and manage PDF pages: reorder, delete, rotate, crop, watermark, metadata and images to PDF',
+    ar: 'افتح PDF وحرّره: إضافة نص وتعبئة النماذج وتغطية منطقة وإدراج وتكرار الصفحات، مع دمج وتقسيم وترتيب وحذف وتدوير وقص وعلامة مائية وبيانات وصفية وصور إلى PDF',
+    en: 'Open and edit a PDF: add text, fill forms, cover a region, insert and duplicate pages, plus merge, split, reorder, delete, rotate, crop, watermark, metadata and images to PDF',
   },
   icon: ICON_PDF,
   permissions: ['fs:home'],

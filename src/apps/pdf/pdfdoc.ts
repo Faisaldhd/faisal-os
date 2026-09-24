@@ -6,15 +6,30 @@
  * page size or a metadata field that does not match makes the operation FAIL — the app
  * never reports success for bytes it has not read back.
  */
-import { PDFArray, PDFDocument, StandardFonts, degrees, rgb, type PDFPage } from 'pdf-lib';
 import {
-  checkOpenable, checkWatermark, cropBoxFor, deletePages as deleteFromOrder, imagePageLayout,
-  normalizeRotation, refusalFromError, rotatePages as rotateOrder, sniff, watermarkAnchor,
-  type ImagePageMode, type Margins, type PdfRefusalCode, type Rect, type Size, type WatermarkOptions,
+  PDFArray, PDFBool, PDFCheckBox, PDFDocument, PDFName, PDFRawStream, PDFTextField, StandardFonts,
+  decodePDFRawStream, degrees, fill, popGraphicsState, pushGraphicsState, rectangle, rgb,
+  setFillingRgbColor, type PDFField, type PDFPage,
+} from 'pdf-lib';
+import {
+  checkAddedText, checkOpenable, checkWatermark, coverRectFor, cropBoxFor,
+  deletePages as deleteFromOrder, duplicateOrder, imagePageLayout, normalizeRotation,
+  parseHexColor, refusalFromError, rotatePages as rotateOrder, sniff, watermarkAnchor,
+  type AddedText, type CoverRegion, type CoverShape, type ImagePageMode, type Margins,
+  type PdfRefusalCode, type Rect, type Size, type TextFont, type WatermarkOptions,
 } from './ops';
 
 const round = (n: number): number => Math.round(n * 100) / 100;
 const TOLERANCE = 0.6;
+
+/** The standard fonts the window offers, mapped to what pdf-lib embeds by reference. */
+const STANDARD_FONT: Record<TextFont, StandardFonts> = {
+  helvetica: StandardFonts.Helvetica,
+  helveticaBold: StandardFonts.HelveticaBold,
+  timesRoman: StandardFonts.TimesRoman,
+  timesRomanItalic: StandardFonts.TimesRomanItalic,
+  courier: StandardFonts.Courier,
+};
 
 export interface PageInfo {
   width: number;
@@ -137,11 +152,52 @@ export interface OutputExpectation {
   metadata?: { title?: string; author?: string; subject?: string; keywords?: string };
   /** 0-based page index → the least number of content streams the page must have. */
   minContents?: Record<number, number>;
+  /**
+   * 0-based page index → a literal the page's DECODED content stream must contain. pdf-lib
+   * deflates everything it draws, so a raw byte search would prove nothing; the literal is
+   * an operator such as `Tj` (show text) or `re` (a rectangle).
+   */
+  contentContains?: Record<number, string>;
+  /** AcroForm field name → the value the produced bytes must carry back. */
+  formValues?: Record<string, { text?: string; checked?: boolean }>;
 }
 
 export interface VerifyResult { ok: boolean; summary: string; mismatches: string[] }
 
 const keywordSet = (value: string): string[] => value.split(/[\s,]+/).filter(Boolean).sort();
+
+/**
+ * A page's content stream decoded back to text — the only way to see what was really drawn,
+ * because pdf-lib compresses content streams when it saves. A stream the library cannot
+ * inflate is skipped instead of guessed at, so a `contentContains` check can never pass on a
+ * stream nobody read.
+ */
+function contentOf(doc: PDFDocument, index: number): string {
+  const page = doc.getPage(index);
+  if (!page) return '';
+  const contents = page.node.Contents();
+  const refs = contents instanceof PDFArray ? contents.asArray() : contents ? [contents] : [];
+  let out = '';
+  for (const ref of refs) {
+    const stream = doc.context.lookup(ref);
+    if (!(stream instanceof PDFRawStream)) continue;
+    try {
+      out += new TextDecoder().decode(decodePDFRawStream(stream).decode());
+    } catch {
+      // An undecodable stream says nothing about the operator, so it is not counted as proof.
+    }
+  }
+  return out;
+}
+
+/** Is the field's own flag set? A malformed field answers "no" rather than breaking the read. */
+function flag(fn: () => boolean): boolean {
+  try {
+    return fn();
+  } catch {
+    return false;
+  }
+}
 
 /** Re-opens the produced bytes and checks the promise the operation made. */
 export async function verifyOutput(bytes: Uint8Array, expect: OutputExpectation): Promise<VerifyResult> {
@@ -204,6 +260,35 @@ export async function verifyOutput(bytes: Uint8Array, expect: OutputExpectation)
     notes.push(`contents[${i}]=${actual}`);
     if (actual < wanted) bad.push(`contents[${i}] ${actual} < ${wanted}`);
   }
+  for (const [key, wanted] of Object.entries(expect.contentContains ?? {})) {
+    const i = Number(key);
+    const found = contentOf(doc, i).includes(wanted);
+    notes.push(`content[${i}]${found ? '=' : '!'}${wanted}`);
+    if (!found) bad.push(`content[${i}] lacks "${wanted}"`);
+  }
+  if (expect.formValues) {
+    const wanted = expect.formValues;
+    const acro = doc.catalog.getAcroForm();
+    if (!acro) {
+      bad.push('form is missing after filling');
+    } else {
+      const form = doc.getForm();
+      for (const [name, want] of Object.entries(wanted)) {
+        const field = form.getFieldMaybe(name);
+        if (!field) { bad.push(`form field "${name}" missing`); continue; }
+        if (want.text !== undefined) {
+          const actual = field instanceof PDFTextField ? text(() => field.getText()) : '';
+          notes.push(`field[${name}]="${actual}"`);
+          if (actual !== want.text) bad.push(`field "${name}" "${actual}" != "${want.text}"`);
+        }
+        if (want.checked !== undefined) {
+          const actual = field instanceof PDFCheckBox ? flag(() => field.isChecked()) : false;
+          notes.push(`check[${name}]=${actual}`);
+          if (actual !== want.checked) bad.push(`checkbox "${name}" ${actual} != ${want.checked}`);
+        }
+      }
+    }
+  }
   return { ok: bad.length === 0, summary: notes.join(' '), mismatches: bad };
 }
 
@@ -214,12 +299,20 @@ const failed = (error: unknown): OpResult => {
   return { ok: false, code: refusal.code, detail: refusal.detail };
 };
 
-/** Saves, then proves the result before anyone is told it worked. */
-async function finish(doc: PDFDocument, expect: OutputExpectation): Promise<OpResult> {
+/**
+ * Saves, then proves the result before anyone is told it worked.
+ *
+ * `saveOptions` exists for one case: pdf-lib's save() rebuilds every dirty form appearance
+ * itself with Helvetica, which throws for a value those fonts cannot encode. When the form
+ * operation has already handled a field like that (value written, `NeedAppearances` set), the
+ * library's second pass must be skipped or the whole save would fail on a value that is
+ * correctly written.
+ */
+async function finish(doc: PDFDocument, expect: OutputExpectation, saveOptions: { updateFieldAppearances?: boolean } = {}): Promise<OpResult> {
   let bytes: Uint8Array;
   try {
     // Object streams off: a wider set of readers can open the result, at the cost of size.
-    bytes = await doc.save({ useObjectStreams: false });
+    bytes = await doc.save({ useObjectStreams: false, ...saveOptions });
   } catch (error) {
     return failed(error);
   }
@@ -369,6 +462,359 @@ export async function addWatermark(bytes: Uint8Array, pages: readonly number[], 
     return failed(error);
   }
   return finish(doc, { pageCount: loaded.info.pageCount, rotations: rotationsOf(loaded.info, loaded.info.pages.map((_, i) => i)), minContents });
+}
+
+/* ───────────────────────── added text ───────────────────────── */
+
+export interface AddTextInput extends AddedText {
+  /** 0-based page index. */
+  page: number;
+}
+
+/**
+ * Draws NEW text on one page with a standard font. Nothing already in the page is touched:
+ * the text becomes an extra content stream drawn over the content, and the produced bytes are
+ * re-read to prove the text-showing operator (`Tj`) really is there. Arabic is refused with
+ * its own code before anything is written, because the standard fonts cannot encode it.
+ */
+export async function addText(bytes: Uint8Array, input: AddTextInput): Promise<OpResult> {
+  const loaded = await loadPdf(bytes);
+  if (!loaded.ok) return loaded;
+  if (!Number.isInteger(input.page) || input.page < 0 || input.page >= loaded.info.pageCount) {
+    return { ok: false, code: 'unknown', detail: `page ${input.page + 1} is outside the document` };
+  }
+  const checked = checkAddedText(input, loaded.info.pages[input.page]);
+  if (!checked.ok) {
+    return { ok: false, code: checked.error === 'unsupportedChars' ? 'textNotRenderable' : 'unknown', detail: checked.error };
+  }
+  const doc = loaded.doc;
+  const page = doc.getPage(input.page);
+  const before = contentsCount(page);
+  try {
+    const font = await doc.embedFont(STANDARD_FONT[checked.font]);
+    page.drawText(input.text, {
+      x: input.x,
+      y: input.y,
+      size: input.size,
+      font,
+      color: rgb(checked.color.r, checked.color.g, checked.color.b),
+    });
+  } catch (error) {
+    return failed(error);
+  }
+  if (contentsCount(page) <= before) return { ok: false, code: 'unknown', detail: `text drew nothing on page ${input.page + 1}` };
+  return finish(doc, {
+    pageCount: loaded.info.pageCount,
+    minContents: { [input.page]: before + 1 },
+    contentContains: { [input.page]: 'Tj' },
+  });
+}
+
+/* ───────────────────────── signature ───────────────────────── */
+
+export interface SignatureInput {
+  /** 0-based page index. */
+  page: number;
+  text: string;
+  size: number;
+  x: number;
+  y: number;
+  color: string;
+}
+
+/**
+ * A typed signature: the same drawing path as `addText`, in a large italic standard font.
+ * Nothing is verified differently — it is text on the page, and the produced bytes must show
+ * the text operator before the window says it worked.
+ */
+export async function addTypedSignature(bytes: Uint8Array, input: SignatureInput): Promise<OpResult> {
+  return addText(bytes, { ...input, font: 'timesRomanItalic' });
+}
+
+export interface SignatureImageInput {
+  /** 0-based page index. */
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** The picture picked from the device; PNG or JPEG, decided by the bytes, never the name. */
+  image: { name: string; bytes: Uint8Array };
+}
+
+/**
+ * Draws a signature picture on a page. The box must lie inside the page — a signature half off
+ * the sheet is refused instead of silently clipped — and the produced bytes are re-read to
+ * prove the image was really invoked (`Do`) on that page.
+ */
+export async function addImageSignature(bytes: Uint8Array, input: SignatureImageInput): Promise<OpResult> {
+  const loaded = await loadPdf(bytes);
+  if (!loaded.ok) return loaded;
+  if (!Number.isInteger(input.page) || input.page < 0 || input.page >= loaded.info.pageCount) {
+    return { ok: false, code: 'unknown', detail: `page ${input.page + 1} is outside the document` };
+  }
+  const kind = sniff(input.image.bytes);
+  if (kind !== 'png' && kind !== 'jpeg') return { ok: false, code: 'imageUnsupported', detail: `${input.image.name}: ${kind}` };
+  const box = coverRectFor(
+    { x: input.x, y: input.y, width: input.width, height: input.height },
+    loaded.info.pages[input.page],
+  );
+  // The clip rounds to two decimals, so a rounded-equal box counts as inside; only a box that
+  // really sticks out is refused.
+  const same = (a: number, b: number): boolean => Math.abs(a - b) <= 0.01;
+  if (!box.ok || !same(box.rect.x, input.x) || !same(box.rect.y, input.y)
+    || !same(box.rect.width, input.width) || !same(box.rect.height, input.height)) {
+    return { ok: false, code: 'unknown', detail: `signature box ${box.ok ? 'sticks out of' : box.error} the page` };
+  }
+  const doc = loaded.doc;
+  const page = doc.getPage(input.page);
+  const before = contentsCount(page);
+  try {
+    const image = kind === 'png' ? await doc.embedPng(input.image.bytes) : await doc.embedJpg(input.image.bytes);
+    page.drawImage(image, { x: input.x, y: input.y, width: input.width, height: input.height });
+  } catch (error) {
+    const refusal = refusalFromError(error);
+    return { ok: false, code: 'imageBroken', detail: `${input.image.name}: ${refusal.detail}` };
+  }
+  if (contentsCount(page) <= before) return { ok: false, code: 'unknown', detail: `signature drew nothing on page ${input.page + 1}` };
+  return finish(doc, {
+    pageCount: loaded.info.pageCount,
+    minContents: { [input.page]: before + 1 },
+    contentContains: { [input.page]: 'Do' },
+  });
+}
+
+/* ────────────────── cover a region (hiding, not redaction) ────────────────── */
+export interface CoverInput extends CoverRegion {
+  /** 0-based page index. */
+  page: number;
+  shape: CoverShape;
+  color: string;
+}
+
+/**
+ * Draws a filled box (or ellipse) over a region of a page.
+ *
+ * This is COVERING, never redaction: the fill is appended over the content, so the original
+ * text is still in the file and still extractable. The window says so in words; this function
+ * only proves the shape operator really reached the stream.
+ */
+export async function coverRegion(bytes: Uint8Array, input: CoverInput): Promise<OpResult> {
+  const loaded = await loadPdf(bytes);
+  if (!loaded.ok) return loaded;
+  if (!Number.isInteger(input.page) || input.page < 0 || input.page >= loaded.info.pageCount) {
+    return { ok: false, code: 'unknown', detail: `page ${input.page + 1} is outside the document` };
+  }
+  const color = parseHexColor(input.color);
+  if (!color) return { ok: false, code: 'unknown', detail: 'the cover colour is not a hex value' };
+  const box = coverRectFor(input, loaded.info.pages[input.page]);
+  if (!box.ok) return { ok: false, code: 'unknown', detail: `cover ${box.error}` };
+  const doc = loaded.doc;
+  const page = doc.getPage(input.page);
+  const before = contentsCount(page);
+  try {
+    if (input.shape === 'ellipse') {
+      page.drawEllipse({
+        x: box.rect.x + box.rect.width / 2,
+        y: box.rect.y + box.rect.height / 2,
+        xScale: box.rect.width / 2,
+        yScale: box.rect.height / 2,
+        color: rgb(color.r, color.g, color.b),
+      });
+    } else {
+      // pdf-lib's own `drawRectangle` writes a move/line path. Pushing the `re` operator
+      // instead keeps the stream legible as "a filled rectangle" — and that operator is what
+      // the verification below looks for.
+      page.pushOperators(
+        pushGraphicsState(),
+        setFillingRgbColor(color.r, color.g, color.b),
+        rectangle(box.rect.x, box.rect.y, box.rect.width, box.rect.height),
+        fill(),
+        popGraphicsState(),
+      );
+    }
+  } catch (error) {
+    return failed(error);
+  }
+  if (contentsCount(page) <= before) return { ok: false, code: 'unknown', detail: `cover drew nothing on page ${input.page + 1}` };
+  return finish(doc, {
+    pageCount: loaded.info.pageCount,
+    minContents: { [input.page]: before + 1 },
+    contentContains: { [input.page]: input.shape === 'ellipse' ? 'c' : 're' },
+  });
+}
+
+/* ──────────────── blank page and duplicate ──────────────── */
+
+/**
+ * Inserts one blank page at a 0-based position. The blank page takes the size of the page it
+ * is inserted before (the last page when it goes at the end), so it matches the document
+ * instead of dropping an A4 sheet into a Letter file. Every page's size is checked afterwards.
+ */
+export async function insertBlankPage(bytes: Uint8Array, at: number): Promise<OpResult> {
+  const loaded = await loadPdf(bytes);
+  if (!loaded.ok) return loaded;
+  const index = Math.min(Math.max(Math.trunc(at), 0), loaded.info.pageCount);
+  const neighbour = loaded.info.pages[Math.min(index, loaded.info.pageCount - 1)];
+  const size: Size = { width: neighbour.width, height: neighbour.height };
+  const doc = loaded.doc;
+  try {
+    doc.insertPage(index, [size.width, size.height]);
+  } catch (error) {
+    return failed(error);
+  }
+  const sizes: Record<number, Size> = {};
+  for (let i = 0; i < loaded.info.pageCount + 1; i++) {
+    sizes[i] = i === index ? size : loaded.info.pages[i < index ? i : i - 1];
+  }
+  return finish(doc, { pageCount: loaded.info.pageCount + 1, pageSizes: sizes });
+}
+
+/**
+ * One independent copy of every selected page, placed right after it. Zero selected is
+ * refused. `extractPages` cannot be used here: it de-duplicates its page list, which is
+ * exactly what a duplication is.
+ */
+export async function duplicatePages(bytes: Uint8Array, pages: readonly number[]): Promise<OpResult> {
+  const loaded = await loadPdf(bytes);
+  if (!loaded.ok) return loaded;
+  const target = [...new Set(pages)].filter((p) => p >= 0 && p < loaded.info.pageCount);
+  if (!target.length) return { ok: false, code: 'emptyResult', detail: 'no pages selected' };
+  const order = duplicateOrder(loaded.info.pages.map((_, i) => i), target);
+  try {
+    const out = await PDFDocument.create();
+    const copied = await out.copyPages(loaded.doc, order);
+    copied.forEach((page) => out.addPage(page));
+    // The duplicated page must have its original's size, page for page.
+    return await finish(out, {
+      pageCount: order.length,
+      rotations: rotationsOf(loaded.info, order),
+      pageSizes: sizesOf(loaded.info, order),
+    });
+  } catch (error) {
+    return failed(error);
+  }
+}
+
+/* ───────────────────────── form fields ───────────────────────── */
+
+export type FormFieldKind = 'text' | 'checkbox' | 'other';
+
+export interface FormFieldInfo {
+  name: string;
+  kind: FormFieldKind;
+  /** The current text value, or '' when the field has none. */
+  value: string;
+  checked: boolean;
+  multiline: boolean;
+  readOnly: boolean;
+}
+
+export type FormReadResult =
+  | { ok: true; hasForm: boolean; fields: FormFieldInfo[] }
+  | { ok: false; code: PdfRefusalCode; detail: string };
+
+/**
+ * The AcroForm fields a reader would show. Text fields and checkboxes are editable here;
+ * anything else (buttons, radio groups, dropdowns, signatures) is listed as `other` and left
+ * alone, and the window says how many were left alone.
+ *
+ * `hasForm` is false when the document carries no AcroForm at all — the window then says so
+ * plainly rather than drawing an empty panel.
+ */
+export async function readFormFields(bytes: Uint8Array): Promise<FormReadResult> {
+  const loaded = await loadPdf(bytes);
+  if (!loaded.ok) return loaded;
+  if (!loaded.doc.catalog.getAcroForm()) return { ok: true, hasForm: false, fields: [] };
+  try {
+    const fields = loaded.doc.getForm().getFields().map((field): FormFieldInfo => {
+      if (field instanceof PDFTextField) {
+        return {
+          name: field.getName(),
+          kind: 'text',
+          value: text(() => field.getText()),
+          checked: false,
+          multiline: flag(() => field.isMultiline()),
+          readOnly: flag(() => field.isReadOnly()),
+        };
+      }
+      if (field instanceof PDFCheckBox) {
+        return {
+          name: field.getName(),
+          kind: 'checkbox',
+          value: '',
+          checked: flag(() => field.isChecked()),
+          multiline: false,
+          readOnly: flag(() => field.isReadOnly()),
+        };
+      }
+      return { name: field.getName(), kind: 'other', value: '', checked: false, multiline: false, readOnly: false };
+    });
+    return { ok: true, hasForm: fields.length > 0, fields };
+  } catch (error) {
+    const refusal = refusalFromError(error);
+    return { ok: false, code: refusal.code, detail: refusal.detail };
+  }
+}
+
+export interface FormFillInput {
+  name: string;
+  kind: 'text' | 'checkbox';
+  value?: string;
+  checked?: boolean;
+}
+
+/**
+ * Writes the given values and proves them by re-reading the produced bytes. A field that is
+ * read-only, missing or of another type is skipped rather than half-written; if nothing was
+ * written the operation fails with `emptyResult`.
+ *
+ * Setting `/V` alone is not enough for a reader to SHOW the value, so each field's own
+ * appearance stream is rebuilt. When the library cannot build one, `/NeedAppearances` is set
+ * so the reader builds it from the value instead — either way the value is in the file.
+ */
+export async function fillFormFields(bytes: Uint8Array, fills: readonly FormFillInput[]): Promise<OpResult> {
+  const wanted = fills.filter((fill) => fill.kind === 'text' || fill.kind === 'checkbox');
+  if (!wanted.length) return { ok: false, code: 'emptyResult', detail: 'no fields to fill' };
+  const loaded = await loadPdf(bytes);
+  if (!loaded.ok) return loaded;
+  if (!loaded.doc.catalog.getAcroForm()) return { ok: false, code: 'noForm', detail: 'the document has no AcroForm' };
+  const doc = loaded.doc;
+  const form = doc.getForm();
+  const expected: Record<string, { text?: string; checked?: boolean }> = {};
+  let needAppearances = false;
+  try {
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    for (const item of wanted) {
+      const field: PDFField | undefined = form.getFieldMaybe(item.name);
+      if (!field || flag(() => field.isReadOnly())) continue;
+      if (item.kind === 'text') {
+        if (!(field instanceof PDFTextField)) continue;
+        const value = item.value ?? '';
+        field.setText(value);
+        expected[item.name] = { text: value };
+      } else {
+        if (!(field instanceof PDFCheckBox)) continue;
+        if (item.checked) field.check();
+        else field.uncheck();
+        expected[item.name] = { checked: item.checked === true };
+      }
+      try {
+        field.defaultUpdateAppearances(font);
+      } catch {
+        needAppearances = true;
+      }
+    }
+  } catch (error) {
+    return failed(error);
+  }
+  if (!Object.keys(expected).length) return { ok: false, code: 'emptyResult', detail: 'no matching writable fields' };
+  const acro = doc.catalog.getAcroForm();
+  if (acro && needAppearances) acro.dict.set(PDFName.of('NeedAppearances'), PDFBool.True);
+  // When a field's appearance could not be built, pdf-lib's own appearance pass at save time
+  // would throw on that same value; the value is written and the reader is asked to draw it.
+  return finish(doc, { pageCount: loaded.info.pageCount, formValues: expected },
+    needAppearances ? { updateFieldAppearances: false } : {});
 }
 
 export interface MetadataInput { title: string; author: string; subject: string; keywords: string }
