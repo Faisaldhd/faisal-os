@@ -1684,9 +1684,14 @@ body {
 
 .faisal-clip {
   position: fixed;
+  /* Above every desktop surface: `.faisal-desktop` is `isolation: isolate`, so the whole window
+   * stack — pinned windows included — is one stacking context below this panel. It stays under
+   * the notifications (4000) and the lock screen (10000), which must be able to cover it. */
   z-index: 900;
-  inset-block-start: calc(var(--faisal-topbar-h) + 8px);
-  inset-inline-end: 12px;
+  /* The panel opens at the pointer (`clipboard.ts`: place(), which overrides both of these).
+   * They are only the fallback for the very first open, before any pointer event was seen. */
+  top: calc(var(--faisal-topbar-h) + 8px);
+  left: 12px;
   inline-size: min(380px, calc(100vw - 24px));
   max-block-size: min(70vh, 560px);
   display: flex;
