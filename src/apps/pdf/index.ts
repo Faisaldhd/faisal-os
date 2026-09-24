@@ -935,9 +935,7 @@ function launch(ctx: AppContext): void {
     signImageName,
     actionRow(signImageApply),
   );
-  const certRow = el('div', 'faisal-pdf-soon');
-  certRow.append(icon('certificate'), el('span', undefined, t('pdf.certSoon')));
-  signCard.body.append(actionRow(signDrawBtn), signAdvanced, certRow);
+  signCard.body.append(actionRow(signDrawBtn), signAdvanced);
 
   signApply.addEventListener('click', () => {
     if (!state.info) return;
@@ -1656,9 +1654,7 @@ function launch(ctx: AppContext): void {
   const permList = el('ul', 'faisal-pdf-limits');
   const lockRow = el('div', 'faisal-pdf-soon');
   lockRow.append(icon('lock'), el('span', undefined, t('pdf.limitNoPassword')));
-  const certRow2 = el('div', 'faisal-pdf-soon');
-  certRow2.append(icon('certificate'), el('span', undefined, t('pdf.certSoon')));
-  securityCard.body.append(securityState, permList, lockRow, certRow2);
+  securityCard.body.append(securityState, permList, lockRow);
 
   async function refreshSecurity(): Promise<void> {
     securityState.textContent = state.readOnly ? t('pdf.securityEncrypted') : t('pdf.securityOpen');
@@ -2351,7 +2347,7 @@ function launch(ctx: AppContext): void {
     },
     {
       id: 'protect', label: t('pdf.tabProtect'), groups: [
-        { label: t('pdf.groupSign'), cmds: [cmd('sign-draw2', 'signature', 'pdf.signDraw', () => { void startSignature(); }, { edits: true }), cmd('sign-card', 'text', 'pdf.signTyped', () => showTask('sign'), { edits: true }), cmd('cert', 'certificate', 'pdf.certCmd', () => showTask('security'))] },
+        { label: t('pdf.groupSign'), cmds: [cmd('sign-draw2', 'signature', 'pdf.signDraw', () => { void startSignature(); }, { edits: true }), cmd('sign-card', 'text', 'pdf.signTyped', () => showTask('sign'), { edits: true })] },
         { label: t('pdf.groupHide'), cmds: [toolCmd('cover', 'cover', 'pdf.toolCover')] },
         { label: t('pdf.groupSecurity'), cmds: [cmd('security', 'lock', 'pdf.securityCmd', () => showTask('security'))] },
       ],
