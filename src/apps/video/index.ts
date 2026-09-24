@@ -83,7 +83,7 @@ import { button, el, formatClock, iconButton, openModal, promptName, s, segmente
 import { dialogsFor } from './app-dialogs';
 import type { StudioEngine, EngineMedia } from './engine-port';
 import { ExportCancelled } from './engine-port';
-import { CanvasStudioEngine, exportSettings } from './engine';
+import { CanvasStudioEngine, exportSettings, hasWebCodecs, planMp4, type Mp4Plan } from './engine';
 
 type Mode = 'start' | 'player' | 'editor';
 
@@ -1305,7 +1305,12 @@ function launch(ctx: AppContext): void {
       } catch { return false; }
     };
     let kind: 'video' | 'audio' = hasPicture(target.project) ? 'video' : 'audio';
-    let container: 'mp4' | 'webm' = recorderOk('video/mp4') ? 'mp4' : 'webm';
+    const webCodecs = hasWebCodecs();
+    let container: 'mp4' | 'webm' = webCodecs || recorderOk('video/mp4') ? 'mp4' : 'webm';
+    // The real MP4 path (WebCodecs + mp4-muxer) is confirmed per size/rate with isConfigSupported.
+    let mp4Plan: Mp4Plan | null = null;
+    let mp4Key = '';
+    let mp4Probing = false;
     let resolution: ResolutionKey = Math.min(target.frame.width, target.frame.height) >= 1080 ? '1080' : '720';
     let fps = 30;
     let quality: QualityKey = 'high';
@@ -1355,7 +1360,7 @@ function launch(ctx: AppContext): void {
     const build = () => {
       containerRow.replaceChildren();
       const options: Array<{ value: 'mp4' | 'webm'; label: string }> = [];
-      if (recorderOk('video/mp4')) options.push({ value: 'mp4', label: 'MP4 (H.264)' });
+      if (webCodecs || recorderOk('video/mp4')) options.push({ value: 'mp4', label: 'MP4 (H.264)' });
       if (recorderOk('video/webm')) options.push({ value: 'webm', label: 'WebM (VP9/VP8)' });
       if (options.length && !options.some((o) => o.value === container)) container = options[0].value;
       if (options.length) containerRow.append(segmented(s('format'), options, container, (v) => { container = v; paint(); }));
@@ -1370,6 +1375,24 @@ function launch(ctx: AppContext): void {
 
     const settings = () => exportSettings(target.frame, { resolution, fps, quality, container });
 
+    const refreshMp4 = () => {
+      const key = `${resolution}|${fps}|${quality}`;
+      if (!webCodecs || key === mp4Key) return;
+      mp4Key = key;
+      mp4Plan = null;
+      mp4Probing = true;
+      const want = exportSettings(target.frame, { resolution, fps, quality }, () => true);
+      if (!want) { mp4Probing = false; return; }
+      void planMp4(target.project, { width: want.width, height: want.height, fps: want.fps, videoBitrate: want.videoBitrate, audioBitrate: want.audioBitrate })
+        .catch(() => null)
+        .then((plan) => {
+          if (mp4Key !== key) return;
+          mp4Plan = plan;
+          mp4Probing = false;
+          if (!exportRunning) { build(); paint(); }
+        });
+    };
+
     const paint = () => {
       const video = kind === 'video';
       containerRow.hidden = !video;
@@ -1377,7 +1400,21 @@ function launch(ctx: AppContext): void {
       fpsRow.hidden = !video;
       qualityRow.hidden = !video;
       notes.replaceChildren();
-      if (video) {
+      if (video) refreshMp4();
+      if (video && container === 'mp4' && (mp4Plan || mp4Probing)) {
+        go.disabled = mp4Probing;
+        if (!mp4Plan) {
+          estimate.textContent = s('mp4Checking');
+          return;
+        }
+        const p = mp4Plan;
+        const bytes = estimateExportBytes(len, p.video.bitrate, p.audio?.bitrate ?? 0);
+        estimate.textContent = s('estimate', { w: p.video.width, h: p.video.height, fps: p.fps, len: formatClock(len), size: formatBytes(bytes, sys.locale()) });
+        if (bytes > sys.vfs.quota.file) notes.append(el('li', 'is-warn', s('quotaWarn', { max: formatBytes(sys.vfs.quota.file, sys.locale()) })));
+        notes.append(el('li', undefined, s('noteFast')));
+        notes.append(el('li', undefined, s('noteMp4')));
+        if (p.audioMuxer === 'opus') notes.append(el('li', undefined, s('noteOpus')));
+      } else if (video) {
         const st = settings();
         if (!st) {
           estimate.textContent = s('noRecorder');
@@ -1390,6 +1427,7 @@ function launch(ctx: AppContext): void {
         if (bytes > sys.vfs.quota.file) notes.append(el('li', 'is-warn', s('quotaWarn', { max: formatBytes(sys.vfs.quota.file, sys.locale()) })));
         notes.append(el('li', undefined, s('noteRealtime', { len: formatClock(len) })));
         notes.append(el('li', undefined, st.extension === '.mp4' ? s('noteMp4') : s('noteWebm')));
+        if (container === 'mp4') notes.append(el('li', 'is-warn', s('noteNoWebCodecs')));
         if (st.fellBack) notes.append(el('li', 'is-warn', s('noteFellBack')));
       } else {
         go.disabled = false;
@@ -1431,7 +1469,16 @@ function launch(ctx: AppContext): void {
         if (mode !== 'player') engine.setProject(target.project, target.frame);
         let blob: Blob;
         let ext: string;
-        if (kind === 'video') {
+        if (kind === 'video' && container === 'mp4' && mp4Plan) {
+          const p = mp4Plan;
+          const out = await engine.exportVideo({
+            width: p.video.width, height: p.video.height, fps: p.fps, mime: 'video/mp4',
+            videoBitrate: p.video.bitrate, audioBitrate: p.audio?.bitrate ?? 0,
+            range, signal: controller.signal, onProgress, mp4: p,
+          });
+          blob = out.blob;
+          ext = '.mp4';
+        } else if (kind === 'video') {
           const st = settings();
           if (!st) throw new Error(s('noRecorder'));
           const out = await engine.exportVideo({
