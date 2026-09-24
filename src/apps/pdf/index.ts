@@ -2002,7 +2002,7 @@ function launch(ctx: AppContext): void {
       const row = button('', 'faisal-pdf-commentrow');
       const dot = el('span', 'faisal-pdf-swatchdot');
       dot.style.background = info.color ?? 'transparent';
-      const text = el('span', 'faisal-pdf-commenttext', info.contents || kindLabel(info.kind ?? 'note'));
+      const text = el('span', 'faisal-pdf-commenttext', info.contents);
       text.dir = 'auto';
       row.append(dot, el('span', 'faisal-pdf-commentkind', kindLabel(info.kind ?? 'note')), text);
       row.addEventListener('click', () => {

@@ -166,6 +166,7 @@ export class PdfViewer {
     for (const slot of this.slots) if (!slot.box.isConnected) this.frame.append(slot.box);
     if (!keep) {
       this.rotationValue = 0;
+      this.modeValue = 'fitWidth';
       this.firstPaintDone = false;
     }
     this.layout();
