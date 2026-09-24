@@ -381,11 +381,20 @@ function launch(ctx: AppContext): void {
     return dirsFirst;
   }
 
+  /** Bumped per refresh: an older listing that resolves late must not paint over a newer one. */
+  let refreshToken = 0;
+
   async function refresh() {
+    const token = ++refreshToken;
+    const path = currentPath;
+    let next: Stat[];
     try {
-      entries = sortEntries(await vfs.readdir(currentPath));
+      next = sortEntries(await vfs.readdir(path));
+      if (token !== refreshToken) return;
+      entries = next;
       clearError();
     } catch (err) {
+      if (token !== refreshToken) return;
       entries = [];
       showError(err);
     }

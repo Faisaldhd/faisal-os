@@ -629,7 +629,7 @@ function launch(ctx: AppContext) {
     arName.textContent = t('settings.about.arabicName', { name: BRAND.nameAr });
     const tagline = document.createElement('div');
     tagline.className = 'faisal-about-sub';
-    tagline.textContent = t('settings.about.tagline');
+    tagline.textContent = t(nativeWeb() ? 'settings.about.taglineDesktop' : 'settings.about.tagline');
     block.append(mark, wordmarks, name, arName, tagline);
 
     const versionRow = row('settings.about.versionLabel');

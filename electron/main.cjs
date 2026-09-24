@@ -143,7 +143,22 @@ const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;
 let updateState = { status: app.isPackaged ? 'idle' : 'dev' };
 let updater = null;
 
+/**
+ * A network that silently drops GitHub's download host (seen on corporate
+ * networks) leaves electron-updater waiting forever, so "Checking…" never
+ * ends. A check that hasn't answered in this long is reported as an error,
+ * which the About page shows with a retry button.
+ */
+const CHECK_TIMEOUT_MS = 45 * 1000;
+let checkTimer = null;
+
 function setUpdateState(next) {
+  clearTimeout(checkTimer);
+  if (next.status === 'checking') {
+    checkTimer = setTimeout(() => {
+      if (updateState.status === 'checking') setUpdateState({ status: 'error', message: 'timeout' });
+    }, CHECK_TIMEOUT_MS);
+  }
   updateState = next;
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.webContents.isDestroyed()) win.webContents.send('faisal:update-status', updateState);
