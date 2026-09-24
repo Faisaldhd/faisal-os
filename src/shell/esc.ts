@@ -10,16 +10,24 @@
  * A capture listener on `window` is deliberate: it runs before any listener an app registers on
  * `document` or on its own elements, which is exactly what makes the topmost popup win.
  *
- * Fullscreen: while the shell is in real fullscreen, Chromium reserves Escape to leave
- * fullscreen and never delivers it to the page — verified in a real browser: not even a capture
- * listener on `window` sees it, and calling `requestFullscreen()` right after is refused for
- * lack of a user gesture. So "close the popup *and* stay fullscreen" is not something any page
- * can do. What this module still delivers is the second best outcome: the moment the shell
- * leaves fullscreen, the topmost surface closes straight away, so Escape never strands a popup
- * over the desktop.
+ * Fullscreen: while the shell is in fullscreen it locks the Escape key together with the Windows
+ * key (`navigator.keyboard.lock(['Escape', …])` in topbar.ts). Chromium then keeps fullscreen and
+ * delivers Escape to the page instead of leaving fullscreen by itself — verified in a real
+ * browser. So this stack decides what Escape means while the owner is fullscreen: close the
+ * topmost popup, or (with nothing open) leave fullscreen on purpose through the fallback below.
  */
 const layers: Array<() => void> = [];
 let installed = false;
+let fallback: (() => boolean) | null = null;
+
+/**
+ * What Escape means when no surface of ours is open. Returns true when it handled the key; false
+ * leaves Escape completely alone for the app or the browser. The shell uses this to leave
+ * fullscreen on purpose, and only when it really is in fullscreen (topbar.ts).
+ */
+export function setEscapeFallback(fn: (() => boolean) | null): void {
+  fallback = fn;
+}
 
 /** Closes the topmost registered surface. True when there was one. */
 export function closeTop(): boolean {
@@ -30,11 +38,15 @@ export function closeTop(): boolean {
 }
 
 function onKeydown(ev: KeyboardEvent) {
-  if (ev.key !== 'Escape' || ev.isComposing || !layers.length) return;
+  if (ev.key !== 'Escape' || ev.isComposing) return;
+  if (layers.length) {
+    closeTop();
+  } else if (!fallback?.()) {
+    return; // nothing of ours is open and the shell has no use for the key: leave it alone
+  }
   ev.preventDefault();
   ev.stopPropagation();
   ev.stopImmediatePropagation();
-  closeTop();
 }
 
 function onFullscreenChange() {
