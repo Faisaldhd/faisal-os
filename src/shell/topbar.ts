@@ -19,6 +19,7 @@ export function mountTopbar(
   onToggleOverview: () => void,
   onScreenshot?: () => void,
   lock?: () => LockMenuHooks,
+  onClipboard?: () => void,
 ): HTMLElement {
   const bar = document.createElement('header');
   bar.className = 'faisal-topbar';
@@ -237,7 +238,15 @@ export function mountTopbar(
       closeMenu();
       onScreenshot?.();
     });
-    aboutSection.append(shotBtn, fsBtn, aboutBtn);
+    const clipBtn = document.createElement('button');
+    clipBtn.type = 'button';
+    clipBtn.className = 'faisal-menu-item';
+    clipBtn.textContent = t('shell.menu.clipboard');
+    clipBtn.addEventListener('click', () => {
+      closeMenu();
+      onClipboard?.();
+    });
+    aboutSection.append(clipBtn, shotBtn, fsBtn, aboutBtn);
     menu.append(aboutSection);
 
     return menu;

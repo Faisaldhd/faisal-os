@@ -45,6 +45,7 @@ const SHORTCUTS: [keys: string, labelKey: string][] = [
   ['Super+← / →', 'settings.sc.snap'],
   ['Super+D', 'settings.sc.desktop'],
   ['Super+Shift+S', 'settings.sc.screenshot'],
+  ['Ctrl+Alt+V', 'settings.sc.clipboard'],
 ];
 
 function formatBytes(n: number): string {
