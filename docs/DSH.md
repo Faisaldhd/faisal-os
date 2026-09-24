@@ -123,6 +123,13 @@ referrerpolicy="no-referrer"
 5. **إن أوقفت DSH** فسيبقى الإطار في النافذة معطّلاً حتى تضغط «تغيير العنوان» ← «تحقّق».
 6. **لم تُجرَّب واجهة DSH حقيقية داخل هذه النافذة** أثناء بناء الميزة: المنفذ يردّ 401 على كل
    مسار بلا رمز، فالتغطية الحقيقية هي اختبارات jsdom لا مشاهدة بشرية.
+7. **على الويب (نطاق عام) قد لا يستطيع النظام الوصول إلى `127.0.0.1` أصلاً** — وهذه نتيجة
+   قياس، لا تخمين: من رابط معاينة Cloudflare العام جرّبتُ فتح التطبيق في Chrome، فظهرت **شاشة
+   الإعداد الصادقة** ولم يُنشأ إطار، بلا أي خطأ في Console. السبب أن المتصفح يفرض **Private
+   Network Access** على الطلبات من أصل عام إلى الحلقة المحلية، وخادم DSH لا يجيب على طلبها
+   المسبق. أما من `localhost` (وضع التطوير) فالإطار يُنشأ فعلاً ويشير إلى `http://127.0.0.1:3080/`
+   بنفس صندوق الرمل، وتطبيق سطح المكتب (أصل `app://`) لا يخضع لهذا القيد.
+   الحلّ العملي على الويب: افتح واجهة DSH في تبويب عادي، أو استخدم تطبيق سطح المكتب.
 
 ## سياسة النظام التي تعتمد عليها هذه الميزة
 
@@ -290,6 +297,14 @@ screen says so in as many words.
    "Check".
 6. **The real DSH interface was never framed while this feature was built**: the port answers 401
    on every path without a token, so the real coverage is the jsdom tests, not human observation.
+7. **On the web (a public origin) the OS may not be able to reach `127.0.0.1` at all** — measured,
+   not assumed: opening the app in Chrome from the public Cloudflare preview URL showed the honest
+   **setup screen and created no frame**, with no console error, because the browser enforces
+   **Private Network Access** on a public page's request to loopback and the DSH server does not
+   answer its preflight. From `localhost` (development) the frame IS created and points at
+   `http://127.0.0.1:3080/` with the sandbox above, and the desktop build (origin `app://`) is not
+   subject to that rule. The practical workaround on the web: open the DSH interface in an ordinary
+   tab, or use the desktop app.
 
 ## The system policy this feature relies on
 
