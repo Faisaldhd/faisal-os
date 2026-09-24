@@ -17,7 +17,7 @@ import {
   type MoveRefusal,
 } from './dnd';
 import { confirmDialog, promptDialog } from './dialog';
-import { captureDrop, collectFiles, saveDropped } from '../../shell/file-drop';
+import { askTransfer, captureDrop, collectFiles, saveDropped } from '../../shell/file-drop';
 import { ICONS, icon } from './icons';
 import './files.css';
 
@@ -570,9 +570,7 @@ function launch(ctx: AppContext): void {
       if (closed) return;
       try {
         if (mode === 'copy') {
-          const name = await uniqueName(vfs, currentPath, basename(src), t('files.copyOf'));
-          if (closed) return;
-          await copyRecursive(vfs, src, join(currentPath, name));
+          await copyInto([src], currentPath);
         } else {
           // The same guards as a drop: self, own subtree and same folder are refused.
           await commitMove([src], currentPath);
@@ -772,10 +770,33 @@ function launch(ctx: AppContext): void {
     return entries.some((x) => x.path === full);
   }
 
+  /** The copy half of a paste or a drop: a fresh "name (copy)…" per entry, never overwriting. */
+  async function copyInto(sources: string[], destDir: string): Promise<void> {
+    for (const src of sources) {
+      if (closed) return;
+      try {
+        const name = await uniqueName(vfs, destDir, basename(src), t('files.copyOf'));
+        if (closed) return;
+        await copyRecursive(vfs, src, join(destDir, name));
+      } catch (err) {
+        if (closed) return;
+        showError(err);
+        break;
+      }
+    }
+  }
+
+  /**
+   * A drop inside this view. The shell asks copy or move first — the same question as a drop on
+   * the desktop — and nothing is written at all when the owner cancels.
+   */
   async function applyDrop(sources: string[], destDir: string) {
-    const moved = await commitMove(sources, destDir);
+    const mode = await askTransfer(sources);
+    if (closed || !mode) return;
+    if (mode === 'copy') await copyInto(sources, destDir);
+    else await commitMove(sources, destDir);
     if (closed) return;
-    if (moved) selection = new Set();
+    selection = new Set();
     await refresh();
   }
 

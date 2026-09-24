@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { createBus } from '../kernel/bus';
 import { createVFS } from '../vfs';
 import type { VFS } from '../kernel/types';
-import { collectFiles, dropPlace, safeSegment, saveDropped, isExternalFileDrag } from './file-drop';
+import {
+  collectFiles, dragPaths, dropDirFor, dropPlace, isExternalFileDrag, isInternalDrag,
+  safeSegment, saveDropped, transferEntry,
+} from './file-drop';
 
 async function memVFS(opts?: { quota?: { file: number; total: number } }): Promise<VFS> {
   const g = globalThis as { indexedDB?: unknown };
@@ -135,5 +138,77 @@ describe('dropPlace', () => {
     expect(at('files')).toEqual({ kind: 'ignore' });
     expect(at('bg')).toEqual({ kind: 'desktop' });
     expect(dropPlace(null)).toEqual({ kind: 'desktop' });
+  });
+});
+
+describe('internal drag & drop (inside the OS)', () => {
+  const PATHS = 'text/x-faisal-path';
+  const dt = (types: string[], data: Record<string, string>) =>
+    ({ types, getData: (format: string) => data[format] ?? '' } as unknown as DataTransfer);
+
+  it('recognises an internal drag and reads its paths out', () => {
+    const drag = dt([PATHS, 'text/plain'], { [PATHS]: '/home/user/a.txt\n/home/user/b.txt' });
+    expect(isInternalDrag(drag)).toBe(true);
+    expect(isExternalFileDrag(drag)).toBe(false);
+    expect(dragPaths(drag)).toEqual(['/home/user/a.txt', '/home/user/b.txt']);
+
+    expect(isInternalDrag(dt(['Files'], {}))).toBe(false);
+    expect(isInternalDrag(null)).toBe(false);
+  });
+
+  it('lands on the desktop itself and on a folder icon, and nowhere else', () => {
+    expect(dropDirFor({ kind: 'desktop' }, '/home/user/Desktop')).toBe('/home/user/Desktop');
+    expect(dropDirFor({ kind: 'desktopPath', path: '/home/user/Pictures' }, '/home/user/Desktop'))
+      .toBe('/home/user/Pictures');
+    expect(dropDirFor({ kind: 'desktopApp', appId: 'org.faisal.Files' }, '/home/user/Desktop')).toBeNull();
+    expect(dropDirFor({ kind: 'window', windowEl: document.createElement('div') }, '/home/user/Desktop')).toBeNull();
+    expect(dropDirFor({ kind: 'ignore' }, '/home/user/Desktop')).toBeNull();
+  });
+
+  it('copies without touching the original, and a taken name gets the copy suffix', async () => {
+    const vfs = await memVFS();
+    await vfs.mkdir('/home/user/Desktop', { recursive: true });
+    await vfs.mkdir('/home/user/Documents', { recursive: true });
+    await vfs.writeFile('/home/user/Documents/a.txt', 'hello');
+    await vfs.writeFile('/home/user/Desktop/a.txt', 'older');
+
+    const r = await transferEntry(vfs, '/home/user/Documents/a.txt', '/home/user/Desktop', 'copy', 'copy');
+    expect(r).toEqual({ ok: true, dest: '/home/user/Desktop/a (copy).txt' });
+    expect(await read(vfs, '/home/user/Documents/a.txt')).toBe('hello'); // the original stays
+    expect(await read(vfs, '/home/user/Desktop/a.txt')).toBe('older'); // and nothing was overwritten
+    expect(await read(vfs, '/home/user/Desktop/a (copy).txt')).toBe('hello');
+  });
+
+  it('copies a whole folder tree, and moves only when move was chosen', async () => {
+    const vfs = await memVFS();
+    await vfs.mkdir('/home/user/Documents/Work', { recursive: true });
+    await vfs.writeFile('/home/user/Documents/Work/note.txt', 'x');
+    await vfs.mkdir('/home/user/Desktop', { recursive: true });
+
+    const copied = await transferEntry(vfs, '/home/user/Documents/Work', '/home/user/Desktop', 'copy', 'copy');
+    expect(copied.ok).toBe(true);
+    expect(await read(vfs, '/home/user/Desktop/Work/note.txt')).toBe('x');
+    expect(await vfs.exists('/home/user/Documents/Work')).toBe(true);
+
+    const moved = await transferEntry(vfs, '/home/user/Documents/Work', '/home/user/Desktop', 'move', 'copy');
+    expect(moved.ok).toBe(true);
+    expect(await vfs.exists('/home/user/Documents/Work')).toBe(false);
+    expect(await read(vfs, '/home/user/Desktop/Work (copy)/note.txt')).toBe('x');
+  });
+
+  it('refuses the no-op and unsafe destinations in both modes', async () => {
+    const vfs = await memVFS();
+    await vfs.mkdir('/home/user/Documents/Sub', { recursive: true });
+    await vfs.writeFile('/home/user/Documents/a.txt', 'x');
+
+    for (const mode of ['copy', 'move'] as const) {
+      expect(await transferEntry(vfs, '/home/user/Documents/a.txt', '/home/user/Documents', mode, 'copy'))
+        .toEqual({ ok: false, reason: 'sameParent' });
+      expect(await transferEntry(vfs, '/home/user/Documents', '/home/user/Documents/Sub', mode, 'copy'))
+        .toEqual({ ok: false, reason: 'subtree' });
+      expect(await transferEntry(vfs, '/home/user/Documents/a.txt', '/home/user/Nope', mode, 'copy'))
+        .toEqual({ ok: false, reason: 'missingTarget' });
+    }
+    expect(await vfs.exists('/home/user/Documents/a.txt')).toBe(true);
   });
 });

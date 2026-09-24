@@ -5,6 +5,7 @@ import { t } from '../kernel/i18n';
 import { renderIcon } from './icon';
 import { showContextMenu, wireContextMenu, type ContextMenuItem } from './contextmenu';
 import { shellConfirm } from './dialog';
+import { PATHS_MIME, PATHS_PLAIN_MIME } from '../apps/files/dnd';
 
 const DESKTOP_KEY = 'shell.desktop';
 const DASH_KEY = 'shell.dash';
@@ -399,6 +400,20 @@ export function mountDesktop(root: HTMLElement, sys: SystemAPI, _wm: WindowManag
     item.setAttribute('role', 'button');
     for (const [k, v] of Object.entries(opts.dataset)) item.dataset[k] = v;
     item.setAttribute('aria-label', opts.label);
+
+    // A desktop file or folder can be dragged to anywhere files live; the shell then asks copy or
+    // move. App tiles are not files, so they stay undraggable.
+    const dragPath = opts.dataset.path;
+    if (dragPath) {
+      item.draggable = true;
+      item.addEventListener('dragstart', (ev) => {
+        const dt = ev.dataTransfer;
+        if (!dt) return;
+        dt.setData(PATHS_MIME, dragPath);
+        dt.setData(PATHS_PLAIN_MIME, dragPath);
+        dt.effectAllowed = 'move';
+      });
+    }
 
     const iconWrap = document.createElement('span');
     iconWrap.className = 'faisal-desktop-icon-img';

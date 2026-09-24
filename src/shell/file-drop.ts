@@ -1,22 +1,32 @@
 /**
- * Drag & drop from the real computer into Fai$al OS (السحب والإفلات من الجهاز).
+ * The OS drag & drop service (السحب والإفلات).
  *
- * Drop files or whole folders anywhere:
- *   - on the desktop                → saved in ~/Desktop
- *   - on a folder icon on the desktop → saved inside that folder
- *   - on an app icon on the desktop → saved in ~/Desktop and opened with that app
- *   - on any app window            → saved in ~/Downloads and opened with the matching app
- *   - inside the Files app view    → that app saves them into the folder it shows
+ * Two kinds of drags land here:
+ *
+ * 1. Files dragged in from the real computer — always saved, never moved:
+ *    - on the desktop                   → saved in ~/Desktop
+ *    - on a folder icon on the desktop  → saved inside that folder
+ *    - on an app icon on the desktop    → saved in ~/Desktop and opened with that app
+ *    - on any app window                → saved in ~/Downloads and opened with the matching app
+ *    - inside the Files app view        → that app saves them into the folder it shows
+ *
+ * 2. Files dragged *inside* Fai$al OS (the `text/x-faisal-path` marker the Files app's rows and
+ *    the desktop icons set). They can be dropped where files live — the desktop itself, a folder
+ *    icon, a folder open in the Files app — and the shell asks first: a copy (the original stays)
+ *    or a move. Nothing is touched until the owner answers, and cancelling changes nothing.
+ *
  * Files never replaces its own drop handling: an event it already handled is left alone.
  * The page itself never navigates to a dropped file (the browser's default), which
  * would close the whole OS.
  */
 import type { SystemAPI, VFS } from '../kernel/types';
 import { HOME, VFSError } from '../kernel/types';
-import { dirname, join } from '../kernel/path';
+import { basename, dirname, join } from '../kernel/path';
 import { t } from '../kernel/i18n';
 import { formatBytes } from '../kernel/bytes';
-import { uniqueName } from '../apps/files/copy';
+import { copyRecursive, uniqueName } from '../apps/files/copy';
+import { PATHS_MIME, moveEntry, resolveDragPaths, type DropRefusal } from '../apps/files/dnd';
+import { shellChoice } from './dialog';
 
 /* ─────────────────────────────── reading a drop ─────────────────────────────── */
 
@@ -159,6 +169,97 @@ export function dropPlace(el: Element | null): DropPlace {
   return { kind: 'desktop' };
 }
 
+/* ─────────────────────── internal drags (inside the OS) ─────────────────────── */
+
+/**
+ * Where an internal drag lands: the folder it was dropped on, or the desktop for the desktop
+ * itself, the top bar and the dock. An app tile or someone else's window is not a place that can
+ * hold files, so dropping there is ignored.
+ */
+export function dropDirFor(place: DropPlace, desktopDir: string): string | null {
+  if (place.kind === 'desktopPath') return place.path;
+  if (place.kind === 'desktop') return desktopDir;
+  return null;
+}
+
+/** True when the drag carries files dragged inside the OS. */
+export function isInternalDrag(dt: DataTransfer | null): boolean {
+  return !!dt && [...dt.types].includes(PATHS_MIME);
+}
+
+/** The absolute paths an internal drag carries (empty for any other drag). */
+export function dragPaths(dt: DataTransfer): string[] {
+  return resolveDragPaths([...dt.types], (format) => dt.getData(format));
+}
+
+export type TransferMode = 'copy' | 'move';
+
+export type TransferResult =
+  | { ok: true; dest: string }
+  | { ok: false; reason: DropRefusal };
+
+/**
+ * Copies or moves one entry into `destDir`. Both modes run the same guards — an entry into
+ * itself, into its own subtree, or into the folder it already sits in — and neither ever
+ * overwrites: a taken name becomes "name (copy)…", using the localized word for "copy".
+ */
+export async function transferEntry(
+  vfs: VFS, src: string, destDir: string, mode: TransferMode, copySuffix: string,
+): Promise<TransferResult> {
+  if (src === destDir) return { ok: false, reason: 'self' };
+  if (destDir.startsWith(src + '/')) return { ok: false, reason: 'subtree' };
+  if (dirname(src) === destDir) return { ok: false, reason: 'sameParent' };
+
+  let st;
+  try { st = await vfs.stat(destDir); } catch { return { ok: false, reason: 'missingTarget' }; }
+  if (st.type !== 'dir') return { ok: false, reason: 'notDirectory' };
+
+  if (mode === 'move') {
+    const r = await moveEntry(vfs, src, destDir, { onConflict: 'uniquify', copySuffix });
+    return r.ok ? { ok: true, dest: r.dest } : { ok: false, reason: r.reason };
+  }
+  try {
+    const name = await uniqueName(vfs, destDir, basename(src), copySuffix);
+    const dest = join(destDir, name);
+    if (dest === src) return { ok: false, reason: 'sameParent' };
+    await copyRecursive(vfs, src, dest);
+    return { ok: true, dest };
+  } catch {
+    return { ok: false, reason: 'unknown' };
+  }
+}
+
+/** Maps a refusal onto the shell string that explains it. */
+function refusedKey(reason: DropRefusal): string {
+  switch (reason) {
+    case 'self': return 'shell.dnd.refusedSelf';
+    case 'subtree': return 'shell.dnd.refusedSubtree';
+    case 'sameParent': return 'shell.dnd.refusedSameParent';
+    case 'nameConflict': return 'shell.dnd.refusedNameTaken';
+    case 'notDirectory': return 'shell.dnd.refusedNotDirectory';
+    case 'missingTarget': return 'shell.dnd.refusedMissing';
+    default: return 'shell.dnd.refusedUnknown';
+  }
+}
+
+/**
+ * The copy-or-move question, asked before anything touches the file system. Cancelling resolves
+ * `null`, and nothing may be written after that. Shared with the Files app, so a drop inside its
+ * view asks exactly the same question as a drop on the desktop.
+ */
+export function askTransfer(paths: readonly string[]): Promise<TransferMode | null> {
+  const name = paths.length === 1 ? basename(paths[0]) : t('shell.dnd.countFiles', { count: paths.length });
+  return shellChoice<TransferMode>({
+    title: t('shell.dnd.askTitle'),
+    message: t('shell.dnd.askBody', { name }),
+    options: [
+      { value: 'copy', label: t('shell.drop.copy') },
+      { value: 'move', label: t('shell.dnd.move'), primary: true },
+    ],
+    cancelLabel: t('shell.dnd.cancel'),
+  });
+}
+
 /* ─────────────────────────────── the service ─────────────────────────────── */
 
 const DESKTOP = join(HOME, 'Desktop');
@@ -190,13 +291,22 @@ export function mountFileDrop(sys: SystemAPI): void {
   };
 
   window.addEventListener('dragover', (ev) => {
-    if (!isExternalFileDrag(ev.dataTransfer)) return;
+    const internal = isInternalDrag(ev.dataTransfer);
+    if (!internal && !isExternalFileDrag(ev.dataTransfer)) return;
     // The Files app accepted it over its own view: it owns the effect and the highlight.
     if (ev.defaultPrevented) { highlight(null); return; }
-    // Always accept: otherwise the browser would open the file in place of the whole OS.
-    ev.preventDefault();
     const place = dropPlace(ev.target as Element | null);
-    if (ev.dataTransfer) ev.dataTransfer.dropEffect = place.kind === 'ignore' ? 'none' : 'copy';
+    // An internal drag only lands where files live. An OS drop keeps its old "everything lands"
+    // rule, so the browser can never navigate to the dropped file in place of the whole OS.
+    if (internal && !dropDirFor(place, DESKTOP)) {
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'none';
+      highlight(null);
+      return;
+    }
+    ev.preventDefault();
+    if (ev.dataTransfer) {
+      ev.dataTransfer.dropEffect = internal ? 'move' : (place.kind === 'ignore' ? 'none' : 'copy');
+    }
     highlight(highlightFor(place));
   });
   window.addEventListener('dragleave', (ev) => {
@@ -207,15 +317,50 @@ export function mountFileDrop(sys: SystemAPI): void {
 
   window.addEventListener('drop', (ev) => {
     highlight(null);
-    if (!isExternalFileDrag(ev.dataTransfer)) return;
+    const dt = ev.dataTransfer;
+    if (!dt) return;
+    const internal = isInternalDrag(dt);
+    if (!internal && !isExternalFileDrag(dt)) return;
     const handled = ev.defaultPrevented; // the Files app already took it
     ev.preventDefault();
-    if (handled || !ev.dataTransfer) return;
+    if (handled) return;
     const place = dropPlace(ev.target as Element | null);
+    if (internal) {
+      const dir = dropDirFor(place, DESKTOP);
+      if (!dir) return;
+      const paths = dragPaths(dt);
+      if (paths.length) void transferInto(dir, paths);
+      return;
+    }
     if (place.kind === 'ignore') return;
-    const src = captureDrop(ev.dataTransfer);
+    const src = captureDrop(dt);
     void land(place, src);
   });
+
+  /**
+   * An internal drop: ask what the owner wants *before* touching anything, then copy or move
+   * every dragged entry into `dir`. Cancelling leaves the file system exactly as it was.
+   */
+  async function transferInto(dir: string, paths: string[]): Promise<void> {
+    const st = await sys.vfs.stat(dir).catch(() => null);
+    if (st?.type !== 'dir') {
+      sys.notify(t('shell.dnd.refused'), t('shell.dnd.refusedNotDirectory'));
+      return;
+    }
+    const mode = await askTransfer(paths);
+    if (!mode) return; // cancelled: nothing moved, nothing copied
+
+    const suffix = t('shell.drop.copy');
+    let done = 0;
+    let refused: DropRefusal | null = null;
+    for (const path of paths) {
+      const r = await transferEntry(sys.vfs, path, dir, mode, suffix);
+      if (r.ok) done++; else refused ??= r.reason;
+    }
+    const names = paths.map((p) => basename(p)).join(sys.locale() === 'ar' ? '، ' : ', ');
+    if (done) sys.notify(t(mode === 'copy' ? 'shell.dnd.copied' : 'shell.dnd.moved', { place: placeName(dir) }), names);
+    if (refused) sys.notify(t('shell.dnd.refused'), t(refusedKey(refused)));
+  }
 
   async function land(place: DropPlace, src: DropSource): Promise<void> {
     let dir = DESKTOP;
