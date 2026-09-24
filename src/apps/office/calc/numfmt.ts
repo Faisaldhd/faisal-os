@@ -239,10 +239,11 @@ function formatNumberSection(out: Out, sec: Section, value: number, autoSign: bo
   let grouping = false;
   let scale = 0;
   const lastIntPh = toks.slice(0, intEnd).map((t) => t.t).lastIndexOf('ph');
+  const lastPh = toks.slice(0, numberEnd).map((t) => t.t).lastIndexOf('ph');
   toks.forEach((t, i) => {
-    if (t.t !== 'comma' || i >= intEnd) return;
+    if (t.t !== 'comma' || i >= numberEnd) return;
     if (i < lastIntPh) grouping = true;
-    else if (i > lastIntPh && lastIntPh >= 0) scale++;
+    else if (i > lastPh && lastPh >= 0) scale++;
   });
   v /= 1000 ** scale;
 
@@ -469,7 +470,7 @@ export function formatValue(value: Scalar, pattern = 'General', opts: NumberForm
   switch (sec.kind) {
     case 'empty': return { text: '', color: sec.color };
     case 'general': {
-      const text = formatGeneral(autoSign ? value : Math.abs(value), 11);
+      const text = formatGeneral(autoSign ? value : Math.abs(value), 10);
       for (const t of sec.toks) {
         if (t.t === 'general') emit(out, text);
         else if (t.t === 'lit') emit(out, t.s, true);
@@ -482,7 +483,7 @@ export function formatValue(value: Scalar, pattern = 'General', opts: NumberForm
     case 'text': {
       for (const t of sec.toks) {
         if (t.t === 'lit') emit(out, t.s, true);
-        else if (t.t === 'at') emit(out, formatGeneral(value, 11));
+        else if (t.t === 'at') emit(out, formatGeneral(value, 10));
       }
       break;
     }
