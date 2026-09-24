@@ -1,0 +1,72 @@
+# Keeps the branch list clean (the owner's request).
+#
+# 1. After a pull request is merged, its branch is deleted automatically
+#    (the same thing GitHub's "Automatically delete head branches" setting does).
+# 2. Run by hand ("Clean up branches", type DELETE) to delete every branch
+#    except main, release and branches with an open pull request. Each deleted branch's last commit is kept first as
+#    a tag backup/<date>/<branch>, so any of them can be restored from the Tags page.
+#
+# main (the source) and release (Cloudflare's production branch) are never touched.
+name: Clean up branches
+
+on:
+  pull_request:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DELETE to delete every branch except main and release (each is backed up as a tag first)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  merged-branch:
+    if: >-
+      github.event_name == 'pull_request' && github.event.pull_request.merged &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref != 'main' && github.event.pull_request.head.ref != 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete the merged branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          gh api -X DELETE "repos/${{ github.repository }}/git/refs/heads/${BRANCH}" \
+            && echo "Deleted ${BRANCH}" || echo "${BRANCH} was already gone"
+
+  all-branches:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require explicit confirmation
+        run: |
+          if [ "${{ inputs.confirm }}" != "DELETE" ]; then
+            echo "::error::Type DELETE to confirm."; exit 1
+          fi
+      - name: Back up and delete every branch except main and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          day=$(date -u +%Y-%m-%d)
+          # A branch with an open pull request is still in use: never delete it.
+          open=$(gh api --paginate "repos/${{ github.repository }}/pulls?state=open&per_page=100" --jq '.[].head.ref')
+          gh api --paginate "repos/${{ github.repository }}/branches?per_page=100" \
+            --jq '.[] | [.name, .commit.sha] | @tsv' |
+          while IFS=$'\t' read -r name sha; do
+            case "$name" in main|release) continue ;; esac
+            if grep -qxF "$name" <<<"$open"; then echo "Kept ${name}: it has an open pull request"; continue; fi
+            tag="backup/${day}/${name}"
+            gh api -X POST "repos/${{ github.repository }}/git/refs" \
+              -f ref="refs/tags/${tag}" -f sha="${sha}" >/dev/null 2>&1 || true
+            # Delete only once its backup tag exists.
+            if gh api "repos/${{ github.repository }}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+              gh api -X DELETE "repos/${{ github.repository }}/git/refs/heads/${name}"
+              echo "Deleted ${name} (backup tag ${tag})"
+            else
+              echo "::warning::Kept ${name}: its backup tag could not be created"
+            fi
+          done

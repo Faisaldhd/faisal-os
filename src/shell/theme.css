@@ -33,6 +33,13 @@
   --faisal-focus-ring: #8F6412;
   --faisal-focus-ring-invert: #F0CF7A;
 
+  /* Motion: one curve and two durations for every interaction in the shell, so hover, press,
+   * a window drag and a file drop all feel like one system. The reduced-motion block below
+   * turns them off for anyone who asks for less movement. */
+  --faisal-ease: cubic-bezier(0.2, 0, 0, 1);
+  --faisal-dur-quick: 0.14s;
+  --faisal-dur: 0.26s;
+
   --faisal-bg: #f5f4f1;
   --faisal-fg: #1a1d26;
   --faisal-fg-muted: #565b67;
@@ -1200,6 +1207,11 @@ body {
   color: #fff;
 }
 .faisal-desktop-icon:hover { background: rgba(255, 255, 255, 0.1); }
+/* Held down (finger or mouse): the tile sinks a touch, so a tap has a visible answer. */
+.faisal-desktop-icon:active {
+  transform: scale(0.965);
+  transition: transform var(--faisal-dur-quick) var(--faisal-ease);
+}
 .faisal-desktop-icon.is-selected {
   background: color-mix(in srgb, var(--faisal-accent) 32%, rgba(255, 255, 255, 0.12));
   border-color: color-mix(in srgb, var(--faisal-accent-2) 60%, transparent);
@@ -1391,6 +1403,16 @@ body {
 }
 .faisal-window.is-snapped { border-radius: 0; }
 
+/* While the titlebar is held, the window lifts off the surface: a deeper shadow and a faint
+ * accent rim, so it is obvious what is moving. No transform — the drag maths reads the element
+ * rect, and a scaled rect would drift from the pointer. */
+.faisal-window.is-dragging {
+  box-shadow: 0 28px 64px rgba(0, 0, 0, 0.45),
+              0 0 0 1px color-mix(in srgb, var(--faisal-accent-2) 45%, transparent);
+}
+.faisal-window.is-dragging .faisal-titlebar { cursor: grabbing; }
+.faisal-window.is-resizing { box-shadow: 0 22px 52px rgba(0, 0, 0, 0.4); }
+
 /* Where a window will land if dropped at a screen edge.
  * wm.ts writes left/top/width/height, so this stays a compositor-friendly transform
  * (the element keeps its 100% x 100% base size) rather than animating layout. */
@@ -1405,7 +1427,9 @@ body {
   border-radius: var(--faisal-radius);
   background: color-mix(in srgb, var(--faisal-accent) 18%, transparent);
   border: 2px solid color-mix(in srgb, var(--faisal-accent) 55%, transparent);
-  transition: transform 0.08s ease-out;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--faisal-accent-2) 45%, transparent),
+              0 0 32px color-mix(in srgb, var(--faisal-accent) 30%, transparent);
+  transition: transform var(--faisal-dur-quick) var(--faisal-ease);
 }
 .faisal-snap-preview[hidden] { display: none; }
 
@@ -1731,9 +1755,61 @@ body {
   .faisal-clip-del { inline-size: 44px; }
 }
 
-/* Files dragged in from the computer: where they would land (src/shell/file-drop.ts). */
+/* Files dragged in from the computer: where they would land (src/shell/file-drop.ts).
+ *
+ * The old rule was a thin dashed outline. Now the target wears a gold ring that breathes, and a
+ * chip follows the drop point naming the destination — so on a phone, where there is no cursor,
+ * the user still sees exactly where the file is going. */
 .faisal-drop-target {
-  outline: 2px dashed var(--faisal-accent, #3c6eb4);
+  outline: 2px solid var(--faisal-accent-2, #C9982F);
   outline-offset: -4px;
+  border-radius: var(--faisal-radius-sm);
+  background: color-mix(in srgb, var(--faisal-accent) 12%, transparent);
+  animation: faisal-drop-breathe 1.4s var(--faisal-ease) infinite;
 }
-.faisal-desktop-icon.faisal-drop-target { outline-offset: 2px; border-radius: 10px; }
+.faisal-desktop-icon.faisal-drop-target {
+  outline-offset: 2px;
+  border-radius: 12px;
+  transform: scale(1.05);
+}
+.faisal-window.faisal-drop-target { outline-offset: -3px; }
+
+@keyframes faisal-drop-breathe {
+  0%, 100% { outline-color: color-mix(in srgb, var(--faisal-accent-2) 50%, transparent); }
+  50% { outline-color: var(--faisal-accent-2); }
+}
+
+/* The chip that names the destination, positioned by script and kept inside the viewport. */
+.faisal-drop-badge {
+  position: fixed;
+  z-index: 99998;
+  transform: translate(-50%, -50%);
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--faisal-brand-gold, #E3B650);
+  color: var(--faisal-brand-navy, #16264F);
+  font-size: 12.5px;
+  font-weight: 600;
+  pointer-events: none;
+  max-inline-size: min(78vw, 320px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
+  animation: faisal-drop-badge-in var(--faisal-dur-quick) var(--faisal-ease);
+}
+
+@keyframes faisal-drop-badge-in {
+  from { opacity: 0; transform: translate(-50%, calc(-50% + 6px)) scale(0.94); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+/* Motion is decoration: whoever asks for less of it keeps every state — the ring, the chip, the
+ * lifted shadow — with none of the movement. Deliberately the LAST block in this file: an
+ * override has to come after the rules it replaces, and the reduced-motion block above only
+ * covers what was declared before it. */
+@media (prefers-reduced-motion: reduce) {
+  .faisal-desktop-icon:active,
+  .faisal-drop-target,
+  .faisal-drop-badge { animation: none; transition: none; }
+}

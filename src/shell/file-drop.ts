@@ -260,6 +260,18 @@ export function askTransfer(paths: readonly string[]): Promise<TransferMode | nu
   });
 }
 
+/**
+ * The name the drop chip shows: the destination's own label when it has one (a folder icon or a
+ * window title), otherwise the caller's fallback. Exported so the wording per place stays pinned
+ * by a test instead of living only in the browser.
+ */
+export function dropTargetLabel(el: HTMLElement | null, fallback: string): string {
+  const text = el
+    ?.querySelector<HTMLElement>('.faisal-desktop-icon-label, .faisal-titlebar-title')
+    ?.textContent?.trim();
+  return text || fallback;
+}
+
 /* ─────────────────────────────── the service ─────────────────────────────── */
 
 const DESKTOP = join(HOME, 'Desktop');
@@ -269,11 +281,44 @@ const MAX_OPEN = 5;
 
 export function mountFileDrop(sys: SystemAPI): void {
   let highlighted: HTMLElement | null = null;
-  const highlight = (el: HTMLElement | null) => {
-    if (highlighted === el) return;
+  let badge: HTMLElement | null = null;
+
+  /** The chip that names the destination. Decorative: the notification reports the outcome. */
+  const badgeEl = (): HTMLElement => {
+    if (!badge) {
+      badge = document.createElement('div');
+      badge.className = 'faisal-drop-badge';
+      badge.setAttribute('aria-hidden', 'true');
+    }
+    return badge;
+  };
+
+  const showBadge = (el: HTMLElement, name: string, at?: { x: number; y: number }) => {
+    const b = badgeEl();
+    b.textContent = t('shell.drop.into', { name });
+    if (!b.isConnected) document.body.append(b);
+    // The chip rides with the pointer, which is where the eye already is; a touch drag has no
+    // pointer coordinates, so it falls back to the target's own centre.
+    const r = el.getBoundingClientRect();
+    const x = at?.x ?? r.left + r.width / 2;
+    const y = at?.y ?? r.top + Math.min(r.height / 2, 72);
+    // Clamped to the viewport: on a phone the target can sit right against the edge.
+    b.style.left = `${Math.round(Math.min(Math.max(x, 16), window.innerWidth - 16))}px`;
+    b.style.top = `${Math.round(Math.min(Math.max(y - 26, 16), window.innerHeight - 16))}px`;
+  };
+
+  const hideBadge = () => { badge?.remove(); };
+
+  const highlight = (el: HTMLElement | null, name?: string, at?: { x: number; y: number }) => {
+    if (highlighted === el) {
+      if (el && name) showBadge(el, name, at); // the label can change while the ring stays put
+      return;
+    }
     highlighted?.classList.remove('faisal-drop-target');
     highlighted = el;
-    el?.classList.add('faisal-drop-target');
+    if (!el) { hideBadge(); return; }
+    el.classList.add('faisal-drop-target');
+    showBadge(el, name ?? t('shell.drop.here'), at);
   };
   const surface = () => document.querySelector<HTMLElement>('.faisal-desktop-surface');
 
@@ -296,7 +341,7 @@ export function mountFileDrop(sys: SystemAPI): void {
     // The Files app accepted it over its own view: it owns the effect and the highlight.
     if (ev.defaultPrevented) { highlight(null); return; }
     const place = dropPlace(ev.target as Element | null);
-    // An internal drag only lands where files live. An OS drop keeps its old "everything lands"
+    // An internal drag only lands where files live; an OS drop keeps its old "everything lands"
     // rule, so the browser can never navigate to the dropped file in place of the whole OS.
     if (internal && !dropDirFor(place, DESKTOP)) {
       if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'none';
@@ -307,7 +352,12 @@ export function mountFileDrop(sys: SystemAPI): void {
     if (ev.dataTransfer) {
       ev.dataTransfer.dropEffect = internal ? 'move' : (place.kind === 'ignore' ? 'none' : 'copy');
     }
-    highlight(highlightFor(place));
+    if (place.kind === 'ignore') { highlight(null); return; }
+    const el = highlightFor(place);
+    if (!el) { highlight(null); return; }
+    // The chip names where the files would land, so the drop is readable without a cursor.
+    const name = place.kind === 'desktop' ? t('shell.drop.desktop') : dropTargetLabel(el, t('shell.drop.here'));
+    highlight(el, name, { x: ev.clientX, y: ev.clientY });
   });
   window.addEventListener('dragleave', (ev) => {
     // Leaving the page (relatedTarget null) clears the highlight.
