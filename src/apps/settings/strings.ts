@@ -112,6 +112,7 @@ defineStrings('settings', {
     'sc.snap': 'وضع النافذة في نصف الشاشة',
     'sc.desktop': 'إظهار سطح المكتب',
     'sc.screenshot': 'لقطة شاشة',
+    'sc.clipboard': 'سجل الحافظة',
   },
   en: {
     title: 'Settings',
@@ -224,5 +225,6 @@ defineStrings('settings', {
     'sc.snap': 'Snap window to half the screen',
     'sc.desktop': 'Show desktop',
     'sc.screenshot': 'Screenshot',
+    'sc.clipboard': 'Clipboard history',
   },
 });

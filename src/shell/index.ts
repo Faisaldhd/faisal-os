@@ -13,6 +13,7 @@ import { mountSplash } from './splash';
 import { mountDesktop } from './desktop';
 import { mountSession } from './session';
 import { mountLock } from './lock';
+import { mountClipboard } from './clipboard';
 
 export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   wireAppearance(sys.bus, sys.settings);
@@ -22,12 +23,14 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   const overview = mountOverview(root, sys, sys.wm);
   const screenshot = mountScreenshot(sys);
   const lock = mountLock();
+  const clipboard = mountClipboard(sys);
   const topbar = mountTopbar(
     root,
     sys,
     () => overview.toggle(),
     () => screenshot.capture(),
     () => ({ enabled: lock.isEnabled(), onLock: () => lock.lock(), onManage: () => lock.openManage() }),
+    () => clipboard.open(),
   );
   mountDock(root, sys);
   mountNotifications(root, sys, topbar.querySelector<HTMLButtonElement>('.faisal-topbar-clock'));
