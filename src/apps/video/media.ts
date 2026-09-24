@@ -63,6 +63,8 @@ function mimeFor(name: string, type: MediaType): string {
     const map: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp', '.avif': 'image/avif' };
     return map[ext] ?? 'application/octet-stream';
   }
+  // Most .mov files are H.264/AAC in a QuickTime box, which browsers decode as MP4.
+  if (ext === '.mov') return 'video/mp4';
   const format = formatForPath(name);
   return format ? format.mime.split(';')[0].trim() : 'application/octet-stream';
 }
@@ -142,6 +144,8 @@ async function decodePeaks(bytes: Uint8Array, duration: number): Promise<Float32
 export interface MediaDescribe {
   refused(ext: string): string;
   unreadable(reason: string): string;
+  /** The browser opened the file but cannot decode its codec (e.g. HEVC). */
+  codec(ext: string, size: number): string;
   empty(): string;
   tooBig(): string;
 }
@@ -259,7 +263,8 @@ export class MediaLibrary {
   private async load(item: MediaItem, blob: Blob, bytes: Uint8Array | null): Promise<void> {
     item.size = blob.size;
     if (item.type !== 'image') {
-      const refusal = refusalFor(this.probe(), item.name);
+      // A .mov is tried as MP4 (see mimeFor); the decoder itself is the judge.
+      const refusal = extensionOf(item.name).toLowerCase() === '.mov' ? null : refusalFor(this.probe(), item.name);
       if (refusal) {
         this.fail(item, this.describe.refused(refusal.ext));
         return;
@@ -275,7 +280,11 @@ export class MediaLibrary {
       if (item.type === 'image') await this.loadImage(item);
       else await this.loadAv(item);
     } catch (err) {
-      this.fail(item, this.describe.unreadable(err instanceof Error ? err.message : ''));
+      const message = err instanceof Error ? err.message : '';
+      // Error 3/4 is the decoder saying no: name the codec problem, not a vague failure.
+      this.fail(item, /media error [34]|error$/.test(message)
+        ? this.describe.codec(extensionOf(item.name).toLowerCase() || '?', item.size)
+        : this.describe.unreadable(message));
       return;
     }
     item.status = 'ready';

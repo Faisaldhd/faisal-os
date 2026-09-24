@@ -346,7 +346,7 @@
 .fvs.is-narrow .fvs-zoom, .fvs.is-narrow .fvs-timecode { display: none; }
 .fvs.is-narrow .fvs-tl-bar .fvs-spacer { flex: 0 0 8px; }
 
-.fvs-tl { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: 112px minmax(0, 1fr); }
+.fvs-tl { position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: 136px minmax(0, 1fr); }
 .fvs.is-narrow .fvs-tl { grid-template-columns: 52px minmax(0, 1fr); }
 .fvs-tl-heads { display: flex; flex-direction: column; border-inline-end: 1px solid var(--app-hairline); overflow: hidden; }
 .fvs-tl-head-spacer { flex: none; height: 28px; border-block-end: 1px solid var(--app-hairline); }
@@ -407,12 +407,12 @@
 .fvs-tl-playhead-knob { position: absolute; inset-block-start: 2px; left: -6px; width: 14px; height: 14px; border-radius: 4px 4px 50% 50%; background: var(--app-copper-2); }
 .fvs-tl-snap { position: absolute; inset-block: 0; left: 0; width: 1px; background: var(--app-blue); z-index: 4; pointer-events: none; box-shadow: 0 0 6px var(--app-blue); }
 .fvs-tl-dropmark { position: absolute; left: 0; width: 3px; margin-left: -1px; background: var(--app-blue); border-radius: 2px; z-index: 6; pointer-events: none; }
-.fvs-tl-empty { position: absolute; inset: 28px 0 0 112px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 16px; color: var(--app-text-3); pointer-events: none; text-align: center; }
+.fvs-tl-empty { position: absolute; inset: 28px 0 0 136px; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 16px; color: var(--app-text-3); pointer-events: none; text-align: center; }
 .fvs.is-narrow .fvs-tl-empty { inset-inline-start: 52px; }
 
 /* ─── media pool ─── */
 .fvs-pool { display: flex; flex-direction: column; min-height: 0; height: 100%; }
-.fvs-pool-actions { display: flex; gap: 8px; padding: 8px 12px; }
+.fvs-pool-actions { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px; }
 .fvs-pool-actions .fvs-btn { flex: 1; min-width: 0; }
 .fvs-pool-grid { flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); align-content: start; gap: 8px; padding: 0 12px 12px; }
 .fvs-card { position: relative; display: flex; flex-direction: column; min-width: 0; border-radius: 10px; border: 1px solid var(--app-hairline); background: var(--app-field); overflow: hidden; cursor: grab; }

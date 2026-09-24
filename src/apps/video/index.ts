@@ -177,6 +177,7 @@ function launch(ctx: AppContext): void {
     refused: (ext) => s('refused', { ext }),
     unreadable: (reason) => (reason ? s('unreadableWhy', { reason }) : s('unreadable')),
     empty: () => s('emptyFile'),
+    codec: (ext, size) => s('codecUnsupported', { ext, size: formatBytes(size, sys.locale()) }),
     tooBig: () => s('tooBig'),
   });
 
@@ -592,6 +593,7 @@ function launch(ctx: AppContext): void {
     playerFrame = frameFor(p);
     engine.setProject(p, playerFrame);
     sizePreview();
+    syncChrome();
   }
 
   /* ─────────────── model changes ─────────────── */
@@ -698,6 +700,7 @@ function launch(ctx: AppContext): void {
     }
   });
   engine.onState(() => {
+    if (mode === 'player') syncChrome();
     if (mode === 'editor') paintTime();
     if (!engine.playing && shuttleRate > 0) shuttleRate = 0;
   });
@@ -1291,8 +1294,15 @@ function launch(ctx: AppContext): void {
     engine.pause();
     const target = exportTarget();
     const modal = openModal(root, s('exportTitle'), { wide: true });
+    // A container is offered only when this browser can both record it AND play it
+    // back: some builds record H.264 they cannot decode, which would hand the owner
+    // a file this system cannot open.
     const recorderOk = (mime: string) => {
-      try { return typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime); } catch { return false; }
+      try {
+        const canRecord = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(mime);
+        const probeMime = mime.startsWith('video/mp4') ? 'video/mp4; codecs="avc1.42E01E"' : 'video/webm; codecs="vp8"';
+        return canRecord && document.createElement('video').canPlayType(probeMime) !== '';
+      } catch { return false; }
     };
     let kind: 'video' | 'audio' = hasPicture(target.project) ? 'video' : 'audio';
     let container: 'mp4' | 'webm' = recorderOk('video/mp4') ? 'mp4' : 'webm';
@@ -1895,6 +1905,15 @@ function launch(ctx: AppContext): void {
   /* ─────────────── first screen ─────────────── */
 
   work.append(start);
+  // An editor needs room: a desktop window that opened small is maximized once
+  // (the owner can restore it; on phones the shell already fills the screen).
+  requestAnimationFrame(() => {
+    const frameEl = win.content.closest('.faisal-window');
+    const small = root.clientWidth < 960 || root.clientHeight < 600;
+    if (small && window.innerWidth >= 1000 && frameEl && !frameEl.classList.contains('is-maximized')) {
+      try { sys.wm.toggleMaximize(win.id); } catch { /* the shell may refuse; the compact layout still works */ }
+    }
+  });
   renderStart();
   syncChrome();
   queueMicrotask(() => root.focus({ preventScroll: true }));

@@ -243,8 +243,11 @@ export class PlayerView {
   /** Builds the one-clip project for the current item and hands it to the engine. */
   private load(): void {
     const media = this.currentMedia();
-    this.empty.hidden = Boolean(media);
-    if (!media) {
+    this.empty.hidden = Boolean(media) && media?.status !== 'error';
+    const [title, hint] = [this.empty.querySelector('.fvs-empty-title'), this.empty.querySelector('.fvs-empty-hint')];
+    if (title) title.textContent = media?.status === 'error' ? media.name : s('playerEmpty');
+    if (hint) hint.textContent = media?.status === 'error' ? media.error : s('playerEmptyHint');
+    if (!media || media.status === 'error') {
       this.host.showProject(emptyProject('auto'));
       this.paintTime();
       return;
