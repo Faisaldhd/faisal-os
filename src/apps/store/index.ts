@@ -13,6 +13,7 @@ import {
   type CategoryFilter,
   type StoreTab,
 } from './model';
+import { formatReleaseDate, isNewRelease } from './release';
 import './strings';
 import './store.css';
 
@@ -154,6 +155,22 @@ function launch(ctx: AppContext) {
     desc.textContent = describeApp(entry, locale()) || t('store.noDescription');
 
     card.append(top, desc);
+
+    // The release date is shown only when the manifest really carries one, and the "new"
+    // badge only while it is recent, so nothing here is invented for older apps.
+    const released = formatReleaseDate(entry.releasedAt, locale());
+    if (released) {
+      const line = document.createElement('div');
+      line.className = 'faisal-store-card-released';
+      line.textContent = t('store.releasedOn', { date: released });
+      card.append(line);
+    }
+    if (isNewRelease(entry.releasedAt, Date.now())) {
+      const badge = document.createElement('span');
+      badge.className = 'faisal-store-badge is-new';
+      badge.textContent = t('store.newBadge');
+      card.append(badge);
+    }
 
     if (entry.installed) {
       const badge = document.createElement('span');
@@ -352,6 +369,13 @@ function launch(ctx: AppContext) {
     const cat = document.createElement('span');
     cat.textContent = `${t('store.categoryLabel')}: ${t(CATEGORY_KEY[(entry.category ?? 'system') as CategoryFilter] ?? 'store.categorySystem')}`;
     meta.append(cat);
+    const released = formatReleaseDate(entry.releasedAt, locale());
+    if (released) {
+      const when = document.createElement('span');
+      when.className = 'faisal-store-detail-released';
+      when.textContent = t('store.releasedOn', { date: released });
+      meta.append(when);
+    }
     info.append(name, meta);
     head.append(info);
     container.append(head);

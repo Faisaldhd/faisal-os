@@ -483,3 +483,26 @@
   background: var(--faisal-fg-muted, #565b67);
 }
 .faisal-store-perm-item.is-warning .faisal-store-perm-dot { background: var(--faisal-danger, #c01c28); }
+
+/* ── release date and the «جديد / New» badge ───────────────────────── */
+
+/* Shown only for apps whose manifest carries a releasedAt; older apps get no line. */
+.faisal-store-card-released,
+.faisal-store-detail-released {
+  font-size: 11px;
+  color: var(--faisal-fg-muted, #565b67);
+}
+
+.faisal-store-card-released {
+  margin-block-start: -2px;
+}
+
+/* The brand's gold, so "new" reads as arrival rather than as an installed state. */
+.faisal-store-badge.is-new {
+  background: rgba(214, 165, 46, 0.18);
+  color: #8a6510;
+}
+:root[data-theme="dark"] .faisal-store-badge.is-new { color: #f0cf7a; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .faisal-store-badge.is-new { color: #f0cf7a; }
+}
