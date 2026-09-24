@@ -76,7 +76,7 @@ function msg(key: string, params: { a?: string; b?: string } = {}, prefix = fals
 }
 
 export function parseListSource(text: string): string[] {
-  return listOptions({ kind: 'list', items: text.split(/[,;،]/) });
+  return listOptions({ items: text.split(/[,;،]/) });
 }
 
 export function listOptions(rule: { items: readonly string[]; caseSensitive?: boolean }): string[] {
