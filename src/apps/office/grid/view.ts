@@ -169,8 +169,19 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const growsGrid = r >= grid.rows.length || c >= gridWidth(grid);
     ctx.commit(formulaCellEdit(sheet, r, c, before, after));
     showResult();
-    if (growsGrid) renderGrid();
-    else refreshValues();
+    if (growsGrid) {
+      // The grid grew under the caret: redraw, then put the caret back where the owner is typing.
+      const wasFocused = document.activeElement instanceof HTMLInputElement && document.activeElement.dataset.r === String(r) && document.activeElement.dataset.c === String(c);
+      renderGrid();
+      const input = inputs.get(`${r}:${c}`);
+      if (wasFocused && input) {
+        keepCaret = true;
+        input.value = typed;
+        input.focus();
+        input.setSelectionRange(typed.length, typed.length);
+        editing = true;
+      }
+    } else refreshValues();
   }
 
   function showResult(): void {
@@ -189,7 +200,9 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   function styleCell(td: HTMLTableCellElement, input: HTMLInputElement, view: HTMLElement, s: CellStyle | undefined, value: string): void {
     const numeric = /^-?\d+(\.\d+)?(E[+-]?\d+)?$/i.test(value.trim()) && value.trim() !== '';
     const h = s?.hAlign ?? (numeric ? 'right' : undefined);
-    if (!s) { if (h) { view.style.textAlign = h; } return; }
+    const justify = (a: string): string => (a === 'center' || a === 'centerContinuous' ? 'center' : a === 'right' ? 'flex-end' : 'flex-start');
+    if (h) { view.style.justifyContent = justify(h); view.style.textAlign = h === 'centerContinuous' ? 'center' : h; }
+    if (!s) return;
     if (s.fill) td.style.backgroundColor = `#${s.fill}`;
     const color = s.color && s.color !== '000000' ? `#${s.color}` : s.fill ? '#000000' : '';
     for (const node of [input, view]) {
@@ -200,7 +213,6 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       if (s.font) node.style.fontFamily = `"${s.font.replace(/"/g, '')}", var(--faisal-font)`;
       if (color) node.style.color = color;
     }
-    if (h) view.style.textAlign = h === 'centerContinuous' ? 'center' : h;
     if (s.vAlign === 'center') view.style.alignItems = 'center';
     else if (s.vAlign === 'top') view.style.alignItems = 'flex-start';
     if (s.wrap) view.classList.add('is-wrap');
@@ -287,6 +299,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
         view.textContent = displayValue(value, s?.numFmt);
         styleCell(td, input, view, s, value);
         input.addEventListener('focus', () => {
+          if (keepCaret) { keepCaret = false; active = { row: r, col: c }; anchor = active; paintSelection(); return; }
           active = { row: r, col: c };
           if (!dragging && !shiftFocus) anchor = active;
           shiftFocus = false;
@@ -327,6 +340,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     paintSelection();
   }
   let shiftFocus = false;
+  let keepCaret = false;
   document.addEventListener('pointerup', onPointerUp);
   function onPointerUp(): void {
     if (!dragging) return;

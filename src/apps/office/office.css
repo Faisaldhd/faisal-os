@@ -627,3 +627,6 @@
   .fo-td { height: 44px; }
   .fo-sheettab, .fo-tab, .fo-panel-tab, .fo-nav-item, .fo-menu-item, .fo-link { min-height: 44px; }
 }
+
+/* `hidden` always wins over a component's own display (tool panels, zoom, notes). */
+.faisal-office [hidden] { display: none !important; }

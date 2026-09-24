@@ -91,6 +91,12 @@ export interface SheetsModel {
    * itself always holds the computed value; the file keeps the formula in `<f>`.
    */
   formulas?: Record<string, string>;
+  /**
+   * How many row/column insertions or deletions the model holds relative to the
+   * file (they move cells, so the save must rebuild). Typing past the last row or
+   * column only grows the sheet and does not count. Absent when zero.
+   */
+  moved?: number;
 }
 export interface DeckModel { kind: 'pptx'; slides: string[][] }
 export interface TextModel { kind: 'text'; text: string }
@@ -288,6 +294,18 @@ function sheetsEdit(
   return model.kind === 'xlsx' || model.kind === 'csv' ? change(model) : model;
 }
 
+/** A structural edit: the change, plus the `moved` counter going up (apply) or down (revert). */
+function structural(model: OfficeModel, delta: 1 | -1, change: (m: SheetsModel) => SheetsModel): OfficeModel {
+  return sheetsEdit(model, (s) => {
+    const next = change(s);
+    const moved = (s.moved ?? 0) + delta;
+    const out: SheetsModel = { ...next };
+    if (moved) out.moved = moved;
+    else delete out.moved;
+    return out;
+  });
+}
+
 /** An edit that sets one cell, remembering the value it replaced. */
 export function cellEdit(sheet: number, row: number, col: number, before: string, after: string): Edit {
   return {
@@ -300,8 +318,8 @@ export function cellEdit(sheet: number, row: number, col: number, before: string
 /** An edit that inserts a row, capturing the index so undo removes exactly it. */
 export function addRowEdit(sheet: number, at: number): Edit {
   return {
-    apply: (m) => sheetsEdit(m, (s) => insertRow(s, sheet, at)),
-    revert: (m) => sheetsEdit(m, (s) => removeRow(s, sheet, at)),
+    apply: (m) => structural(m, 1, (s) => insertRow(s, sheet, at)),
+    revert: (m) => structural(m, -1, (s) => removeRow(s, sheet, at)),
   };
 }
 
@@ -309,8 +327,8 @@ export function addRowEdit(sheet: number, at: number): Edit {
 export function deleteRowEdit(sheet: number, at: number, row: string[]): Edit {
   const value = row.slice();
   return {
-    apply: (m) => sheetsEdit(m, (s) => removeRow(s, sheet, at)),
-    revert: (m) => sheetsEdit(m, (s) => {
+    apply: (m) => structural(m, 1, (s) => removeRow(s, sheet, at)),
+    revert: (m) => structural(m, -1, (s) => {
       const grid = s.grids[sheet];
       if (!grid) return s;
       const rows = grid.rows.slice();
@@ -323,8 +341,8 @@ export function deleteRowEdit(sheet: number, at: number, row: string[]): Edit {
 /** An edit that inserts a column. */
 export function addColumnEdit(sheet: number, at: number): Edit {
   return {
-    apply: (m) => sheetsEdit(m, (s) => insertColumn(s, sheet, at)),
-    revert: (m) => sheetsEdit(m, (s) => removeColumn(s, sheet, at)),
+    apply: (m) => structural(m, 1, (s) => insertColumn(s, sheet, at)),
+    revert: (m) => structural(m, -1, (s) => removeColumn(s, sheet, at)),
   };
 }
 
@@ -332,8 +350,8 @@ export function addColumnEdit(sheet: number, at: number): Edit {
 export function deleteColumnEdit(sheet: number, at: number, values: string[]): Edit {
   const kept = values.slice();
   return {
-    apply: (m) => sheetsEdit(m, (s) => removeColumn(s, sheet, at)),
-    revert: (m) => sheetsEdit(m, (s) => {
+    apply: (m) => structural(m, 1, (s) => removeColumn(s, sheet, at)),
+    revert: (m) => structural(m, -1, (s) => {
       const grid = s.grids[sheet];
       if (!grid) return s;
       const rows = grid.rows.map((r, i) => {

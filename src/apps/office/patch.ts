@@ -103,6 +103,7 @@ export function snapshotModel(model: OfficeModel): OfficeModel {
       active: model.active,
       delimiter: model.delimiter,
       ...(model.formulas ? { formulas: { ...model.formulas } } : {}),
+      ...(model.moved ? { moved: model.moved } : {}),
     };
   }
 }
@@ -612,7 +613,8 @@ function locateCell(xml: string, doc: XmlDoc, rows: RowAt[], row: number, col: n
     // A gap the reader padded with an empty row. Adding the `<row>` is exact only
     // when every existing row is addressed by its own `r` attribute.
     const last = rows.reduce((max, candidate) => Math.max(max, candidate.index), -1);
-    if (row < 0 || row > last + 1) throw new Error('xlsx: that row is past the sheet');
+    if (row < 0) throw new Error('xlsx: a negative row');
+    void last;
     for (const candidate of rows) if (attr(xml, candidate.element, 'r') === null) throw new Error('xlsx: rows are not addressed by r');
     const sheetData = elements(doc, 'sheetData')[0];
     if (!sheetData) throw new Error('xlsx: the sheet has no <sheetData>');
@@ -700,13 +702,16 @@ function cellEditFor(xml: string, target: CellTarget, cell: CellEdit, shared: Sh
 
 async function patchXlsx(archive: RawZip, baseline: SheetsModel, current: SheetsModel): Promise<PatchResult | null> {
   if (baseline.grids.length !== current.grids.length) return null; // a sheet added or removed
+  if (current.moved) return null; // rows or columns were inserted or removed: cells moved
   const edits = new Map<number, CellEdit[]>();
   for (let s = 0; s < baseline.grids.length; s++) {
     const before = baseline.grids[s];
     const after = current.grids[s];
     if (!before || !after) return null;
-    // A row or a column added or removed is structural: the rebuild path owns it.
-    if (before.rows.length !== after.rows.length || gridWidth(before) !== gridWidth(after)) return null;
+    // Rows or columns inserted or removed are the rebuild path's (counted by `moved`
+    // above); a sheet that only grew past its end — typing below the data — is
+    // patched, and the read-back below proves nothing shifted.
+    if (after.rows.length < before.rows.length || gridWidth(after) < gridWidth(before)) return null;
     const cells: CellEdit[] = [];
     for (let r = 0; r < after.rows.length; r++) {
       const row = after.rows[r] ?? [];
@@ -727,7 +732,9 @@ async function patchXlsx(archive: RawZip, baseline: SheetsModel, current: Sheets
     }
     if (cells.length) edits.set(s, cells);
   }
-  if (!edits.size) return { bytes: archive.bytes, changed: [] };
+  const grew = current.grids.some((g, i) => g.rows.length !== baseline.grids[i]?.rows.length || gridWidth(g) !== gridWidth(baseline.grids[i] as Grid));
+  // Empty rows or columns past the end have nothing a patch could write: the rebuild owns them.
+  if (!edits.size) return grew ? null : { bytes: archive.bytes, changed: [] };
 
   const paths = await sheetPaths(archive);
   if (!paths) return null;
@@ -761,6 +768,7 @@ async function patchXlsx(archive: RawZip, baseline: SheetsModel, current: Sheets
       const grid: Grid | undefined = current.grids[s];
       const read = sheets[s];
       if (!grid || !read || read.rows.length !== grid.rows.length) return null;
+      if (gridWidth({ ...grid, rows: read.rows }) !== gridWidth(grid)) return null;
       for (let r = 0; r < grid.rows.length; r++) {
         const width = Math.max(grid.rows[r]?.length ?? 0, read.rows[r]?.length ?? 0);
         for (let c = 0; c < width; c++) {

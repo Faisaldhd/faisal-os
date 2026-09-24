@@ -538,7 +538,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     const width = canvas.clientWidth;
     fluid = width > 0 && width < 700;
     root.classList.toggle('is-fluid', fluid);
-    if (fitWidth && width > 0 && !fluid) zoom = clamp((width - 48) / g.w, 0.5, 1.5);
+    if (fitWidth && width > 0 && !fluid) zoom = clamp((width - 48) / g.w, 0.5, 1);
     stage.style.zoom = fluid ? '' : String(zoom);
     schedulePaginate();
   }
