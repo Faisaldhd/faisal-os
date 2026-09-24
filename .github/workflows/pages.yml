@@ -1,9 +1,10 @@
 name: Deploy to GitHub Pages
 
+# Runs only after a successful desktop release (called from desktop-release.yml), so the
+# web and the desktop app always update together. Run "Publish web only" by hand to update
+# the web alone, only when the owner asks for it.
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
