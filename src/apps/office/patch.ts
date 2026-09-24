@@ -50,12 +50,14 @@
  */
 import { columnIndex, readDocx, readPptx, readXlsx } from '../viewer/formats';
 import { cellName, isNumericText, jcValue, paragraphPropertiesMarkup, runPropertiesMarkup, runPropertyChildren, xmlText } from './xml';
-import { evaluateFormula } from './formula';
+import { formatFormula, parseFormula } from './formula/index';
 import {
   applyEdits, attr, attrLocal, elementText, elements, elementsOf, localName, paragraphElements, paragraphSlots,
   paragraphText, parsePart, type XmlDoc, type XmlEdit, type XmlElement,
 } from './xmlscan';
 import { entryData, readRawZip, rebuildZip, utf8, type RawZip } from './zip';
+import type { OpaqueRun } from './writer/types';
+import { patchDocxRich } from './writer/docxpatch';
 import {
   formulaAt, gridWidth, sameFormat, type DeckModel, type DocModel, type Grid, type OfficeKind, type OfficeModel,
   type ParagraphFormat, type SheetsModel,
@@ -69,6 +71,8 @@ export interface PatchResult {
   bytes: Uint8Array;
   /** The parts that were rewritten (empty means the archive is untouched). */
   changed: string[];
+  /** New elements (pictures) whose markup the save generated: the model adopts it. */
+  materialized?: Array<{ run: OpaqueRun; xml: string }>;
 }
 
 /** The package kind of a format plan, or null for the formats written from text. */
@@ -87,6 +91,9 @@ export function snapshotModel(model: OfficeModel): OfficeModel {
       kind: 'docx',
       paragraphs: [...model.paragraphs],
       ...(model.formats ? { formats: Object.fromEntries(Object.entries(model.formats).map(([index, format]) => [index, { ...format }])) } : {}),
+      // Runs are never mutated by an edit (every edit builds new ones), so the
+      // snapshot can share them; only the list itself is copied.
+      ...(model.blocks ? { blocks: model.blocks.slice() } : {}),
     };
     case 'pptx': return { kind: 'pptx', slides: model.slides.map((slide) => [...slide]) };
     case 'text': return { kind: 'text', text: model.text };
@@ -96,6 +103,7 @@ export function snapshotModel(model: OfficeModel): OfficeModel {
       active: model.active,
       delimiter: model.delimiter,
       ...(model.formulas ? { formulas: { ...model.formulas } } : {}),
+      ...(model.moved ? { moved: model.moved } : {}),
     };
   }
 }
@@ -116,6 +124,9 @@ export async function patchPackage(
     const archive = readRawZip(original);
     if (kind === 'docx') {
       if (baseline.kind !== 'docx' || current.kind !== 'docx') return null;
+      // The Writer's rich model (runs with their own formatting, stable paragraph
+      // ids) takes the run-aware path; the plain model keeps the original rules.
+      if (baseline.blocks && current.blocks) return await patchDocxRich(archive, baseline, current);
       return await patchDocx(archive, baseline, current);
     }
     if (kind === 'xlsx') {
@@ -135,7 +146,7 @@ function isSheets(model: OfficeModel): model is SheetsModel {
   return model.kind === 'xlsx' || model.kind === 'csv';
 }
 
-async function loadPart(archive: RawZip, name: string): Promise<{ bytes: Uint8Array; xml: string } | null> {
+export async function loadPart(archive: RawZip, name: string): Promise<{ bytes: Uint8Array; xml: string } | null> {
   const bytes = await entryData(archive, name);
   return bytes ? { bytes, xml: new TextDecoder().decode(bytes) } : null;
 }
@@ -163,7 +174,7 @@ export function textParts(text: string): TextPart[] {
 }
 
 /** Word keeps leading and trailing spaces only when `xml:space="preserve"` is set. */
-function textElement(tag: 'w:t' | 'a:t', open: string | null, value: string): string {
+export function textElement(tag: 'w:t' | 'a:t', open: string | null, value: string): string {
   let start = open ?? `<${tag} xml:space="preserve">`;
   if (!/xml:space\s*=/.test(start) && /^\s|\s$/.test(value)) start = `${start.slice(0, -1)} xml:space="preserve">`;
   return `${start}${xmlText(value)}</${tag}>`;
@@ -217,14 +228,14 @@ function textSequence(xml: string, anchor: XmlElement, parts: readonly TextPart[
  * instead of merely well-formed. Unknown children are treated as "after
  * everything", which keeps them at the end where they were.
  */
-const PPR_ORDER = [
+export const PPR_ORDER = [
   'pStyle', 'keepNext', 'keepLines', 'pageBreakBefore', 'framePr', 'widowControl', 'numPr', 'suppressLineNumbers',
   'pBdr', 'shd', 'tabs', 'suppressAutoHyphens', 'kinsoku', 'wordWrap', 'overflowPunct', 'topLinePunct',
   'autoSpaceDE', 'autoSpaceDN', 'bidi', 'adjustRightInd', 'snapToGrid', 'spacing', 'ind', 'contextualSpacing',
   'mirrorIndents', 'suppressOverlap', 'jc', 'textDirection', 'textAlignment', 'textboxTightWrap', 'outlineLvl',
   'divId', 'cnfStyle', 'rPr', 'sectPr', 'pPrChange',
 ];
-const RPR_ORDER = [
+export const RPR_ORDER = [
   'rStyle', 'rFonts', 'b', 'bCs', 'i', 'iCs', 'caps', 'smallCaps', 'strike', 'dstrike', 'outline', 'shadow',
   'emboss', 'imprint', 'noProof', 'snapToGrid', 'vanish', 'webHidden', 'color', 'spacing', 'w', 'kern',
   'position', 'sz', 'szCs', 'highlight', 'u', 'effect', 'bdr', 'shd', 'fitText', 'vertAlign', 'rtl', 'cs', 'em',
@@ -232,7 +243,7 @@ const RPR_ORDER = [
 ];
 
 /** Where a child with this name belongs inside a parent, per the schema order. */
-function insertPointIn(xml: string, parent: XmlElement, order: readonly string[], name: string): number {
+export function insertPointIn(xml: string, parent: XmlElement, order: readonly string[], name: string): number {
   const rank = (child: string): number => {
     const at = order.indexOf(child);
     return at < 0 ? order.length + 1 : at;
@@ -475,6 +486,8 @@ interface CellEdit {
   after: string;
   /** The canonical formula for `<f>` (without '='), or null for a plain value. */
   formula: string | null;
+  /** The formula is the file's own, unchanged: keep its `<f>` element exactly, refresh `<v>`. */
+  keepF?: boolean;
 }
 
 interface SharedStrings {
@@ -600,7 +613,8 @@ function locateCell(xml: string, doc: XmlDoc, rows: RowAt[], row: number, col: n
     // A gap the reader padded with an empty row. Adding the `<row>` is exact only
     // when every existing row is addressed by its own `r` attribute.
     const last = rows.reduce((max, candidate) => Math.max(max, candidate.index), -1);
-    if (row < 0 || row > last + 1) throw new Error('xlsx: that row is past the sheet');
+    if (row < 0) throw new Error('xlsx: a negative row');
+    void last;
     for (const candidate of rows) if (attr(xml, candidate.element, 'r') === null) throw new Error('xlsx: rows are not addressed by r');
     const sheetData = elements(doc, 'sheetData')[0];
     if (!sheetData) throw new Error('xlsx: the sheet has no <sheetData>');
@@ -640,14 +654,18 @@ function cellEditFor(xml: string, target: CellTarget, cell: CellEdit, shared: Sh
       }
     }
   }
-  if (cell.after === '' && cell.formula === null) {
+  if (cell.after === '' && cell.formula === null && !cell.keepF) {
     if (!element) return null;
     return { start: element.start, end: element.end, xml: '' };
   }
 
   let inner: string;
   let type: string | null;
-  if (cell.formula !== null) {
+  const ownF = cell.keepF && element ? element.children.find((c) => localName(c.name) === 'f') : undefined;
+  if (ownF) {
+    inner = `${xml.slice(ownF.start, ownF.end)}<v>${xmlText(cell.after)}</v>`;
+    type = cell.after.startsWith('#') ? 'e' : isNumericText(cell.after) || cell.after === '' ? null : 'str';
+  } else if (cell.formula !== null) {
     // The formula and its computed result: Excel sees the formula, opens the sheet
     // without recalculating, and the value is what this app shows.
     inner = `<f>${xmlText(cell.formula)}</f><v>${xmlText(cell.after)}</v>`;
@@ -684,13 +702,16 @@ function cellEditFor(xml: string, target: CellTarget, cell: CellEdit, shared: Sh
 
 async function patchXlsx(archive: RawZip, baseline: SheetsModel, current: SheetsModel): Promise<PatchResult | null> {
   if (baseline.grids.length !== current.grids.length) return null; // a sheet added or removed
+  if (current.moved) return null; // rows or columns were inserted or removed: cells moved
   const edits = new Map<number, CellEdit[]>();
   for (let s = 0; s < baseline.grids.length; s++) {
     const before = baseline.grids[s];
     const after = current.grids[s];
     if (!before || !after) return null;
-    // A row or a column added or removed is structural: the rebuild path owns it.
-    if (before.rows.length !== after.rows.length || gridWidth(before) !== gridWidth(after)) return null;
+    // Rows or columns inserted or removed are the rebuild path's (counted by `moved`
+    // above); a sheet that only grew past its end — typing below the data — is
+    // patched, and the read-back below proves nothing shifted.
+    if (after.rows.length < before.rows.length || gridWidth(after) < gridWidth(before)) return null;
     const cells: CellEdit[] = [];
     for (let r = 0; r < after.rows.length; r++) {
       const row = after.rows[r] ?? [];
@@ -702,13 +723,18 @@ async function patchXlsx(archive: RawZip, baseline: SheetsModel, current: Sheets
         // A cell needs rewriting when its value or its formula changed: a new formula
         // that happens to compute the same value still has to reach the file's `<f>`.
         if (beforeValue === afterValue && beforeFormula === afterFormula) continue;
-        const formula = afterFormula ? evaluateFormula(afterFormula, { ...after, rows: after.rows }).canonical : null;
-        cells.push({ row: r, col: c, after: afterValue, formula });
+        const parsed = afterFormula ? parseFormula(afterFormula) : null;
+        const formula = parsed && parsed.ok ? formatFormula(parsed.ast, { xlfn: true }) : null;
+        const keepF = !!afterFormula && beforeFormula === afterFormula;
+        if (afterFormula && formula === null && !keepF) return null;
+        cells.push({ row: r, col: c, after: afterValue, formula, keepF });
       }
     }
     if (cells.length) edits.set(s, cells);
   }
-  if (!edits.size) return { bytes: archive.bytes, changed: [] };
+  const grew = current.grids.some((g, i) => g.rows.length !== baseline.grids[i]?.rows.length || gridWidth(g) !== gridWidth(baseline.grids[i] as Grid));
+  // Empty rows or columns past the end have nothing a patch could write: the rebuild owns them.
+  if (!edits.size) return grew ? null : { bytes: archive.bytes, changed: [] };
 
   const paths = await sheetPaths(archive);
   if (!paths) return null;
@@ -742,6 +768,7 @@ async function patchXlsx(archive: RawZip, baseline: SheetsModel, current: Sheets
       const grid: Grid | undefined = current.grids[s];
       const read = sheets[s];
       if (!grid || !read || read.rows.length !== grid.rows.length) return null;
+      if (gridWidth({ ...grid, rows: read.rows }) !== gridWidth(grid)) return null;
       for (let r = 0; r < grid.rows.length; r++) {
         const width = Math.max(grid.rows[r]?.length ?? 0, read.rows[r]?.length ?? 0);
         for (let c = 0; c < width; c++) {

@@ -1,97 +1,88 @@
 /**
- * Office (المكتب) — the Word / Excel / PowerPoint editor.
+ * Office (المكتب) — Writer, spreadsheets and slides in one window.
  *
  * It is a **store-only** app: the manifest sets `defaultInstalled: false` and
- * `core: false`, so it appears in the Store as something the owner installs, and
- * the kernel treats `defaultInstalled === false` as "installed only after the
- * Store adds it" (`src/kernel/apps.ts:131`).
+ * `core: false`, so it appears in the Store as something the owner installs.
  *
- * What it is:
- *  • a reader for .docx/.xlsx/.pptx (through the viewer's dependency-free readers),
- *    plus .csv/.tsv/.txt/.md, that lets the owner change the text that was read;
- *  • a saver that **patches the original package**: only the parts the owner
- *    changed are rewritten (`word/document.xml`, the affected worksheet plus
- *    `xl/sharedStrings.xml`, the affected slide) and every other ZIP entry is
- *    copied byte-for-byte, so styles, images, headers and numbering survive. When
- *    a change cannot be expressed that way — a row or column added or removed —
- *    the app says so first and rebuilds the package, and the `.bak` keeps the
- *    previous bytes either way;
- *  • honest about everything it cannot do: the limits panel is generated from the
- *    same table the tests verify, not from prose that could drift.
+ * This file is the window: the app bar (file name, saved state, undo/redo, Save),
+ * the ribbon, the status bar, the start screen, and — unchanged in substance —
+ * the file lifecycle: open, the surgical save that patches the original package,
+ * the one-backup rule, revert, and the close guard. The editors themselves live in
+ * `writer/`, `grid/` and `impress/` and change the model only through `commit`.
  *
- * Safety rules that hold everywhere below:
+ * Safety rules that hold everywhere:
  *  • every piece of text is put into the DOM with `textContent` (or `value`),
  *    never as markup — a file's content is never HTML;
  *  • saving writes only inside /home/user, always keeps exactly one `.bak`,
- *    refuses when the model could not be read (so a damaged file is never
- *    overwritten by an empty one), and re-reads the file before it says it saved.
+ *    refuses when the model could not be read, and re-reads the file before it
+ *    says it saved.
  */
 import { manifest } from './manifest';
 import type { AppContext, AppModule } from '../../kernel/types';
 import { VFSError } from '../../kernel/types';
-import { basename, normalize } from '../../kernel/path';
-import { t } from '../../kernel/i18n';
+import { basename, dirname, normalize } from '../../kernel/path';
+import { getLocale, t } from '../../kernel/i18n';
 import { shellConfirm } from '../../shell/dialog';
-import { MAX_COLS, MAX_ROWS } from '../viewer/formats';
-import { columnName } from './xml';
+import { MAX_COLS, MAX_ROWS, readDocx } from '../viewer/formats';
 import {
-  History, VERIFIED_FORMATS, addColumnEdit, addRowEdit, canDeleteColumn, canDeleteRow,
-  clearTruncated, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit, gridAt, gridWidth, isTruncated,
-  paragraphEdit, paragraphFormatAt, paragraphFormatEdit, planFor, slideTextEdit, textEdit,
-  type CellState, type DeckModel, type DocModel, type Edit, type FormatPlan, type OfficeModel,
-  type ParagraphAlign, type ParagraphFormat, type SheetsModel, type SupportLevel, type TextModel,
+  History, VERIFIED_FORMATS, clearTruncated, emptyModel, isTruncated, planFor, textEdit,
+  type Edit, type FormatPlan, type OfficeModel, type SheetsModel, type SupportLevel,
 } from './model';
-import { computeFormulaCells, evaluateFormula } from './formula';
+import { computeSheets, parseFormula } from './formula/index';
 import { loadOfficeFile, serializeModel, type LoadRefusal } from './file';
 import { patchPackage, packageKind, snapshotModel, type PatchResult } from './patch';
 import { backupPathFor, saveWithBackup, withinHome } from './save';
+import { writePptx } from './pptx';
+import { writeDelimited } from './file';
+import type { Editor, EditorContext } from './editor';
+import { button, clamp, downloadBytes, el, NARROW_BREAKPOINT, observeSize } from './ui/dom';
+import { icon } from './ui/icons';
+import { closePopovers } from './ui/popover';
+import { Ribbon, type RibbonTab } from './ui/ribbon';
+import { printNodes } from './ui/print';
+import { readDocxDocument, type DocLook } from './writer/docxread';
+import { emptyDocxPackage, rebuildDocxRich } from './writer/docxpatch';
+import { blockText } from './writer/types';
+import { createWriter } from './writer/view';
+import { readBookLook, type BookLook } from './grid/xlsxlook';
+import { createSheet } from './grid/view';
+import { createDeck } from './impress/view';
+import { renderStart, rememberRecent, type NewKind } from './start';
 import './strings';
 import './office.css';
 
-/** The window builds at most this many rows/columns/paragraphs at a time. */
-const VIEW_ROWS = 300;
-const VIEW_COLS = 40;
-const VIEW_PARAGRAPHS = 400;
 /** A text buffer larger than this is refused: a textarea is not a file viewer. */
 const TEXT_LIMIT = 4 * 1024 * 1024;
-/** The font sizes the Word toolbar offers, in points. */
-const FONT_SIZES = [10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36];
 
 const KIND_LABEL: Record<string, string> = {
-  docx: 'office.kindDoc',
-  xlsx: 'office.kindSheet',
-  csv: 'office.kindCsv',
-  pptx: 'office.kindSlides',
-  text: 'office.kindText',
+  docx: 'office.kindDoc', xlsx: 'office.kindSheet', csv: 'office.kindCsv', pptx: 'office.kindSlides', text: 'office.kindText',
 };
 
 type RefusalView = LoadRefusal | 'outside' | 'toolarge';
-
 const REFUSAL_TITLE: Record<RefusalView, string> = {
-  legacy: 'office.legacyTitle',
-  unknown: 'office.unknownTitle',
-  binary: 'office.binaryTitle',
-  damaged: 'office.readErrorTitle',
-  outside: 'office.outsideTitle',
-  toolarge: 'office.tooLargeTitle',
+  legacy: 'office.legacyTitle', unknown: 'office.unknownTitle', binary: 'office.binaryTitle',
+  damaged: 'office.readErrorTitle', outside: 'office.outsideTitle', toolarge: 'office.tooLargeTitle',
 };
 const REFUSAL_BODY: Record<RefusalView, string> = {
-  legacy: 'office.legacyBody',
-  unknown: 'office.unknownBody',
-  binary: 'office.binaryBody',
-  damaged: 'office.readErrorBody',
-  outside: 'office.outsideBody',
-  toolarge: 'office.tooLargeBody',
+  legacy: 'office.legacyBody', unknown: 'office.unknownBody', binary: 'office.binaryBody',
+  damaged: 'office.readErrorBody', outside: 'office.outsideBody', toolarge: 'office.tooLargeBody',
 };
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
-  const node = document.createElement(tag);
-  if (cls) node.className = cls;
-  if (text !== undefined) node.textContent = text;
-  return node;
-}
+/** The shortcut table: the F1 sheet is generated from the same list the handler reads. */
+export const SHORTCUTS: ReadonlyArray<{ keys: string; label: string }> = [
+  { keys: 'Ctrl+S', label: 'office.save' },
+  { keys: 'Ctrl+Z', label: 'office.undo' },
+  { keys: 'Ctrl+Y / Ctrl+Shift+Z', label: 'office.redo' },
+  { keys: 'Ctrl+B', label: 'office.formatBold' },
+  { keys: 'Ctrl+I', label: 'office.formatItalic' },
+  { keys: 'Ctrl+U', label: 'office.formatUnderline' },
+  { keys: 'Ctrl+F', label: 'office.find' },
+  { keys: 'Ctrl+H', label: 'office.replace' },
+  { keys: 'Ctrl+P', label: 'office.print' },
+  { keys: 'F5', label: 'office.presentFromStart' },
+  { keys: 'F1', label: 'office.shortcuts' },
+];
 
-/** The extensions of one support level, as a comma-separated list for the UI. */
 function extList(level: SupportLevel): string {
   return VERIFIED_FORMATS.filter((f) => f.level === level).map((f) => f.ext).join(', ');
 }
@@ -99,247 +90,164 @@ function extList(level: SupportLevel): string {
 function launch(ctx: AppContext): void {
   const { sys, window: win, args } = ctx;
   const vfs = sys.vfs;
-  const filePath = args[0] ? normalize(args[0]) : null;
+  let filePath: string | null = args[0] ? normalize(args[0]) : null;
 
   let plan: FormatPlan = planFor(filePath ?? '');
   let model: OfficeModel | null = null;
   let editable = false;
   let busy = false;
   let closed = false;
-  /**
-   * What the file on disk looks like right now: its bytes, and the model they
-   * read as. A save patches the bytes and diffs the model, so an edit the owner
-   * did not make can never be rewritten. Both are refreshed after every save, so
-   * the base is always what is really on disk.
-   */
   let onDiskBytes: Uint8Array | null = null;
   let onDiskModel: OfficeModel | null = null;
-  /** The cell the sheet buttons act on; null until one is focused. */
-  let active: { row: number; col: number } | null = null;
-  /** The paragraph the Word formatting bar acts on; null until one is focused. */
-  let activePara: number | null = null;
+  let editor: Editor | null = null;
+  let docLook: DocLook | null = null;
+  let bookLook: BookLook | null = null;
+  let statusMessage = '';
   const history = new History();
+
+  /* ─────────────────────────────── frame ─────────────────────────────── */
 
   win.content.textContent = '';
   const root = el('div', 'faisal-office');
-  const bar = el('div', 'faisal-office-bar');
-  const info = el('div', 'faisal-office-info');
-  const nameEl = el('div', 'faisal-office-name', t('office.title'));
-  const metaEl = el('div', 'faisal-office-meta');
+  root.setAttribute('lang', getLocale());
+
+  const appbar = el('header', 'fo-appbar');
+  const brand = el('span', 'fo-appicon');
+  brand.append(icon('doc'));
+  const info = el('div', 'faisal-office-info fo-info');
+  const nameEl = el('div', 'faisal-office-name fo-docname', t('office.title'));
+  const metaEl = el('div', 'faisal-office-meta fo-docmeta');
   info.append(nameEl, metaEl);
+  const undoBtn = button('undo', t('office.undo'), () => undo());
+  const redoBtn = button('redo', t('office.redo'), () => redo());
+  const helpBtn = button('help', t('office.help'), () => toggleHelp());
+  const saveBtn = button('save', t('office.save'), () => { void save(); }, { primary: true, showLabel: true });
+  const actions = el('div', 'fo-appactions');
+  actions.append(undoBtn, redoBtn, helpBtn, saveBtn);
+  appbar.append(brand, info, actions);
 
-  function action(label: string, onClick: () => void, primary = false): HTMLButtonElement {
-    const b = el('button', `faisal-office-btn${primary ? ' is-primary' : ''}`, label);
-    b.type = 'button';
-    b.addEventListener('click', onClick);
-    return b;
-  }
-
-  const undoBtn = action(t('office.undo'), () => { undo(); });
-  const redoBtn = action(t('office.redo'), () => { redo(); });
-  const saveBtn = action(t('office.save'), () => { void save(); }, true);
-  const revertBtn = action(t('office.revert'), () => { void revert(); });
-  const actions = el('div', 'faisal-office-actions');
-  actions.append(undoBtn, redoBtn, saveBtn, revertBtn);
-  bar.append(info, actions);
-
-  const tools = el('div', 'faisal-office-tools');
-  const addRowBtn = action(t('office.addRow'), () => { addRow(); });
-  const addColumnBtn = action(t('office.addColumn'), () => { addColumn(); });
-  const deleteRowBtn = action(t('office.deleteRow'), () => { deleteRow(); });
-  const deleteColumnBtn = action(t('office.deleteColumn'), () => { deleteColumn(); });
-  const hint = el('span', 'faisal-office-hint', t('office.toolsHint'));
-  tools.append(addRowBtn, addColumnBtn, deleteRowBtn, deleteColumnBtn, hint);
-
-  /* ─────────────────── the paragraph formatting bar (Word) ─────────────────── */
-
-  const formatBar = el('div', 'faisal-office-format');
-  formatBar.setAttribute('role', 'toolbar');
-  formatBar.setAttribute('aria-label', t('office.formatBar'));
-
-  function formatButton(label: string, onPick: () => void): HTMLButtonElement {
-    const b = el('button', 'faisal-office-fbtn', label);
-    b.type = 'button';
-    b.setAttribute('aria-pressed', 'false');
-    b.addEventListener('click', onPick);
-    return b;
-  }
-
-  const boldBtn = formatButton(t('office.formatBold'), () => { toggleFormat('bold'); });
-  const italicBtn = formatButton(t('office.formatItalic'), () => { toggleFormat('italic'); });
-  const underlineBtn = formatButton(t('office.formatUnderline'), () => { toggleFormat('underline'); });
-
-  const sizeSelect = el('select', 'faisal-office-fsize');
-  sizeSelect.setAttribute('aria-label', t('office.formatSize'));
-  const defaultSize = el('option', undefined, t('office.formatSizeDefault'));
-  defaultSize.value = '';
-  sizeSelect.append(defaultSize);
-  for (const size of FONT_SIZES) {
-    const option = el('option', undefined, t('office.formatSizeValue', { n: size }));
-    option.value = String(size);
-    sizeSelect.append(option);
-  }
-  sizeSelect.addEventListener('change', () => {
-    applyFormat({ size: sizeSelect.value === '' ? null : Number(sizeSelect.value) });
-  });
-
-  const alignButtons = ([
-    ['right', t('office.formatAlignRight')],
-    ['center', t('office.formatAlignCenter')],
-    ['left', t('office.formatAlignLeft')],
-    ['justify', t('office.formatAlignJustify')],
-  ] as Array<[ParagraphAlign, string]>).map(([align, label]) => {
-    const b = formatButton(label, () => { chooseAlign(align); });
-    b.dataset.align = align;
-    return b;
-  });
-
-  const formatHint = el('span', 'faisal-office-hint', t('office.formatHint'));
-  formatBar.append(boldBtn, italicBtn, underlineBtn, sizeSelect, ...alignButtons, formatHint);
-
-  const noteEl = el('div', 'faisal-office-notice');
+  const ribbon = new Ribbon({ more: t('office.more'), tabs: t('office.ribbon') });
+  const noteEl = el('div', 'faisal-office-notice fo-banner');
   noteEl.setAttribute('role', 'note');
   noteEl.hidden = true;
-  const contentHost = el('div', 'faisal-office-body');
-  const limits = buildLimits();
-  const statusEl = el('div', 'faisal-office-status');
+  const contentHost = el('div', 'faisal-office-body fo-body');
+
+  const statusBar = el('footer', 'fo-statusbar');
+  const statusParts = el('div', 'fo-status-parts');
+  const statusEl = el('div', 'faisal-office-status fo-status-msg');
   statusEl.setAttribute('role', 'status');
   statusEl.setAttribute('aria-live', 'polite');
-  const pathEl = el('div', 'faisal-office-path', filePath ?? '');
+  const zoomBox = el('div', 'fo-zoom');
+  const zoomOut = button('minus', t('office.zoomOut'), () => zoomBy(-0.1));
+  const zoomLabel = el('span', 'fo-zoom-value');
+  const zoomIn = button('plus', t('office.zoomIn'), () => zoomBy(0.1));
+  zoomBox.append(zoomOut, zoomLabel, zoomIn);
+  const pathEl = el('div', 'faisal-office-path fo-path', filePath ?? '');
   pathEl.dir = 'ltr';
-  const footer = el('div', 'faisal-office-footer');
-  footer.append(statusEl, pathEl);
+  statusBar.append(statusParts, statusEl, pathEl, zoomBox);
 
-  root.append(bar, tools, formatBar, noteEl, contentHost, limits, footer);
+  const help = buildHelp();
+  root.append(appbar, ribbon.element, noteEl, contentHost, ribbon.phoneBar, statusBar, help);
   win.content.append(root);
 
-  /* ─────────────────────────── the limits panel ─────────────────────────── */
+  const narrowObserver = observeSize(root, () => {
+    root.classList.toggle('is-narrow', root.clientWidth > 0 && root.clientWidth < NARROW_BREAKPOINT);
+  });
+  // A roomy window for a document editor on a desktop screen.
+  try {
+    if (window.innerWidth >= 1024 && win.content.clientWidth > 0 && win.content.clientWidth < 820) sys.wm?.toggleMaximize(win.id);
+  } catch { /* no window manager here (tests) */ }
 
-  function buildLimits(): HTMLElement {
+  function buildHelp(): HTMLElement {
+    const panel = el('div', 'fo-help');
+    panel.hidden = true;
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', t('office.help'));
+    const head = el('div', 'fo-panel-head');
+    head.append(el('h2', 'fo-panel-title', t('office.help')), button('close', t('office.closePanel'), () => toggleHelp(false)));
+    const body = el('div', 'fo-panel-body');
+    body.append(el('h3', 'fo-section-title', t('office.shortcuts')));
+    const keys = el('dl', 'fo-keys');
+    for (const s of SHORTCUTS) keys.append(el('dt', undefined, s.keys), el('dd', undefined, t(s.label)));
+    body.append(keys);
     const details = el('details', 'faisal-office-limits');
     details.append(el('summary', 'faisal-office-summary', t('office.limitsTitle')));
-    const body = el('div', 'faisal-office-limits-body');
-    const rows: Array<[string, Record<string, string | number>?]> = [
-      ['office.limitFormulas'],
-      ['office.limitFormulaEngine'],
-      ['office.limitStyling'],
-      ['office.limitRewrite'],
-      ['office.limitImages'],
-      ['office.limitLegacy'],
-      ['office.limitTruncated', { rows: MAX_ROWS, cols: MAX_COLS }],
-      ['office.limitSlideBlank'],
-      ['office.limitText'],
-      ['office.limitBackup'],
-    ];
     const list = el('ul', 'faisal-office-limitlist');
-    for (const [key, vars] of rows) list.append(el('li', undefined, t(key, vars)));
-    body.append(list, el('div', 'faisal-office-blocktitle', t('office.formatsTitle')));
+    for (const [key, vars] of [
+      ['office.limitFormulas'], ['office.limitFormulaEngine'], ['office.limitStyling'], ['office.limitRewrite'], ['office.limitImages'],
+      ['office.limitLegacy'], ['office.limitTruncated', { rows: MAX_ROWS, cols: MAX_COLS }], ['office.limitSlideBlank'], ['office.limitText'], ['office.limitBackup'],
+    ] as Array<[string, Record<string, number>?]>) list.append(el('li', undefined, t(key, vars)));
     const formats = el('ul', 'faisal-office-formatlist');
     formats.append(el('li', undefined, t('office.formatsEdit', { list: extList('edit') })));
     formats.append(el('li', undefined, t('office.formatsReadOnly', { list: extList('read-only') })));
     formats.append(el('li', undefined, t('office.formatsUnsupported', { list: extList('unsupported') })));
-    body.append(formats);
-    details.append(body);
-    return details;
+    details.append(list, el('div', 'faisal-office-blocktitle', t('office.formatsTitle')), formats);
+    body.append(details);
+    panel.append(head, body);
+    panel.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); toggleHelp(false); } });
+    return panel;
+  }
+
+  function toggleHelp(force?: boolean): void {
+    help.hidden = force === undefined ? !help.hidden : !force;
+    if (!help.hidden) help.querySelector<HTMLElement>('button')?.focus();
+    else helpBtn.focus({ preventScroll: true });
   }
 
   /* ─────────────────────────────── state ─────────────────────────────── */
 
-  function setStatus(text: string): void { statusEl.textContent = text; }
-
-  function setNote(text: string): void {
-    noteEl.textContent = text;
-    noteEl.hidden = !text;
-  }
-
+  function setStatus(text: string): void { statusMessage = text; statusEl.textContent = text; }
+  function setNote(text: string): void { noteEl.textContent = text; noteEl.hidden = !text; }
   function errorMessage(err: unknown): string {
     if (err instanceof VFSError) return `${err.code}: ${err.path}`;
     return err instanceof Error ? err.message : String(err);
   }
-
-  /** Byte equality: what the read-back after a save is for. */
   function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
     if (a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
     return true;
   }
 
-  function isSheets(m: OfficeModel | null): m is SheetsModel {
-    return !!m && (m.kind === 'xlsx' || m.kind === 'csv');
+  function syncStatus(): void {
+    const info2 = editor?.status();
+    statusParts.replaceChildren(...(info2?.parts ?? []).map((p) => el('span', 'fo-status-part', p)));
+    const zoom = info2?.zoom;
+    zoomBox.hidden = !zoom;
+    if (zoom) zoomLabel.textContent = `${Math.round(zoom.value * 100)}%`;
+    statusEl.textContent = statusMessage;
   }
 
-  function syncTools(): void {
-    const sheets = isSheets(model) ? model : null;
-    tools.hidden = !sheets || !editable;
-    if (!sheets) return;
-    const at = active;
-    addRowBtn.disabled = busy;
-    addColumnBtn.disabled = busy;
-    deleteRowBtn.disabled = busy || !at || !canDeleteRow(sheets, sheets.active);
-    deleteColumnBtn.disabled = busy || !at || !canDeleteColumn(sheets, sheets.active);
-  }
-
-  /* ──────────────────────── paragraph formatting state ──────────────────────── */
-
-  /** The formatting chosen for the focused paragraph (empty when there is none). */
-  function currentFormat(): ParagraphFormat {
-    return model && activePara !== null ? paragraphFormatAt(model, activePara) : {};
-  }
-
-  /** Records one formatting change on the focused paragraph, as one undoable step. */
-  function applyFormat(change: ParagraphFormat): void {
-    if (!model || model.kind !== 'docx' || activePara === null) return;
-    const before = model.formats?.[activePara];
-    commit(paragraphFormatEdit(activePara, before, { ...(before ?? {}), ...change }));
-  }
-
-  function toggleFormat(key: 'bold' | 'italic' | 'underline'): void {
-    const on = currentFormat()[key] !== true;
-    applyFormat(key === 'bold' ? { bold: on } : key === 'italic' ? { italic: on } : { underline: on });
-  }
-
-  /** Alignment is a choice: pressing the active one gives the property back to the file. */
-  function chooseAlign(align: ParagraphAlign): void {
-    applyFormat({ align: currentFormat().align === align ? null : align });
-  }
-
-  function syncFormatBar(): void {
-    const word = !!model && model.kind === 'docx';
-    formatBar.hidden = !word || !editable;
-    if (!word) return;
-    const format = currentFormat();
-    boldBtn.setAttribute('aria-pressed', String(format.bold === true));
-    italicBtn.setAttribute('aria-pressed', String(format.italic === true));
-    underlineBtn.setAttribute('aria-pressed', String(format.underline === true));
-    sizeSelect.value = typeof format.size === 'number' ? String(format.size) : '';
-    for (const button of alignButtons) button.setAttribute('aria-pressed', String(format.align === button.dataset.align));
-    const ready = activePara !== null && !busy;
-    for (const button of [boldBtn, italicBtn, underlineBtn, ...alignButtons]) button.disabled = !ready;
-    sizeSelect.disabled = !ready;
-    formatHint.hidden = activePara !== null;
+  function zoomBy(step: number): void {
+    const zoom = editor?.status().zoom;
+    if (zoom) zoom.set(clamp(zoom.value + step, 0.5, 2));
+    syncStatus();
   }
 
   function syncBar(): void {
     const name = filePath ? basename(filePath) : t('office.title');
     nameEl.textContent = name;
     nameEl.title = filePath ?? '';
-    const parts = [t(KIND_LABEL[plan.kind ?? ''] ?? 'office.kindOther')];
+    const parts: string[] = [];
+    if (filePath) parts.push(t(KIND_LABEL[plan.kind ?? ''] ?? 'office.kindOther'));
     if (plan.readOnly) parts.push(t('office.readOnlyBadge'));
-    parts.push(history.dirty ? t('office.dirty') : t('office.clean'));
+    if (filePath) parts.push(history.dirty ? t('office.dirty') : t('office.clean'));
     if (model && isTruncated(model)) parts.push(t('office.truncatedBadge'));
     metaEl.textContent = parts.join(' · ');
+    root.classList.toggle('is-dirty', history.dirty);
     win.setTitle(`${history.dirty ? '● ' : ''}${name} — ${t('office.title')}`);
     undoBtn.disabled = !model || history.undoSteps === 0;
     redoBtn.disabled = !model || history.redoSteps === 0;
     saveBtn.disabled = !model || !editable || busy;
-    revertBtn.disabled = busy || !filePath;
-    syncTools();
-    syncFormatBar();
+    const kind = model?.kind;
+    brand.replaceChildren(icon(kind === 'xlsx' || kind === 'csv' ? 'sheet' : kind === 'pptx' ? 'slides' : 'doc'));
+    brand.className = `fo-appicon is-${kind === 'xlsx' || kind === 'csv' ? 'sheet' : kind === 'pptx' ? 'slides' : 'doc'}`;
+    ribbon.sync();
+    syncStatus();
   }
 
   /** Every formula's value follows the values it reads, on every model change. */
   function recompute(m: OfficeModel): OfficeModel {
-    return m.kind === 'xlsx' || m.kind === 'csv' ? computeFormulaCells(m) : m;
+    return m.kind === 'xlsx' || m.kind === 'csv' ? computeSheets(m) : m;
   }
 
   function commit(edit: Edit): void {
@@ -348,274 +256,154 @@ function launch(ctx: AppContext): void {
     history.push(edit);
     syncBar();
   }
-
   function undo(): void {
     if (!model || history.undoSteps === 0) return;
     model = recompute(history.undo(model));
-    render();
+    editor?.render();
+    syncBar();
   }
-
   function redo(): void {
     if (!model || history.redoSteps === 0) return;
     model = recompute(history.redo(model));
-    render();
+    editor?.render();
+    syncBar();
   }
 
-  /* ─────────────────────────── sheet buttons ─────────────────────────── */
+  /* ─────────────────────────────── editors ─────────────────────────────── */
 
-  function addRow(): void {
-    if (!isSheets(model)) return;
-    const grid = gridAt(model, model.active);
-    if (!grid) return;
-    commit(addRowEdit(model.active, grid.rows.length));
-    render();
+  const editorCtx: EditorContext = {
+    model: () => model,
+    commit,
+    undo,
+    redo,
+    editable: () => editable && !busy,
+    refresh: () => { ribbon.sync(); syncStatus(); },
+    setStatus,
+    host: () => root,
+    filePath: () => filePath,
+    fileTab,
+    exportFile,
+    print: (content, css) => printNodes(content, css, filePath ? basename(filePath) : t('office.title')),
+  };
+
+  function fileTab(): RibbonTab {
+    const kind = model?.kind;
+    const writer = editor as (Editor & { printDoc?: () => void; exportHtml?: () => void; exportMd?: () => void }) | null;
+    return {
+      id: 'file', label: t('office.tabFile'), groups: [
+        {
+          label: t('office.groupFile'), controls: [
+            { type: 'button', id: 'new', icon: 'plus', label: t('office.newFile'), showLabel: true, run: () => { void goStart(); } },
+            { type: 'button', id: 'opendevice', icon: 'upload', label: t('office.openDevice'), showLabel: true, run: openDevice },
+            { type: 'button', id: 'save2', icon: 'save', label: t('office.saveNow'), showLabel: true, enabled: () => !!model && editable && !busy, run: () => { void save(); } },
+            { type: 'button', id: 'revert', icon: 'revert', label: t('office.revert'), showLabel: true, enabled: () => !busy && !!filePath, run: () => { void revert(); } },
+          ],
+        },
+        {
+          label: t('office.groupExport'), controls: [
+            { type: 'button', id: 'print', icon: 'print', label: t('office.print'), showLabel: true, enabled: () => !!model, run: printCurrent },
+            { type: 'button', id: 'pdf', icon: 'pdf', label: t('office.exportPdf'), showLabel: true, enabled: () => !!model, run: printCurrent },
+            ...(kind === 'docx' ? [
+              { type: 'button' as const, id: 'html', icon: 'doc' as const, label: t('office.exportHtml'), showLabel: true, run: () => writer?.exportHtml?.() },
+              { type: 'button' as const, id: 'md', icon: 'draft' as const, label: t('office.exportMd'), showLabel: true, run: () => writer?.exportMd?.() },
+            ] : []),
+            ...(kind === 'xlsx' ? [{ type: 'button' as const, id: 'csv', icon: 'csv' as const, label: t('office.exportCsv'), showLabel: true, run: exportCsv }] : []),
+          ],
+        },
+      ],
+    };
   }
 
-  function addColumn(): void {
-    if (!isSheets(model)) return;
-    const grid = gridAt(model, model.active);
-    if (!grid) return;
-    commit(addColumnEdit(model.active, gridWidth(grid)));
-    render();
+  function printCurrent(): void {
+    const writer = editor as (Editor & { printDoc?: () => void }) | null;
+    if (writer?.printDoc) { writer.printDoc(); return; }
+    if (!model) return;
+    const box = el('div');
+    if (model.kind === 'xlsx' || model.kind === 'csv') {
+      const grid = model.grids[model.active];
+      const table = el('table');
+      for (const row of grid?.rows ?? []) {
+        const tr = el('tr');
+        for (const cell of row) { const td = el('td', undefined, cell); td.dir = 'auto'; tr.append(td); }
+        table.append(tr);
+      }
+      box.append(table);
+      printNodes(box, 'table{border-collapse:collapse;font:10pt Calibri,Arial,sans-serif}td{border:1px solid #999;padding:2px 6px}', basename(filePath ?? ''));
+    } else if (model.kind === 'pptx') {
+      for (const slide of model.slides) {
+        const page = el('section');
+        slide.forEach((p, i) => { const n = el(i === 0 ? 'h1' : 'p', undefined, p); n.dir = 'auto'; page.append(n); });
+        box.append(page);
+      }
+      printNodes(box, '@page{size:landscape}section{break-after:page;font-family:Calibri,Arial,sans-serif}h1{font-size:32pt}p{font-size:18pt}', basename(filePath ?? ''));
+    } else if (model.kind === 'text') {
+      const pre = el('pre', undefined, model.text);
+      box.append(pre);
+      printNodes(box, 'pre{white-space:pre-wrap;font:11pt monospace}', basename(filePath ?? ''));
+    }
   }
 
-  function deleteRow(): void {
-    const at = active;
-    if (!isSheets(model) || !at) return;
-    const grid = gridAt(model, model.active);
-    if (!grid || !grid.rows[at.row]) return;
-    const sheet = model.active;
-    commit(deleteRowEdit(sheet, at.row, grid.rows[at.row]));
-    const last = grid.rows.length - 2; // one row is gone
-    if (at.row > last) active = { ...at, row: Math.max(0, last) };
-    render();
+  function exportCsv(): void {
+    if (!model || (model.kind !== 'xlsx' && model.kind !== 'csv')) return;
+    void exportFile(writeDelimited(model.grids[model.active]?.rows ?? [], ','), 'csv', 'text/csv');
   }
 
-  function deleteColumn(): void {
-    const at = active;
-    if (!isSheets(model) || !at) return;
-    const grid = gridAt(model, model.active);
-    if (!grid) return;
-    const sheet = model.active;
-    commit(deleteColumnEdit(sheet, at.col, grid.rows.map((r) => r[at.col] ?? '')));
-    const last = gridWidth(grid) - 2;
-    if (at.col > last) active = { ...at, col: Math.max(0, last) };
-    render();
+  async function uniquePath(dir: string, base: string, ext: string): Promise<string> {
+    let n = 0;
+    for (;;) {
+      const candidate = `${dir}/${base}${n ? ` (${n})` : ''}.${ext}`;
+      if (!(await vfs.exists(candidate))) return candidate;
+      n++;
+    }
   }
 
-  /* ───────────────────────────── rendering ───────────────────────────── */
-
-  function grow(area: HTMLTextAreaElement): void {
-    // jsdom reports scrollHeight 0; the explicit height is a convenience only.
-    area.style.height = 'auto';
-    area.style.height = `${Math.min(area.scrollHeight || 0, 480)}px`;
+  async function exportFile(data: Uint8Array | string, ext: string, mime: string): Promise<void> {
+    const dir = filePath ? dirname(filePath) : '/home/user/Documents';
+    const base = filePath ? basename(filePath).replace(/\.[^.]+$/, '') : t('office.untitled');
+    try {
+      const target = await uniquePath(dir, base, ext);
+      await vfs.writeFile(target, data);
+      downloadBytes(data, basename(target), mime);
+      setStatus(t('office.exported', { name: basename(target) }));
+    } catch (err) {
+      setStatus(t('office.exportFailed', { message: errorMessage(err) }));
+    }
   }
 
-  function textField(value: string, onInput: (area: HTMLTextAreaElement) => void): HTMLTextAreaElement {
-    const area = el('textarea', 'faisal-office-para');
-    area.value = value;
-    area.rows = 1;
+  function mountEditor(): void {
+    editor?.dispose();
+    editor = null;
+    if (!model) return;
+    switch (model.kind) {
+      case 'docx': editor = createWriter(editorCtx, docLook); break;
+      case 'xlsx': case 'csv': editor = createSheet(editorCtx, bookLook); break;
+      case 'pptx': editor = createDeck(editorCtx); break;
+      default: editor = createTextEditor(); break;
+    }
+    contentHost.replaceChildren(editor.element);
+    ribbon.setTabs(editor.tabs(), model.kind === 'pptx' ? 'home' : 'home');
+    root.dataset.kind = model.kind;
+    editor.render();
+  }
+
+  function createTextEditor(): Editor {
+    const area = el('textarea', 'faisal-office-text fo-textedit');
     area.dir = 'auto';
     area.spellcheck = false;
-    area.readOnly = !editable;
-    grow(area);
-    area.addEventListener('input', () => { grow(area); onInput(area); });
-    return area;
-  }
-
-  function renderDoc(m: DocModel): HTMLElement {
-    const wrap = el('div', 'faisal-office-doc');
-    const shown = Math.min(m.paragraphs.length, VIEW_PARAGRAPHS);
-    for (let i = 0; i < shown; i++) {
-      const row = el('div', 'faisal-office-para-row');
-      row.append(el('span', 'faisal-office-para-index', t('office.paragraphLabel', { n: i + 1 })));
-      const area = textField(m.paragraphs[i] ?? '', (field) => {
-        if (model?.kind !== 'docx') return;
-        const before = model.paragraphs[i] ?? '';
-        if (before !== field.value) commit(paragraphEdit(i, before, field.value));
-      });
-      // The formatting bar acts on the paragraph the owner is in.
-      area.addEventListener('focus', () => { activePara = i; syncFormatBar(); });
-      row.append(area);
-      wrap.append(row);
-    }
-    if (m.paragraphs.length > shown) {
-      wrap.append(el('div', 'faisal-office-more', t('office.moreParagraphs', { n: shown })));
-    }
-    return wrap;
-  }
-
-  function renderDeck(m: DeckModel): HTMLElement {
-    const list = el('div', 'faisal-office-slides');
-    m.slides.forEach((paragraphs, slide) => {
-      const section = el('section', 'faisal-office-slide');
-      section.append(el('h3', 'faisal-office-slidehead', t('office.slide', { n: slide + 1 })));
-      if (!paragraphs.length) section.append(el('p', 'faisal-office-note', t('office.emptySlide')));
-      paragraphs.forEach((text, index) => {
-        section.append(textField(text, (area) => {
-          if (model?.kind !== 'pptx') return;
-          const before = model.slides[slide]?.[index] ?? '';
-          if (before !== area.value) commit(slideTextEdit(slide, index, before, area.value));
-        }));
-      });
-      list.append(section);
-    });
-    return list;
-  }
-
-  function renderText(m: TextModel): HTMLElement {
-    const area = el('textarea', 'faisal-office-text');
-    area.value = m.text;
-    area.dir = 'auto';
-    area.spellcheck = false;
-    area.readOnly = !editable;
+    area.setAttribute('aria-label', t('office.kindText'));
     area.addEventListener('input', () => {
       if (model?.kind !== 'text') return;
-      const before = model.text;
-      if (before !== area.value) commit(textEdit(before, area.value));
+      if (model.text !== area.value) commit(textEdit(model.text, area.value));
     });
-    return area;
-  }
-
-  /** A cell's value together with its formula, when it has one. */
-  function cellStateAt(sheet: number, row: number, col: number): CellState {
-    if (!model) return { value: '' };
-    const value = gridAt(model, sheet)?.rows[row]?.[col] ?? '';
-    const formula = formulaAt(model, sheet, row, col);
-    return formula ? { value, formula } : { value };
-  }
-
-  /** Names the focused formula's computed result in the status line. */
-  function showFormulaResult(): void {
-    if (!model || model.kind !== 'xlsx' || !active) return;
-    const formula = formulaAt(model, model.active, active.row, active.col);
-    if (!formula) return;
-    setStatus(t('office.formulaResult', { value: cellStateAt(model.active, active.row, active.col).value }));
-  }
-
-  /**
-   * A cell's input. A formula (`=…`) is computed at once: the grid gets the result
-   * and the model keeps the canonical formula, which the save writes into `<f>`.
-   * Text that only looks like a half-typed formula is stored as it is typed, never
-   * as a fake result.
-   */
-  function commitCell(sheet: number, row: number, col: number, input: HTMLInputElement): void {
-    if (!model || !isSheets(model) || !gridAt(model, sheet)) return;
-    active = { row, col }; // the cell being typed in is the active one
-    const before = cellStateAt(sheet, row, col);
-    const typed = input.value;
-    let after: CellState;
-    if (model.kind === 'xlsx' && typed.trimStart().startsWith('=')) {
-      const grid = gridAt(model, sheet);
-      const outcome = grid ? evaluateFormula(typed.trim(), grid, { row, col }) : null;
-      after = outcome?.ok && outcome.canonical
-        ? { value: outcome.value, formula: `=${outcome.canonical}` }
-        : { value: typed };
-    } else {
-      after = { value: typed };
-    }
-    if (after.value === before.value && (after.formula ?? null) === (before.formula ?? null)) return;
-    commit(formulaCellEdit(sheet, row, col, before, after));
-    showFormulaResult();
-  }
-
-  function renderSheets(m: SheetsModel): HTMLElement {
-    const wrap = el('div', 'faisal-office-sheets');
-    const sheet = m.active >= 0 && m.active < m.grids.length ? m.active : 0;
-    if (m.grids.length > 1) {
-      const tabs = el('div', 'faisal-office-tabs');
-      tabs.setAttribute('role', 'tablist');
-      tabs.setAttribute('aria-label', t('office.formatsTitle'));
-      m.grids.forEach((grid, i) => {
-        const tab = action(grid.name, () => {
-          if (!isSheets(model)) return;
-          model.active = i;
-          active = null;
-          render();
-        });
-        tab.className = 'faisal-office-tab';
-        tab.setAttribute('role', 'tab');
-        tab.setAttribute('aria-selected', String(i === sheet));
-        tabs.append(tab);
-      });
-      wrap.append(tabs);
-    }
-
-    const grid = m.grids[sheet];
-    if (!grid) {
-      wrap.append(el('div', 'faisal-office-note', t('office.emptyNote')));
-      return wrap;
-    }
-    const width = Math.max(1, Math.min(gridWidth(grid), VIEW_COLS));
-    const shownRows = Math.min(grid.rows.length, VIEW_ROWS);
-    const scroll = el('div', 'faisal-office-gridwrap');
-    // Spreadsheets keep column order left-to-right even in Arabic: A1 is A1.
-    scroll.dir = 'ltr';
-    const table = el('table', 'faisal-office-table');
-    const thead = el('thead');
-    const headRow = el('tr');
-    headRow.append(el('th', 'faisal-office-corner', ''));
-    for (let c = 0; c < width; c++) headRow.append(el('th', 'faisal-office-colhead', columnName(c)));
-    thead.append(headRow);
-    const tbody = el('tbody');
-    for (let r = 0; r < shownRows; r++) {
-      const tr = el('tr');
-      tr.append(el('th', 'faisal-office-rowhead', String(r + 1)));
-      for (let c = 0; c < width; c++) {
-        const cell = el('td', 'faisal-office-celld');
-        const input = el('input', 'faisal-office-cell');
-        input.type = 'text';
-        input.dir = 'auto';
-        input.spellcheck = false;
-        input.readOnly = !editable;
-        // A cell with a formula shows the formula; its computed value is in the
-        // grid and in the saved file, and the status line names it.
-        input.value = formulaAt(m, sheet, r, c) ?? grid.rows[r]?.[c] ?? '';
-        input.dataset.r = String(r);
-        input.dataset.c = String(c);
-        input.setAttribute('aria-label', `${columnName(c)}${r + 1}`);
-        input.addEventListener('focus', () => { active = { row: r, col: c }; showFormulaResult(); syncTools(); });
-        input.addEventListener('input', () => { commitCell(sheet, r, c, input); });
-        cell.append(input);
-        tr.append(cell);
-      }
-      tbody.append(tr);
-    }
-    table.append(thead, tbody);
-    scroll.append(table);
-    wrap.append(scroll);
-
-    // Two different limits, said differently: the reader's cut is permanent for the
-    // model, the window's cut is only about what is drawn.
-    if (grid.truncated) wrap.append(el('div', 'faisal-office-more', t('office.cutNote', { rows: MAX_ROWS, cols: MAX_COLS })));
-    else if (grid.rows.length > shownRows || gridWidth(grid) > width) {
-      wrap.append(el('div', 'faisal-office-more', t('office.viewLimit', { rows: shownRows, cols: width })));
-    }
-    return wrap;
-  }
-
-  function bodyFor(m: OfficeModel): HTMLElement {
-    switch (m.kind) {
-      case 'docx': return renderDoc(m);
-      case 'pptx': return renderDeck(m);
-      case 'text': return renderText(m);
-      default: return renderSheets(m);
-    }
-  }
-
-  function focusActive(): void {
-    const at = active;
-    if (!at) return;
-    const input = contentHost.querySelector<HTMLInputElement>(`input[data-r="${at.row}"][data-c="${at.col}"]`);
-    input?.focus();
-  }
-
-  function render(): void {
-    if (!model) return;
-    const keepFocus = contentHost.contains(document.activeElement);
-    contentHost.replaceChildren(bodyFor(model));
-    if (keepFocus) focusActive();
-    syncBar();
+    const wrap = el('div', 'fo-textwrap');
+    wrap.append(area);
+    return {
+      element: wrap,
+      tabs: () => [fileTab()],
+      render: () => { if (model?.kind === 'text') area.value = model.text; area.readOnly = !editable; },
+      status: () => ({ parts: model?.kind === 'text' ? [t('office.statusChars', { n: model.text.length })] : [] }),
+      dispose: () => undefined,
+    };
   }
 
   /* ─────────────────────────── refusal screens ─────────────────────────── */
@@ -623,32 +411,76 @@ function launch(ctx: AppContext): void {
   function showRefusal(kind: RefusalView): void {
     model = null;
     editable = false;
-    active = null;
-    activePara = null;
     onDiskBytes = null;
     onDiskModel = null;
-    const card = el('div', 'faisal-office-card');
-    card.append(el('div', 'faisal-office-card-title', t(REFUSAL_TITLE[kind])));
-    const vars = kind === 'unknown'
-      ? { edit: extList('edit'), read: extList('read-only') }
-      : undefined;
+    editor?.dispose();
+    editor = null;
+    const card = el('div', 'faisal-office-card fo-refusal');
+    const art = el('span', 'fo-refusal-art');
+    art.append(icon('info', 32));
+    card.append(art, el('div', 'faisal-office-card-title', t(REFUSAL_TITLE[kind])));
+    const vars = kind === 'unknown' ? { edit: extList('edit'), read: extList('read-only') } : undefined;
     card.append(el('p', 'faisal-office-card-text', t(REFUSAL_BODY[kind], vars)));
+    const back = button('back', t('office.backToStart'), () => { void goStart(); }, { showLabel: true });
+    card.append(back);
     contentHost.replaceChildren(card);
+    ribbon.setTabs([fileTab()], 'file');
     setNote('');
     syncBar();
   }
 
   /* ──────────────────────────────── load ──────────────────────────────── */
 
+  /** Adds what the editors need beyond the plain model: runs and look for Word, look and stored formulas for Excel. */
+  async function enrich(m: OfficeModel, bytes: Uint8Array): Promise<OfficeModel> {
+    docLook = null;
+    bookLook = null;
+    if (m.kind === 'docx' && bytes.length) {
+      try {
+        const read = await readDocxDocument(bytes);
+        const texts = await readDocx(bytes);
+        const same = read.blocks.length === texts.length && read.blocks.every((b, i) => blockText(b) === texts[i]);
+        if (same) {
+          docLook = read.look;
+          return { kind: 'docx', paragraphs: texts, blocks: read.blocks, ...(Object.keys(read.formats).length ? { formats: read.formats } : {}) };
+        }
+      } catch { /* the plain paragraphs still edit and save */ }
+      return { kind: 'docx', paragraphs: m.paragraphs, blocks: m.paragraphs.map((text, id) => ({ id, runs: [{ t: 'text', text, props: {} }] })), ...(m.formats ? { formats: m.formats } : {}) };
+    }
+    if (m.kind === 'docx') {
+      return { kind: 'docx', paragraphs: m.paragraphs, blocks: m.paragraphs.map((text, id) => ({ id, runs: [{ t: 'text', text, props: {} }] })) };
+    }
+    if (m.kind === 'xlsx' && bytes.length) {
+      try {
+        bookLook = await readBookLook(bytes);
+        // The file's own formulas this app can compute join the model, so totals show even
+        // when the file stored no cached value; the rest stay as the values Excel saved.
+        const formulas: Record<string, string> = { ...(m.formulas ?? {}) };
+        bookLook.sheets.forEach((sheet, s) => {
+          const grid = m.grids[s];
+          if (!grid) return;
+          for (const [key, formula] of sheet.formulas) {
+            const [r, c] = key.split(':').map(Number);
+            if (parseFormula(formula).ok) formulas[`${s}:${r}:${c}`] = formula;
+          }
+        });
+        if (Object.keys(formulas).length) return { ...m, formulas } as SheetsModel;
+      } catch { bookLook = null; }
+    }
+    return m;
+  }
+
   async function open(): Promise<void> {
     if (!filePath) return;
+    pathEl.textContent = filePath;
     if (!withinHome(filePath)) { showRefusal('outside'); return; }
     plan = planFor(filePath);
     model = null;
     editable = false;
-    active = null;
     history.reset();
-    contentHost.replaceChildren(el('div', 'faisal-office-note', t('office.loading')));
+    const loading = el('div', 'fo-loading');
+    loading.append(el('span', 'fo-spinner'), el('span', undefined, t('office.loading')));
+    contentHost.replaceChildren(loading);
     setStatus(t('office.loading'));
     setNote('');
     syncBar();
@@ -670,37 +502,109 @@ function launch(ctx: AppContext): void {
     if (!result.ok) { showRefusal(result.refusal); return; }
 
     plan = result.plan;
-    model = result.model;
-    // The archive and the model it reads as: the base a surgical save patches.
+    const enriched = await enrich(result.model, bytes);
+    if (closed) return;
+    // The disk state is what the file reads as, before this app recomputes anything.
     onDiskBytes = bytes;
-    onDiskModel = snapshotModel(result.model);
+    onDiskModel = snapshotModel(enriched);
+    model = recompute(enriched);
     history.reset();
-    active = isSheets(model) ? { row: 0, col: 0 } : null;
-    activePara = model.kind === 'docx' && model.paragraphs.length ? 0 : null;
     editable = !plan.readOnly;
-    render();
+    rememberRecent(filePath);
+    mountEditor();
     setStatus('');
     if (result.empty) setNote(t('office.emptyNote'));
     else if (plan.readOnly) setNote(t('office.macrosBody'));
     else if (plan.ext === '.md') setNote(t('office.markdownNote'));
     else setNote('');
+    syncBar();
+  }
+
+  async function openPath(path: string): Promise<void> {
+    if (history.dirty && model) {
+      const proceed = await shellConfirm({
+        title: t('office.discardTitle'), message: t('office.discardBody', { name: filePath ? basename(filePath) : t('office.title') }),
+        okLabel: t('office.discard'), cancelLabel: t('office.keep'), danger: true,
+      });
+      if (!proceed) return;
+    }
+    filePath = normalize(path);
+    await open();
+  }
+
+  /* ─────────────────────────── start screen & new files ─────────────────────────── */
+
+  async function goStart(): Promise<void> {
+    if (history.dirty && model) {
+      const proceed = await shellConfirm({
+        title: t('office.discardTitle'), message: t('office.discardBody', { name: filePath ? basename(filePath) : t('office.title') }),
+        okLabel: t('office.discard'), cancelLabel: t('office.keep'), danger: true,
+      });
+      if (!proceed) return;
+    }
+    editor?.dispose();
+    editor = null;
+    model = null;
+    filePath = null;
+    plan = planFor('');
+    history.reset();
+    pathEl.textContent = '';
+    root.dataset.kind = 'start';
+    contentHost.replaceChildren(renderStart({ create: (k) => { void createNew(k); }, open: (p) => { void openPath(p); }, openDevice }, vfs));
+    ribbon.setTabs([fileTab()], 'file');
+    setNote('');
+    syncBar();
+  }
+
+  function newBytes(kind: NewKind): Uint8Array {
+    if (kind === 'docx') return emptyDocxPackage(getLocale() === 'ar');
+    if (kind === 'pptx') return writePptx([[t('office.newDeckTitle'), t('office.newDeckSubtitle')]]);
+    return serializeModel(emptyModel(planFor('a.xlsx')));
+  }
+
+  async function createNew(kind: NewKind): Promise<void> {
+    const base = kind === 'docx' ? t('office.untitledDoc') : kind === 'xlsx' ? t('office.untitledSheet') : t('office.untitledDeck');
+    try {
+      const dir = '/home/user/Documents';
+      if (!(await vfs.exists(dir))) await vfs.mkdir(dir, { recursive: true });
+      const target = await uniquePath(dir, base, kind);
+      await vfs.writeFile(target, newBytes(kind));
+      filePath = target;
+      await open();
+      setStatus(t('office.created', { name: basename(target) }));
+    } catch (err) {
+      setStatus(t('office.saveFailed', { message: errorMessage(err) }));
+    }
+  }
+
+  function openDevice(): void {
+    const input = el('input');
+    input.type = 'file';
+    input.accept = VERIFIED_FORMATS.filter((f) => f.level !== 'unsupported').map((f) => f.ext).join(',');
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        const dir = '/home/user/Documents';
+        if (!(await vfs.exists(dir))) await vfs.mkdir(dir, { recursive: true });
+        const dot = file.name.lastIndexOf('.');
+        const target = await uniquePath(dir, dot > 0 ? file.name.slice(0, dot) : file.name, dot > 0 ? file.name.slice(dot + 1) : 'txt');
+        await vfs.writeFile(target, new Uint8Array(await file.arrayBuffer()));
+        await openPath(target);
+      } catch (err) {
+        setStatus(t('office.saveFailed', { message: errorMessage(err) }));
+      }
+    });
+    input.click();
   }
 
   /* ──────────────────────────── save / revert ──────────────────────────── */
 
   async function save(): Promise<void> {
     if (!filePath || !model || !editable || busy) return;
-
-    // A surgical save first: it rewrites only the parts the owner changed and
-    // copies every other entry byte-for-byte, so styles, images, headers and
-    // everything else the reader does not model survive. When it cannot express
-    // the change, the owner is told *before* anything is written.
     const kind = packageKind(plan.kind);
     let patched: PatchResult | null = null;
-    if (kind && onDiskBytes && onDiskModel) {
-      const current: OfficeModel = model;
-      patched = await patchPackage(kind, onDiskBytes, onDiskModel, current);
-    }
+    if (kind && onDiskBytes && onDiskModel) patched = await patchPackage(kind, onDiskBytes, onDiskModel, model);
     if (kind && !patched) {
       const proceed = await shellConfirm({
         title: t('office.rebuildTitle'),
@@ -723,22 +627,34 @@ function launch(ctx: AppContext): void {
     }
     busy = true;
     syncBar();
+    setStatus(t('office.saving'));
     try {
-      const data = patched ? patched.bytes : serializeModel(model);
+      let data: Uint8Array;
+      if (patched) data = patched.bytes;
+      else if (model.kind === 'docx' && model.blocks) data = (await rebuildDocxRich(model)) ?? serializeModel(model);
+      else data = serializeModel(model);
       const result = await saveWithBackup(vfs, filePath, data);
-      // Re-read what is really on disk: the window only says «تم الحفظ» after the
-      // bytes it wrote are the bytes the file holds.
       const written = await vfs.readFile(filePath);
       if (!sameBytes(written, data)) {
         throw new Error(`read-back mismatch: wrote ${data.length} bytes, the file holds ${written.length}`);
       }
       history.markSaved();
-      // A rebuilt save wrote the reader's model and nothing else; a patched save
-      // did not, so the reader's own truncation limit still stands for it.
-      if (!patched) model = clearTruncated(model);
+      // New pictures now live in the file: the model adopts the markup the save generated.
+      for (const m of patched?.materialized ?? []) { m.run.xml = m.xml; delete m.run.newImage; }
+      if (!patched) {
+        model = clearTruncated(model);
+        // A rebuilt file is re-read, so what the editor shows is what the file now holds.
+        model = recompute(await enrich(model, data));
+        editor?.dispose();
+        mountEditor();
+      } else if (model.kind === 'xlsx' && bookLook === null) {
+        bookLook = await readBookLook(data).catch(() => null);
+      }
+      // The file now holds this structure: nothing has moved relative to it any more.
+      if ((model.kind === 'xlsx' || model.kind === 'csv') && model.moved) { model = { ...model }; delete (model as SheetsModel).moved; }
       onDiskBytes = data;
       onDiskModel = snapshotModel(model);
-      render();
+      editor?.render();
       setStatus(result.backup ? t('office.savedWithBackup', { name: basename(result.backup) }) : t('office.saved'));
     } catch (err) {
       setStatus(t('office.saveFailed', { message: errorMessage(err) }));
@@ -766,10 +682,20 @@ function launch(ctx: AppContext): void {
   /* ───────────────────────────── wiring ───────────────────────────── */
 
   root.addEventListener('keydown', (ev) => {
-    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') {
-      ev.preventDefault();
-      void save();
+    const mod = ev.ctrlKey || ev.metaKey;
+    const key = ev.key.toLowerCase();
+    if (ev.key === 'F1') { ev.preventDefault(); toggleHelp(true); return; }
+    if (mod && key === 's') { ev.preventDefault(); void save(); return; }
+    if (mod && key === 'z' && !ev.shiftKey) {
+      const target = ev.target as HTMLElement;
+      // A plain text field keeps its own undo while it has focus in the sheet's formula bar.
+      if (target.classList.contains('fo-fxinput') || target.classList.contains('fo-namebox')) return;
+      ev.preventDefault(); undo(); return;
     }
+    if (mod && (key === 'y' || (key === 'z' && ev.shiftKey))) { ev.preventDefault(); redo(); return; }
+    if (mod && key === 'o') { ev.preventDefault(); openDevice(); return; }
+    if (editor?.onKey?.(ev)) { ev.preventDefault(); return; }
+    if (mod && key === 'p') { ev.preventDefault(); printCurrent(); }
   });
 
   win.setCloseGuard(() => {
@@ -783,18 +709,32 @@ function launch(ctx: AppContext): void {
     });
   });
 
-  const onBeforeUnload = (ev: BeforeUnloadEvent) => { if (history.dirty) ev.preventDefault(); };
+  const onBeforeUnload = (ev: BeforeUnloadEvent): void => { if (history.dirty) ev.preventDefault(); };
   window.addEventListener('beforeunload', onBeforeUnload);
   win.onClose(() => {
     closed = true;
+    closePopovers();
+    narrowObserver.disconnect();
+    editor?.dispose();
     window.removeEventListener('beforeunload', onBeforeUnload);
   });
 
-  if (!filePath) {
-    contentHost.replaceChildren(el('div', 'faisal-office-note', t('office.noFile')));
-    syncBar();
-    return;
-  }
+  root.addEventListener('dragover', (ev) => { if (ev.dataTransfer?.types.includes('Files')) ev.preventDefault(); });
+  root.addEventListener('drop', (ev) => {
+    const file = ev.dataTransfer?.files?.[0];
+    if (!file) return;
+    ev.preventDefault();
+    void (async () => {
+      const dir = '/home/user/Documents';
+      if (!(await vfs.exists(dir))) await vfs.mkdir(dir, { recursive: true });
+      const dot = file.name.lastIndexOf('.');
+      const target = await uniquePath(dir, dot > 0 ? file.name.slice(0, dot) : file.name, dot > 0 ? file.name.slice(dot + 1) : 'txt');
+      await vfs.writeFile(target, new Uint8Array(await file.arrayBuffer()));
+      await openPath(target);
+    })();
+  });
+
+  if (!filePath) { void goStart(); return; }
   void open();
 }
 

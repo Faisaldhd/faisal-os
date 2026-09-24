@@ -907,3 +907,14 @@ export async function mergePdfs(sources: readonly MergeInput[], plan: readonly {
 export async function readInfo(bytes: Uint8Array): Promise<LoadResult> {
   return loadPdf(bytes);
 }
+
+/** A brand-new document with one blank page of `size` (A4 by default), verified like any edit. */
+export async function createBlankPdf(size: Size = { width: 595.28, height: 841.89 }): Promise<OpResult> {
+  try {
+    const doc = await PDFDocument.create();
+    doc.addPage([size.width, size.height]);
+    return await finish(doc, { pageCount: 1, pageSizes: { 0: size } });
+  } catch (error) {
+    return failed(error);
+  }
+}
