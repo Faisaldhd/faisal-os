@@ -1,4 +1,29 @@
+/*
+ * Fai$al Store — styles.
+ *
+ * Arabic-first (RTL): every horizontal offset is written with logical properties
+ * (padding-inline, margin-inline, inset-inline), so one sheet serves both directions.
+ *
+ * Layout: `.faisal-store` is a column. The header (search + category chips) and the tabs
+ * sit ABOVE the scrolling body, so they stay reachable while the body scrolls; both are
+ * additionally `position: sticky` at the block start over an opaque `--faisal-bg`
+ * background, so an outer scrollport can never slide content underneath them.
+ * `.faisal-store-body` is the ONLY scroll container in this app.
+ *
+ * One spacing scale only — 4 / 8 / 12 / 16 / 24 / 32 (plus 0 / auto). Every padding, gap
+ * and margin in this file is one of those values; `store-css.test.ts` enforces it.
+ *
+ * Colour comes from `src/shell/theme.css` tokens only. The few local aliases below are
+ * mixes of existing tokens, so light/dark parity is inherited instead of being patched
+ * with `[data-theme="dark"]` overrides, and no raw colour is introduced.
+ */
+
 .faisal-store {
+  --store-accent-tint: color-mix(in srgb, var(--faisal-accent) 18%, transparent);
+  --store-accent-line: color-mix(in srgb, var(--faisal-accent) 45%, transparent);
+  --store-danger-ink: color-mix(in srgb, var(--faisal-danger) 55%, var(--faisal-fg));
+  --store-danger-tint: color-mix(in srgb, var(--faisal-danger) 10%, transparent);
+
   display: flex;
   flex-direction: column;
   block-size: 100%;
@@ -10,43 +35,115 @@
   font-size: 13px;
 }
 
-/* ── header ───────────────────────────────────────────────────────── */
+/* ── header: search + category chips ─────────────────────────────── */
 
 .faisal-store-header {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 3;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-block-end: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  gap: 8px;
   flex: 0 0 auto;
+  padding: 12px 16px;
+  background: var(--faisal-bg, #f5f4f1);
+  border-block-end: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
 }
+
+/* A detail view hides the whole search/chips row, which would leave an empty padding box
+ * with a hairline under it; collapse the strip instead. A browser without `:has()` simply
+ * keeps the thin strip. */
+.faisal-store-header:not(:has(.faisal-store-controls:not([hidden]))) {
+  display: none;
+}
+
+/* Search field and chips share one wrapping row inside the header. */
+.faisal-store-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 100%;
+  min-inline-size: 0;
+}
+
+/* The row is hidden with the `hidden` attribute in the detail view, so the author
+ * `display: flex` above must not out-rank the UA `[hidden] { display: none }`. */
+.faisal-store-controls[hidden] { display: none; }
 
 .faisal-store-search {
   flex: 1 1 auto;
   min-inline-size: 0;
-  padding: 7px 12px;
+  min-block-size: 44px;
+  padding: 8px 16px;
   border-radius: 999px;
   border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
   background: var(--faisal-surface, #fff);
   color: inherit;
   font: inherit;
+  touch-action: manipulation;
 }
 
-.faisal-store-search:focus {
-  outline: 2px solid var(--faisal-accent, #8f6412);
-  outline-offset: 1px;
+/* ── category chips ──────────────────────────────────────────────── */
+
+.faisal-store-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  /* Its own row under the search field, inside the sticky header. */
+  flex: 1 1 100%;
+  min-inline-size: 0;
 }
+
+.faisal-store-chip {
+  min-block-size: 44px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
+  background: var(--faisal-surface, #fff);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.faisal-store-chip:hover { background: var(--faisal-surface-2, #ecebe6); }
+
+/*
+ * Selection is NOT a primary action. The solid gold is reserved for the one call to action
+ * on screen (the featured banner's button, and the install button), so the active filter is
+ * marked with a tinted surface, an accent border and accent text instead. Before this, the
+ * filter chip, the active tab and the banner CTA were all full gold in the same view and the
+ * eye had no clear order to follow.
+ */
+.faisal-store-chip.is-active {
+  background: color-mix(in srgb, var(--faisal-accent, #8f6412) 14%, var(--faisal-surface, #fff));
+  border-color: var(--faisal-accent, #8f6412);
+  color: var(--faisal-accent, #8f6412);
+  font-weight: 600;
+}
+
+/* ── tabs ────────────────────────────────────────────────────────── */
 
 .faisal-store-tabs {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 2;
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  padding: 8px 12px;
   flex: 0 0 auto;
+  padding: 8px 16px;
+  background: var(--faisal-bg, #f5f4f1);
   border-block-end: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
 }
 
 .faisal-store-tab {
-  padding: 6px 14px;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  padding: 8px 16px;
   border-radius: 999px;
   border: none;
   background: none;
@@ -54,36 +151,52 @@
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
-.faisal-store-tab:hover {
-  background: var(--faisal-surface-2, #ecebe6);
-}
+.faisal-store-tab:hover { background: var(--faisal-surface-2, #ecebe6); }
 
+/* Same rule as the chips: the active tab is a state, not the page's main action. */
 .faisal-store-tab.is-active {
-  background: var(--faisal-accent, #8f6412);
-  color: var(--faisal-accent-fg, #fff);
+  background: color-mix(in srgb, var(--faisal-accent, #8f6412) 12%, transparent);
+  color: var(--faisal-accent, #8f6412);
+  box-shadow: inset 0 -2px 0 0 var(--faisal-accent, #8f6412);
 }
+
+/* ── body: the one scrollport ────────────────────────────────────── */
+
+/* One panel per tab; only the active one is rendered, the rest carry `hidden`. */
+.faisal-store-body[hidden] { display: none; }
 
 .faisal-store-body {
   flex: 1 1 auto;
   min-block-size: 0;
+  min-inline-size: 0;
   overflow-y: auto;
-  padding: 14px;
+  /* The grid is built from `minmax(0, 1fr)` tracks, so nothing here may scroll sideways. */
+  overflow-x: hidden;
+  /* Reserved gutter: filtering/searching never shifts the layout when the bar appears. */
+  scrollbar-gutter: stable;
+  padding: 16px;
 }
 
-/* ── banner ───────────────────────────────────────────────────────── */
+/* ── featured banner ─────────────────────────────────────────────── */
 
 .faisal-store-banner {
+  position: relative;
+  overflow: hidden;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 16px;
-  padding: 18px 20px;
-  border-radius: var(--faisal-radius, 10px);
+  inline-size: 100%;
+  min-block-size: 44px;
+  padding: 24px;
   margin-block-end: 16px;
-  /* Brand tokens, not literals: the banner now follows `data-theme` like the rest of
-   * the OS. The gradient stops are the same #22386f → #16264f → #0b1530 ramp (only
-   * tokenised in Phase 11), so light mode is pixel-identical. */
+  border-radius: var(--faisal-radius, 10px);
+  /* Brand surface: the royal ramp is theme-independent by design (BRAND.md), and the
+   * copy on it uses the constant ivory/gold brand tokens, so it reads the same in both
+   * themes without a single per-theme override. */
   background: linear-gradient(
     135deg,
     var(--faisal-brand-royal) 0%,
@@ -91,13 +204,11 @@
     var(--faisal-brand-midnight) 100%
   );
   color: var(--faisal-brand-ivory);
-  position: relative;
-  overflow: hidden;
-  cursor: pointer;
-  border: 1px solid rgba(227, 182, 80, 0.35);
+  border: 1px solid color-mix(in srgb, var(--faisal-brand-gold) 35%, transparent);
   text-align: start;
   font: inherit;
-  width: 100%;
+  cursor: pointer;
+  touch-action: manipulation;
 }
 
 .faisal-store-banner::after {
@@ -107,7 +218,7 @@
   inset-inline-end: -10%;
   inline-size: 220px;
   block-size: 220px;
-  background: radial-gradient(circle, rgba(227, 182, 80, 0.35), transparent 70%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--faisal-brand-gold) 35%, transparent), transparent 70%);
   pointer-events: none;
 }
 
@@ -116,6 +227,7 @@
   inline-size: 64px;
   block-size: 64px;
 }
+
 .faisal-store-banner-icon svg { inline-size: 100%; block-size: 100%; }
 
 .faisal-store-banner-text { flex: 1 1 auto; min-inline-size: 0; }
@@ -131,21 +243,25 @@
 .faisal-store-banner-name {
   font-size: 18px;
   font-weight: 700;
-  margin-block-start: 2px;
+  margin-block-start: 4px;
+  overflow-wrap: anywhere;
 }
 
 .faisal-store-banner-desc {
   font-size: 12.5px;
-  color: rgba(247, 241, 227, 0.78);
-  margin-block-start: 3px;
+  color: color-mix(in srgb, var(--faisal-brand-ivory) 78%, transparent);
+  margin-block-start: 4px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .faisal-store-banner-cta {
   flex: 0 0 auto;
-  padding: 7px 16px;
+  padding: 8px 16px;
   border-radius: 999px;
   background: var(--faisal-brand-gold);
   color: var(--faisal-brand-navy);
@@ -156,72 +272,53 @@
 /* The CTA is a span inside the banner button, so the ring is drawn on the banner;
  * this only keeps a ring on the CTA itself if it ever becomes focusable. */
 .faisal-store-banner-cta:focus-visible {
-  outline: 2px solid var(--faisal-focus-ring-invert, #F0CF7A);
+  outline: 2px solid var(--faisal-brand-gold-light);
   outline-offset: 2px;
 }
 
-/* The banner is a dark gradient, so it uses the light ring; the rest sit on --faisal-surface. */
+/* The banner is a dark gradient, so it uses the light brand ring; everything else uses
+ * the standard ring. Both are the same 2px brand indicator. */
 .faisal-store-banner:focus-visible {
-  outline: 2px solid var(--faisal-focus-ring-invert, #F0CF7A);
-  outline-offset: -3px;
+  outline: 2px solid var(--faisal-brand-gold-light);
+  outline-offset: -4px;
 }
-.faisal-store-tab:focus-visible,
+
+/* ONE ring for the whole app: the brand focus token, never hover alone. */
 .faisal-store-chip:focus-visible,
+.faisal-store-tab:focus-visible,
 .faisal-store-card:focus-visible,
+.faisal-store-search:focus-visible,
 .faisal-store-back:focus-visible,
 .faisal-store-btn:focus-visible {
-  outline: 2px solid var(--faisal-focus-ring, #8F6412);
+  outline: 2px solid var(--faisal-focus-ring, #8f6412);
   outline-offset: 2px;
 }
 
-/* ── category chips ──────────────────────────────────────────────── */
-
-.faisal-store-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-block-end: 16px;
-}
-
-.faisal-store-chip {
-  padding: 5px 13px;
-  border-radius: 999px;
-  border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
-  background: var(--faisal-surface, #fff);
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.faisal-store-chip:hover { background: var(--faisal-surface-2, #ecebe6); }
-
-.faisal-store-chip.is-active {
-  background: var(--faisal-accent, #8f6412);
-  border-color: var(--faisal-accent, #8f6412);
-  color: var(--faisal-accent-fg, #fff);
-}
-
-/* ── grid / cards ─────────────────────────────────────────────────── */
+/* ── grid: 1 / 2 / 3 columns, cards stretched to equal height in a row ── */
 
 .faisal-store-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: stretch;
   gap: 12px;
+  min-inline-size: 0;
 }
 
 .faisal-store-card {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 14px;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  padding: 16px;
   border-radius: var(--faisal-radius, 10px);
   border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
   background: var(--faisal-surface, #fff);
-  cursor: pointer;
-  text-align: start;
-  font: inherit;
   color: inherit;
-  position: relative;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  touch-action: manipulation;
 }
 
 .faisal-store-card:hover {
@@ -232,12 +329,26 @@
 .faisal-store-card-top {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  min-inline-size: 0;
 }
 
-.faisal-store-card-icon { inline-size: 40px; block-size: 40px; flex: 0 0 auto; }
+/* Fixed icon box: every card starts with the same square, whatever the artwork. */
+.faisal-store-card-icon {
+  flex: 0 0 auto;
+  inline-size: 48px;
+  block-size: 48px;
+}
+
 .faisal-store-card-icon svg { inline-size: 100%; block-size: 100%; }
 
+.faisal-store-card-head {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+/* Name and category are each exactly one line (ellipsis, never a wrap), so the
+ * name/category block is the same height on every card. */
 .faisal-store-card-name {
   font-weight: 700;
   font-size: 13.5px;
@@ -249,53 +360,94 @@
 .faisal-store-card-cat {
   font-size: 11px;
   color: var(--faisal-fg-muted, #565b67);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* Exactly two lines, always: one-line copy does not make a shorter card. */
 .faisal-store-card-desc {
-  font-size: 12px;
-  color: var(--faisal-fg-muted, #565b67);
   display: -webkit-box;
-  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   overflow: hidden;
-  min-block-size: 2.6em;
+  overflow-wrap: anywhere;
+  min-block-size: 3em;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--faisal-fg-muted, #565b67);
+}
+
+.faisal-store-card-released {
+  font-size: 11px;
+  color: var(--faisal-fg-muted, #565b67);
+}
+
+/* The badges row is bottom-aligned (`margin-block-start: auto`) and reserves its full
+ * height even when the card carries no badge, so a card with "مثبّت"/"جديد" is exactly
+ * as tall as one without — and cards without a release date line still line up. */
+.faisal-store-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-block-size: 24px;
+  margin-block-start: auto;
 }
 
 .faisal-store-badge {
+  display: inline-flex;
+  align-items: center;
   align-self: flex-start;
-  font-size: 10.5px;
-  font-weight: 700;
-  padding: 2px 8px;
+  min-block-size: 24px;
+  padding: 4px 8px;
   border-radius: 999px;
+  border: 1px solid transparent;
   background: var(--faisal-surface-2, #ecebe6);
   color: var(--faisal-fg-muted, #565b67);
+  font-size: 10.5px;
+  font-weight: 700;
 }
 
 .faisal-store-badge.is-installed {
-  background: rgba(60, 150, 100, 0.15);
-  color: #2e7d4f;
+  background: var(--store-accent-tint);
+  border-color: var(--store-accent-line);
+  color: var(--faisal-accent, #8f6412);
 }
-:root[data-theme="dark"] .faisal-store-badge.is-installed { color: #7fd9a4; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .faisal-store-badge.is-installed { color: #7fd9a4; }
+
+.faisal-store-badge.is-new {
+  background: transparent;
+  border-color: var(--store-accent-line);
+  color: var(--faisal-accent, #8f6412);
 }
+
+/* ── empty state: a deliberate panel, not a bare line ────────────── */
 
 .faisal-store-empty {
-  padding: 40px 0;
-  text-align: center;
+  padding: 32px 24px;
+  border: 1px dashed var(--faisal-border, rgba(0, 0, 0, 0.13));
+  border-radius: var(--faisal-radius, 10px);
+  background: var(--faisal-surface, #fff);
   color: var(--faisal-fg-muted, #565b67);
+  text-align: center;
+  overflow-wrap: anywhere;
 }
 
-/* ── updates tab ──────────────────────────────────────────────────── */
+/* ── updates tab ─────────────────────────────────────────────────── */
 
 .faisal-store-uptodate {
   display: flex;
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 4px;
-  padding: 28px 12px 22px;
+  gap: 8px;
+  padding: 32px 24px;
+  border: 1px dashed var(--faisal-border, rgba(0, 0, 0, 0.13));
+  border-radius: var(--faisal-radius, 10px);
+  background: var(--faisal-surface, #fff);
   color: var(--faisal-fg-muted, #565b67);
+  overflow-wrap: anywhere;
 }
 
 .faisal-store-uptodate-title {
@@ -304,49 +456,67 @@
   color: var(--faisal-fg, #1a1d26);
 }
 
-/* ── detail view ──────────────────────────────────────────────────── */
+/* ── detail view ─────────────────────────────────────────────────── */
 
-.faisal-store-detail {
-  padding: 14px;
-  overflow-y: auto;
-  block-size: 100%;
-}
+.faisal-store-detail { min-inline-size: 0; }
 
 .faisal-store-back {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
+  gap: 8px;
+  min-block-size: 44px;
+  padding: 8px 12px;
+  margin-block-end: 16px;
   border-radius: var(--faisal-radius-sm, 6px);
   border: none;
   background: none;
   color: var(--faisal-fg-muted, #565b67);
   font: inherit;
   cursor: pointer;
-  margin-block-end: 12px;
+  touch-action: manipulation;
 }
+
 .faisal-store-back:hover { background: var(--faisal-surface-2, #ecebe6); }
+
 .faisal-store-back svg { inline-size: 16px; block-size: 16px; }
+
 [dir="rtl"] .faisal-store-back svg { transform: scaleX(-1); }
 
 .faisal-store-detail-head {
   display: flex;
   align-items: center;
   gap: 16px;
-  margin-block-end: 18px;
+  margin-block-end: 16px;
+  min-inline-size: 0;
 }
 
-.faisal-store-detail-icon { inline-size: 72px; block-size: 72px; flex: 0 0 auto; }
+.faisal-store-detail-icon {
+  flex: 0 0 auto;
+  inline-size: 72px;
+  block-size: 72px;
+}
+
 .faisal-store-detail-icon svg { inline-size: 100%; block-size: 100%; }
 
-.faisal-store-detail-name { font-size: 19px; font-weight: 700; }
+.faisal-store-detail-info { flex: 1 1 auto; min-inline-size: 0; }
+
+.faisal-store-detail-name {
+  font-size: 19px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
 
 .faisal-store-detail-meta {
   display: flex;
-  gap: 12px;
   flex-wrap: wrap;
+  gap: 12px;
   margin-block-start: 4px;
   font-size: 12px;
+  color: var(--faisal-fg-muted, #565b67);
+}
+
+.faisal-store-detail-released {
+  font-size: 11px;
   color: var(--faisal-fg-muted, #565b67);
 }
 
@@ -354,49 +524,78 @@
   font-size: 13px;
   line-height: 1.6;
   color: var(--faisal-fg, #1a1d26);
-  margin-block-end: 18px;
+  margin-block-end: 16px;
+  overflow-wrap: anywhere;
+}
+
+.faisal-store-detail-section { margin-block-start: 24px; }
+
+/* One heading per detail section (about / actions / permissions / limits), so all four
+ * read the same way. `.faisal-store-perm-title` keeps the older name working. */
+.faisal-store-perm-title,
+.faisal-store-detail-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--faisal-fg-muted, #565b67);
+  margin-block-end: 8px;
 }
 
 .faisal-store-detail-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  margin-block-end: 20px;
-  min-block-size: 34px;
+  gap: 12px;
+  /* Reserves the button height, so swapping "تثبيت" for the progress line never jumps. */
+  min-block-size: 44px;
+  margin-block-end: 24px;
 }
 
 .faisal-store-btn {
-  padding: 8px 20px;
+  min-block-size: 44px;
+  padding: 12px 24px;
   border-radius: 999px;
   border: none;
   font: inherit;
   font-weight: 700;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .faisal-store-btn.is-primary {
   background: var(--faisal-accent, #8f6412);
   color: var(--faisal-accent-fg, #fff);
 }
-.faisal-store-btn.is-primary:hover { filter: brightness(1.08); }
+
+.faisal-store-btn.is-primary:hover {
+  background: color-mix(in srgb, var(--faisal-accent) 88%, var(--faisal-fg));
+}
 
 .faisal-store-btn.is-danger {
   background: none;
-  border: 1px solid var(--faisal-danger, #c01c28);
-  color: var(--faisal-danger, #c01c28);
+  border: 1px solid var(--store-danger-ink);
+  color: var(--store-danger-ink);
 }
-.faisal-store-btn.is-danger:hover { background: rgba(192, 28, 40, 0.08); }
+
+.faisal-store-btn.is-danger:hover {
+  background: var(--store-danger-tint);
+}
 
 .faisal-store-btn.is-ghost {
   background: var(--faisal-surface-2, #ecebe6);
   color: var(--faisal-fg, #1a1d26);
 }
+
 .faisal-store-btn:disabled { opacity: 0.6; cursor: default; }
 
-.faisal-store-core-note {
+/* The "cannot be removed / no known limits" line is a sentence, so it never depends on colour. */
+.faisal-store-core-note,
+.faisal-store-detail-limits {
   font-size: 12.5px;
   color: var(--faisal-fg-muted, #565b67);
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .faisal-store-progress {
@@ -408,8 +607,8 @@
 }
 
 .faisal-store-spinner {
-  inline-size: 15px;
-  block-size: 15px;
+  inline-size: 16px;
+  block-size: 16px;
   border-radius: 50%;
   border: 2px solid var(--faisal-border, rgba(0, 0, 0, 0.15));
   border-inline-start-color: var(--faisal-accent, #8f6412);
@@ -429,19 +628,21 @@
 .faisal-store-confirm {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
+  gap: 12px;
+  padding: 16px;
+  margin-block-end: 24px;
   border-radius: var(--faisal-radius, 10px);
-  border: 1px solid var(--faisal-danger, #c01c28);
-  background: rgba(192, 28, 40, 0.06);
-  margin-block-end: 20px;
+  border: 1px solid var(--store-danger-ink);
+  background: var(--store-danger-tint);
 }
 
-.faisal-store-confirm-title { font-weight: 700; }
-.faisal-store-confirm-body { font-size: 12.5px; color: var(--faisal-fg-muted, #565b67); }
-.faisal-store-confirm-actions { display: flex; gap: 8px; margin-block-start: 4px; }
+.faisal-store-confirm-title { font-weight: 700; overflow-wrap: anywhere; }
+.faisal-store-confirm-body { font-size: 12.5px; color: var(--faisal-fg-muted, #565b67); overflow-wrap: anywhere; }
+.faisal-store-confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
-/* permissions */
+/* ── permissions ─────────────────────────────────────────────────── */
+
+.faisal-store-permissions { min-inline-size: 0; }
 
 .faisal-store-perm-title {
   font-size: 12px;
@@ -461,48 +662,74 @@
 .faisal-store-perm-item {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 9px 11px;
+  gap: 12px;
+  padding: 12px;
   border-radius: var(--faisal-radius-sm, 6px);
   background: var(--faisal-surface, #fff);
   border: 1px solid var(--faisal-border, rgba(0, 0, 0, 0.13));
   font-size: 12.5px;
+  overflow-wrap: anywhere;
 }
 
 .faisal-store-perm-item.is-warning {
-  border-color: rgba(192, 28, 40, 0.4);
-  background: rgba(192, 28, 40, 0.06);
+  border-color: var(--store-danger-ink);
+  background: var(--store-danger-tint);
 }
+
+.faisal-store-perm-text { min-inline-size: 0; }
+
+/* The warning is a sentence, not just a red dot, so the meaning survives without colour. */
+.faisal-store-perm-warning { color: var(--store-danger-ink); }
 
 .faisal-store-perm-dot {
   flex: 0 0 auto;
-  inline-size: 7px;
-  block-size: 7px;
+  inline-size: 8px;
+  block-size: 8px;
+  margin-block-start: 8px;
   border-radius: 50%;
-  margin-block-start: 5px;
   background: var(--faisal-fg-muted, #565b67);
 }
-.faisal-store-perm-item.is-warning .faisal-store-perm-dot { background: var(--faisal-danger, #c01c28); }
 
-/* ── release date and the «جديد / New» badge ───────────────────────── */
-
-/* Shown only for apps whose manifest carries a releasedAt; older apps get no line. */
-.faisal-store-card-released,
-.faisal-store-detail-released {
-  font-size: 11px;
-  color: var(--faisal-fg-muted, #565b67);
+.faisal-store-perm-item.is-warning .faisal-store-perm-dot {
+  background: var(--store-danger-ink);
 }
 
-.faisal-store-card-released {
-  margin-block-start: -2px;
+/*
+ * ── Width rules are CONTAINER queries, not viewport media queries ──────────────
+ *
+ * The Store runs inside a window, and a window is usually narrower than the screen:
+ * measured on a 1440px display the default 640x440 window showed a three-column grid of
+ * 190px cards with a horizontal scrollbar. `theme.css` already declares the window content
+ * as a named container (`container: faisal-window / inline-size`), which is what every
+ * other app (files, browser, calculator, stream, web) keys its own breakpoints off, so the
+ * grid now follows the WINDOW it lives in and looks the same maximized or floating.
+ */
+
+/* ── window 481–1023px: two columns ──────────────────────────────── */
+
+@container faisal-window (max-width: 1023px) {
+  .faisal-store-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-/* The brand's gold, so "new" reads as arrival rather than as an installed state. */
-.faisal-store-badge.is-new {
-  background: rgba(214, 165, 46, 0.18);
-  color: #8a6510;
-}
-:root[data-theme="dark"] .faisal-store-badge.is-new { color: #f0cf7a; }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .faisal-store-badge.is-new { color: #f0cf7a; }
+/* ── window ≤480px: one column, and the banner stacks ────────────── */
+
+@container faisal-window (max-width: 480px) {
+  .faisal-store-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .faisal-store-body {
+    padding: 12px;
+  }
+
+  .faisal-store-banner-cta {
+    inline-size: 100%;
+    text-align: center;
+  }
+
+  .faisal-store-detail-head {
+    align-items: flex-start;
+  }
 }
