@@ -1,0 +1,9 @@
+# Every text file is stored with LF, whatever editor or OS wrote it. A file
+# rewritten with CRLF (common on Windows) otherwise shows as changed on every
+# line and conflicts with any LF edit to it.
+* text=auto eol=lf
+
+# Windows scripts keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
