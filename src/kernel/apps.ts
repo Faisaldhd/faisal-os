@@ -239,7 +239,17 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
         // Same-user processes may signal each other, exactly like Linux: `kill` works from any
         // app, while the system's own processes refuse it. A capability gate can narrow this
         // later without touching the table itself.
-        proc: sys.proc,
+        // A narrow view: same-user processes may signal each other, like Linux, but an app cannot
+        // dispose() the table out from under the whole system (same treatment as register()).
+        proc: Object.freeze({
+          list: sys.proc.list,
+          recent: sys.proc.recent,
+          all: sys.proc.all,
+          get: sys.proc.get,
+          signal: sys.proc.signal,
+          on: sys.proc.on,
+          dispose: denied('apps cannot dispose the process table'),
+        }),
         bus: scopeBus(sys.bus, fsAccess(perms).canRead),
         wm: scopeWM(sys.wm, appId),
         apps: Object.freeze({

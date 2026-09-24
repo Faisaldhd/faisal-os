@@ -330,7 +330,8 @@ function kill(ctx: CommandContext): number {
     const pid = Number(t);
     if (send(pid, signal) === 0) continue;
     // Same wording bash uses, and the same distinction: a protected process exists but refuses.
-    const known = table(true).some((p) => p.pid === pid);
+    // An already-ended PID is *not* known any more — it just is not there.
+    const known = table(false).some((p) => p.pid === pid);
     ctx.err(`bash: kill: (${pid}) - ${known ? 'Operation not permitted' : 'No such process'}\n`);
     status = 1;
   }

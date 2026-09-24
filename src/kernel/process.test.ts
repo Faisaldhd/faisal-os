@@ -13,17 +13,22 @@ function setup(overrides: Partial<ProcessTableOptions> = {}) {
   const bus = createBus();
   const calls = { request: [] as string[], kill: [] as string[] };
   const minimized = new Set<string>();
+  /** Windows the fake window manager still has open: a refused SIGTERM leaves one here. */
+  const open = new Set<string>();
+  let refuseNextClose = false;
   const opts: ProcessTableOptions = {
-    requestClose: (id) => { calls.request.push(id); },
-    killClose: (id) => { calls.kill.push(id); },
+    requestClose: (id) => { calls.request.push(id); if (!refuseNextClose) open.delete(id); },
+    killClose: (id) => { calls.kill.push(id); open.delete(id); },
     isMinimized: (id) => minimized.has(id),
+    isAlive: (id) => open.has(id),
     now: () => 1000,
     ...overrides,
   };
   const proc = createProcessTable(bus, opts);
-  const launch = (appId: string, windowId: string) => bus.emit('app:launched', { appId, windowId });
-  const closed = (appId: string, windowId: string) => bus.emit('app:closed', { appId, windowId });
-  return { bus, proc, calls, minimized, launch, closed };
+  const launch = (appId: string, windowId: string) => { open.add(windowId); bus.emit('app:launched', { appId, windowId }); };
+  const closed = (appId: string, windowId: string) => { open.delete(windowId); bus.emit('app:closed', { appId, windowId }); };
+  const refuseNext = () => { refuseNextClose = true; };
+  return { bus, proc, calls, minimized, open, launch, closed, refuseNext };
 }
 
 describe('process table', () => {
@@ -154,5 +159,24 @@ describe('process table', () => {
     }
     expect(proc.recent()).toHaveLength(16);
     expect(proc.recent()[0].windowId).toBe('w24');
+  });
+
+  it('forgets a SIGTERM the app refused, so a later normal close reports 0', async () => {
+    const { proc, launch, closed, refuseNext } = setup();
+    launch('org.faisal.Editor', 'w1');
+    refuseNext(); // the editor says "unsaved changes" and keeps the window
+    expect(proc.signal(3, 'TERM')).toBe(0);
+    await Promise.resolve(); // the guard's answer arrives as a microtask
+    expect(proc.list()).toHaveLength(3);
+    closed('org.faisal.Editor', 'w1');
+    expect(proc.recent()[0].exit).toEqual({ code: 0, signal: undefined, at: 1000 });
+  });
+
+  it('never holds a process for a window that closed while its app was still loading', () => {
+    const { proc, closed, launch } = setup();
+    closed('org.faisal.Office', 'w-loading'); // closed before its chunk finished loading
+    launch('org.faisal.Office', 'w-loading'); // the late event must not resurrect it
+    expect(proc.list().map((p) => p.pid)).toEqual([1, 2]);
+    expect(proc.recent()).toHaveLength(0);
   });
 });

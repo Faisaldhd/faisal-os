@@ -18,17 +18,22 @@ import type { EventBus, ProcessInfo, ProcessSignal, ProcessTable, Unsubscribe } 
 /** Ended processes kept for `ps -a`, newest first. */
 const RECENT_LIMIT = 16;
 
+/** Windows seen closing, so a late `app:launched` cannot resurrect a process that never lived. */
+const CLOSED_LIMIT = 32;
+
 /** 128 + signal number, the code a shell reports for a signalled process. */
 const EXIT_TERM = 128 + 15;
 const EXIT_KILL = 128 + 9;
 
 export interface ProcessTableOptions {
-  /** SIGTERM: the polite close that lets an app keep unsaved work. */
-  requestClose(windowId: string): void;
+  /** SIGTERM: the polite close that lets an app keep unsaved work. Resolves after the guard. */
+  requestClose(windowId: string): void | Promise<void>;
   /** SIGKILL: the unconditional close. */
   killClose(windowId: string): void;
   /** True while the window is minimized, so its process reads as sleeping. */
   isMinimized(windowId: string): boolean;
+  /** True while the window still exists — how a refused SIGTERM is detected. */
+  isAlive(windowId: string): boolean;
   /** Injected by the tests. */
   now?(): number;
 }
@@ -41,6 +46,8 @@ export function createProcessTable(bus: EventBus, opts: ProcessTableOptions): Pr
   const byWindow = new Map<string, number>();
   /** windowId → the signal that asked for this close, so the exit code can say why. */
   const pending = new Map<string, ProcessSignal>();
+  /** Recently closed windows: their late `app:launched` is ignored (see the note below). */
+  const closedWindows = new Set<string>();
   const listeners = new Set<() => void>();
   let nextPid = 1;
 
@@ -55,16 +62,29 @@ export function createProcessTable(bus: EventBus, opts: ProcessTableOptions): Pr
     return info;
   };
 
+  const rememberClosed = (windowId: string) => {
+    if (!windowId) return;
+    closedWindows.add(windowId);
+    if (closedWindows.size > CLOSED_LIMIT) {
+      const oldest = closedWindows.values().next().value;
+      if (oldest !== undefined) closedWindows.delete(oldest);
+    }
+  };
+
   // PID 1 and 2 are the system itself. They exist from boot and refuse signals, like init does.
   spawn('init', '', 'Fai$al OS', true);
   spawn('faisal-shell', '', 'Desktop shell', true);
 
   const offLaunched = bus.on('app:launched', ({ appId, windowId }) => {
     if (byWindow.has(windowId)) return; // a window that only changed app: never a second PID
+    // A window closed while its app code was still loading emits `closed` before `launched`;
+    // without this the table would hold a process for a window nobody can see or kill.
+    if (closedWindows.has(windowId)) return;
     spawn(appId, windowId, appId);
   });
 
   const offClosed = bus.on('app:closed', ({ windowId }) => {
+    rememberClosed(windowId);
     const pid = byWindow.get(windowId);
     if (pid === undefined) return;
     const info = live.get(pid);
@@ -105,8 +125,15 @@ export function createProcessTable(bus: EventBus, opts: ProcessTableOptions): Pr
       if (!info) return 1;          // ESRCH — no such process
       if (info.system) return 1;    // EPERM — the kernel's own processes
       pending.set(info.windowId, signal);
-      if (signal === 'KILL') opts.killClose(info.windowId);
-      else opts.requestClose(info.windowId);
+      if (signal === 'KILL') {
+        opts.killClose(info.windowId);
+        return 0;
+      }
+      // SIGTERM may be refused by the app's close guard. That is allowed — but the pending
+      // signal must then be forgotten, or a later *normal* close would be reported as 143.
+      void Promise.resolve(opts.requestClose(info.windowId)).then(() => {
+        if (opts.isAlive(info.windowId)) pending.delete(info.windowId);
+      });
       return 0;
     },
 

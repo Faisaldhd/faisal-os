@@ -203,7 +203,10 @@ function launch(ctx: AppContext): void {
   // The PID column comes from the kernel's process table, and that table changes without the
   // Monitor doing anything (an app opens, a window is killed): repaint the list when it does.
   const offProc = sys.proc.on(() => {
-    if (tab === 'processes') renderProcesses();
+    if (tab !== 'processes') return;
+    // The table can change while this window is closing (the process itself is ending), and a
+    // throw here would abort the window manager's close callbacks and leak our timers.
+    try { renderProcesses(); } catch { /* the window is going away */ }
   });
 
   function tabBtn(id: Tab, label: string, svgIcon: string): HTMLButtonElement {
@@ -298,8 +301,17 @@ function launch(ctx: AppContext): void {
     table.className = 'faisal-mon-table';
     const thead = document.createElement('thead');
     const headRow = document.createElement('tr');
-    for (const label of [t('monitor.pid'), t('monitor.app'), t('monitor.windowId'), t('monitor.uptime'), t('monitor.permissions')]) {
+    // The PID is the column that can go on a 320px window (the same number is in `ps`).
+    const columns: [string, string?][] = [
+      [t('monitor.pid'), 'is-pid'],
+      [t('monitor.app')],
+      [t('monitor.windowId')],
+      [t('monitor.uptime')],
+      [t('monitor.permissions')],
+    ];
+    for (const [label, cls] of columns) {
       const th = document.createElement('th');
+      if (cls) th.className = cls;
       th.textContent = label;
       headRow.appendChild(th);
     }

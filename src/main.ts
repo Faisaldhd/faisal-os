@@ -52,9 +52,10 @@ async function boot() {
   // The process table only listens: it turns the lifecycle events the kernel already emits into
   // the PID/state view that `ps`, `kill`, the System Monitor and the AI agent read.
   const proc = createProcessTable(bus, {
-    requestClose: (windowId) => { void wm.get(windowId)?.requestClose(); },
+    requestClose: (windowId) => wm.get(windowId)?.requestClose(),
     killClose: (windowId) => { wm.get(windowId)?.close(); },
     isMinimized: (windowId) => wm.isMinimized(windowId),
+    isAlive: (windowId) => wm.get(windowId) !== undefined,
   });
 
   let sys!: SystemAPI;
