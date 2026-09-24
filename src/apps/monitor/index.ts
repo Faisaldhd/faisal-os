@@ -153,10 +153,10 @@ defineStrings('monitor', {
 
 type Tab = 'processes' | 'resources' | 'filesystems' | 'system';
 
-// Quota enforced by the Fai$al OS VFS layer itself (see src/vfs/index.ts),
-// NOT by the browser. The browser's own quota comes from
-// navigator.storage.estimate() and is displayed separately, labelled as such.
-const VFS_QUOTA_BYTES = 50 * 1024 * 1024;
+// The quota that matters here is the one the Fai$al OS VFS layer enforces (src/vfs/quota.ts),
+// NOT the browser's: it depends on the platform, so it is read from the file system at run
+// time instead of being copied here. The browser's own estimate comes from
+// navigator.storage.estimate() and is drawn separately, labelled as such.
 const HISTORY_LEN = 60;
 
 interface PerformanceMemory {
@@ -722,6 +722,7 @@ function launch(ctx: AppContext): void {
     const nodes = await walkVFS(sys.vfs, '/');
     const totals = aggregateByTopLevel(nodes, '/');
     const totalUsed = [...totals.values()].reduce((a, b) => a + b, 0);
+    const quotaBytes = sys.vfs.quota.total;
     const maxDir = Math.max(1, ...totals.values());
 
     fsRoot.replaceChildren();
@@ -746,13 +747,13 @@ function launch(ctx: AppContext): void {
     const quotaVal = document.createElement('span');
     // Filled in by the asynchronous scan below, so it is the status of that action.
     quotaVal.setAttribute('role', 'status');
-    quotaVal.textContent = `${formatBytes(totalUsed)} / ${formatBytes(VFS_QUOTA_BYTES)}`;
+    quotaVal.textContent = `${formatBytes(totalUsed)} / ${formatBytes(quotaBytes)}`;
     quotaRow.append(quotaLabel, quotaVal);
     const quotaTrack = document.createElement('div');
     quotaTrack.className = 'faisal-mon-fs-bar-track';
     const quotaFill = document.createElement('div');
-    const ratio = clampRatio(totalUsed, VFS_QUOTA_BYTES);
-    quotaFill.className = 'faisal-mon-fs-bar-fill' + (totalUsed > VFS_QUOTA_BYTES ? ' is-over' : '');
+    const ratio = clampRatio(totalUsed, quotaBytes);
+    quotaFill.className = 'faisal-mon-fs-bar-fill' + (totalUsed > quotaBytes ? ' is-over' : '');
     quotaFill.style.width = `${Math.round(ratio * 100)}%`;
     quotaTrack.appendChild(quotaFill);
     summary.append(quotaRow, quotaTrack);

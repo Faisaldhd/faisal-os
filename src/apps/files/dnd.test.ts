@@ -61,6 +61,8 @@ function createMemVFS(files: string[]): VFS & { list(): string[] } {
 
   return {
     list: () => [...nodes.keys()].sort(),
+    // The file system contract carries its limits; these tests do not exercise them.
+    quota: { file: 1024 * 1024, total: 8 * 1024 * 1024, tier: 'desktop' },
     stat: async (p) => statOf(p),
     exists: async (p) => nodes.has(normalize(p)),
     readdir: async (p) => {

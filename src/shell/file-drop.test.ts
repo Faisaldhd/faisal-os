@@ -4,11 +4,11 @@ import { createVFS } from '../vfs';
 import type { VFS } from '../kernel/types';
 import { collectFiles, dropPlace, safeSegment, saveDropped, isExternalFileDrag } from './file-drop';
 
-async function memVFS(): Promise<VFS> {
+async function memVFS(opts?: { quota?: { file: number; total: number } }): Promise<VFS> {
   const g = globalThis as { indexedDB?: unknown };
   const saved = g.indexedDB;
   delete g.indexedDB; // force the in-memory backend
-  try { return await createVFS(createBus()); } finally { if (saved) g.indexedDB = saved; }
+  try { return await createVFS(createBus(), opts); } finally { if (saved) g.indexedDB = saved; }
 }
 
 const file = (name: string, text: string) => {
@@ -95,12 +95,26 @@ describe('collectFiles + saveDropped', () => {
   });
 
   it('counts files the VFS refuses (quota) without stopping the rest', async () => {
-    const vfs = await memVFS();
+    const vfs = await memVFS({ quota: { file: 4096, total: 1024 * 1024 } });
     const big = file('big.bin', '');
-    Object.defineProperty(big, 'arrayBuffer', { value: async () => new ArrayBuffer(21 * 1024 * 1024) });
+    Object.defineProperty(big, 'arrayBuffer', { value: async () => new ArrayBuffer(4097) });
     const r = await saveDropped(vfs, '/home/user', await collectFiles({ files: [big, file('ok.txt', 'ok')], entries: [] }), 'copy');
     expect(r.failed).toBe(1);
     expect(r.files).toEqual(['/home/user/ok.txt']);
+  });
+
+  it('refuses an over-large file by its reported size, without reading it into memory', async () => {
+    const vfs = await memVFS();
+    let read = false;
+    const huge = {
+      name: 'huge.bin',
+      size: vfs.quota.file + 1,
+      arrayBuffer: async () => { read = true; return new ArrayBuffer(0); },
+    } as unknown as File;
+    const r = await saveDropped(vfs, '/home/user', { files: [{ segments: ['huge.bin'], file: huge }], dirs: [] }, 'copy');
+    expect(r.failed).toBe(1);
+    expect(read).toBe(false); // the point: nothing is allocated for a file that cannot be kept
+    expect(r.files).toEqual([]);
   });
 });
 

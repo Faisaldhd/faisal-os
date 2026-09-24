@@ -9,8 +9,9 @@ import { createAppRegistry } from './kernel/apps';
 import { defineStrings, getLocale, setLocale, t } from './kernel/i18n';
 import type { LazyAppModule, Locale, SystemAPI } from './kernel/types';
 
-import { createVFS, lazyVFS } from './vfs';                    // Track B
+import { createVFS, lazyVFS, storageTierFor } from './vfs';                    // Track B
 import { createWindowManager, mountShell } from './shell';    // Track A
+import { isCoarsePointer } from './shell/device';
 import { BUILTIN_APPS } from './apps';
 import { WIRED_WEB_APPS, webAppManifest } from './apps/web/registry';
 
@@ -36,8 +37,16 @@ async function boot() {
   // The file system starts opening now, but the desktop does not wait for it: every call
   // goes through a handle that resolves the store on first use, so a slow or large
   // IndexedDB delays file operations instead of the whole shell.
-  const vfsReady = createVFS(bus);
-  const vfs = lazyVFS(vfsReady);
+  // Storage limits follow the platform (see src/vfs/quota.ts): the desktop app, a phone, and a
+  // desktop browser each get the budget that was measured to be safe for them. Only this layer
+  // knows which one we are, so it decides the tier and hands it to the file system.
+  const tier = storageTierFor({
+    desktop: nativeWeb() !== null,
+    coarsePointer: isCoarsePointer(),
+    deviceMemory: (navigator as Navigator & { deviceMemory?: number }).deviceMemory,
+  });
+  const vfsReady = createVFS(bus, { tier });
+  const vfs = lazyVFS(vfsReady, tier);
   const wm = createWindowManager(root, bus);
 
   let sys!: SystemAPI;

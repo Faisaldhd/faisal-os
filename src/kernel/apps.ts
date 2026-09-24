@@ -42,6 +42,8 @@ export function scopeVFS(vfs: VFS, perms: readonly Permission[]): VFS {
     async remove(p, o) { w(p); return vfs.remove(p, o); },
     async rename(a, b) { w(a); w(b); return vfs.rename(a, b); },
     async chmod(p, m) { w(p); return vfs.chmod(p, m); },
+    // The limits are not app-specific: the scoped view reports the same ones.
+    quota: vfs.quota,
   };
 }
 

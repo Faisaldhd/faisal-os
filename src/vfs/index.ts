@@ -4,6 +4,10 @@ import { defineStrings, t } from '../kernel/i18n';
 import { OS_VERSION } from '../kernel/version';
 import { basename, dirname, normalize } from '../kernel/path';
 import { createStorageBackend, type StorageBackend, type StoredNode } from './storage';
+import { quotaFor, storageTierFor, type StorageQuota, type StorageTier } from './quota';
+
+// The kernel picks the tier and the tests assert the policy; both read it from here.
+export * from './quota';
 
 defineStrings('vfs', {
   ar: {
@@ -20,8 +24,18 @@ defineStrings('vfs', {
   },
 });
 
-const TOTAL_QUOTA = 50 * 1024 * 1024; // 50 MB
-const FILE_QUOTA = 20 * 1024 * 1024; // 20 MB per file
+/**
+ * How much this platform may keep. The numbers live in `./quota.ts` — the ONE source of truth
+ * that System Monitor, the drop messages and the tests all read — and the kernel chooses the
+ * tier at boot (`src/main.ts`), because only it knows whether this is the desktop app, a
+ * phone, or a desktop browser.
+ */
+export interface VFSOptions {
+  /** Platform policy. Defaults to the desktop browser tier. */
+  tier?: StorageTier;
+  /** Explicit limits: how the tests exercise both caps without writing hundreds of MB. */
+  quota?: StorageQuota;
+}
 
 interface Node {
   stat: Stat;
@@ -56,7 +70,9 @@ async function loadStored(bus: EventBus, backend: StorageBackend): Promise<Store
  * Persistent, IndexedDB-backed VFS with an in-memory index for fast reads.
  * Falls back to an in-memory-only backend when IndexedDB is unavailable.
  */
-export async function createVFS(bus: EventBus): Promise<VFS> {
+export async function createVFS(bus: EventBus, opts: VFSOptions = {}): Promise<VFS> {
+  const tier = opts.tier ?? 'desktop';
+  const quota = opts.quota ?? quotaFor(tier);
   const backend: StorageBackend = await createStorageBackend();
   const nodes = new Map<string, Node>();
 
@@ -195,10 +211,10 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
       if (existing && existing.stat.type === 'dir') throw new VFSError('EISDIR', path);
 
       const bytes = typeof data === 'string' ? enc.encode(data) : data;
-      if (bytes.length > FILE_QUOTA) throw new VFSError('EINVAL', path, 'quota');
+      if (bytes.length > quota.file) throw new VFSError('EINVAL', path, 'quota');
       const prevSize = existing?.stat.size ?? 0;
       const projected = totalSize() - prevSize + bytes.length;
-      if (projected > TOTAL_QUOTA) throw new VFSError('EINVAL', path, 'quota');
+      if (projected > quota.total) throw new VFSError('EINVAL', path, 'quota');
 
       const node = mkNode(path, 'file', { data: bytes });
       await persistNode(node);
@@ -328,6 +344,10 @@ export async function createVFS(bus: EventBus): Promise<VFS> {
       await persistNode(n);
       bus.emit('fs:change', { path: n.stat.path, kind: 'modify' });
     },
+
+    // The limits in force right now, so every surface quotes the same numbers instead of
+    // keeping its own copy (System Monitor used to hardcode the old 50 MB).
+    quota: { file: quota.file, total: quota.total, tier },
   };
 
   // Reconcile the standard tree on EVERY boot, not only on an empty store.
@@ -444,7 +464,7 @@ async function seed(vfs: VFS, bus: EventBus): Promise<void> {
  * immediately, and lets the first real file operation wait for the store. Every method is
  * still async, so callers cannot tell the difference.
  */
-export function lazyVFS(ready: Promise<VFS>): VFS {
+export function lazyVFS(ready: Promise<VFS>, tier: StorageTier = 'desktop'): VFS {
   const run = <T>(fn: (vfs: VFS) => Promise<T>): Promise<T> => ready.then(fn);
   return {
     stat: (path) => run((v) => v.stat(path)),
@@ -457,5 +477,8 @@ export function lazyVFS(ready: Promise<VFS>): VFS {
     remove: (path, opts) => run((v) => v.remove(path, opts)),
     rename: (from, to) => run((v) => v.rename(from, to)),
     chmod: (path, mode) => run((v) => v.chmod(path, mode)),
+    // The limits are known before the store finishes opening, so they answer synchronously:
+    // the drop path and System Monitor need them without waiting for IndexedDB.
+    quota: { ...quotaFor(tier), tier },
   };
 }

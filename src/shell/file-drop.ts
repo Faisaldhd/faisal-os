@@ -12,9 +12,10 @@
  * would close the whole OS.
  */
 import type { SystemAPI, VFS } from '../kernel/types';
-import { HOME } from '../kernel/types';
+import { HOME, VFSError } from '../kernel/types';
 import { dirname, join } from '../kernel/path';
 import { t } from '../kernel/i18n';
+import { formatBytes } from '../kernel/bytes';
 import { uniqueName } from '../apps/files/copy';
 
 /* ─────────────────────────────── reading a drop ─────────────────────────────── */
@@ -123,6 +124,11 @@ export async function saveDropped(
   }
   for (const { segments, file } of drop.files) {
     try {
+      // Refuse on size BEFORE reading: `arrayBuffer()` pulls the whole file into memory, so a
+      // huge drop would freeze the tab (or crash a phone) only to be rejected afterwards.
+      if (file.size > vfs.quota.file) {
+        throw new VFSError('EINVAL', segments[segments.length - 1] ?? 'file', 'quota');
+      }
       const path = await target(segments);
       if (segments.length > 1) await vfs.mkdir(dirname(path), { recursive: true });
       await vfs.writeFile(path, new Uint8Array(await file.arrayBuffer()));
@@ -229,7 +235,7 @@ export function mountFileDrop(sys: SystemAPI): void {
       const result = await saveDropped(sys.vfs, dir, await collectFiles(src), t('shell.drop.copy'));
       const count = result.saved.length;
       if (count) sys.notify(t('shell.drop.saved', { place: placeName(dir) }), result.saved.map((p) => p.slice(dir.length + 1)).join(sys.locale() === 'ar' ? '، ' : ', '));
-      if (result.failed) sys.notify(t('shell.drop.failed', { count: result.failed }), errorText(result.error));
+      if (result.failed) sys.notify(t('shell.drop.failed', { count: result.failed }), errorText(result.error, sys.vfs.quota));
       if (openWith) {
         const first = result.files[0];
         if (first) await sys.apps.launch(openWith, [first]).catch(() => {});
@@ -240,7 +246,7 @@ export function mountFileDrop(sys: SystemAPI): void {
         }
       }
     } catch (err) {
-      sys.notify(t('shell.drop.failed', { count: src.files.length || src.entries.length }), errorText(err));
+      sys.notify(t('shell.drop.failed', { count: src.files.length || src.entries.length }), errorText(err, sys.vfs.quota));
     }
   }
 
@@ -251,7 +257,10 @@ export function mountFileDrop(sys: SystemAPI): void {
   }
 }
 
-function errorText(err: unknown): string {
+function errorText(err: unknown, quota: VFS['quota']): string {
   const msg = err instanceof Error ? err.message : String(err ?? '');
-  return /quota/i.test(msg) ? t('shell.drop.quota') : msg;
+  // Name the limit the user actually hit, using the numbers in force on this platform.
+  return /quota/i.test(msg)
+    ? t('shell.drop.quota', { file: formatBytes(quota.file), total: formatBytes(quota.total) })
+    : msg;
 }
