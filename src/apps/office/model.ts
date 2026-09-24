@@ -10,6 +10,8 @@
  * readers in `src/apps/viewer/formats.ts` actually do.
  */
 import { extensionOf } from '../viewer/formats';
+import type { DocBlock } from './writer/types';
+import { diffText, replaceText } from './writer/docops';
 
 /** The four shapes a file can have once read, plus plain text. */
 export type OfficeKind = 'docx' | 'xlsx' | 'pptx' | 'csv' | 'text';
@@ -41,10 +43,18 @@ export interface ParagraphFormat {
   /** Font size in points; Word stores half-points. */
   size?: number | null;
   align?: ParagraphAlign | null;
+  /** Paragraph direction, written as `<w:bidi/>` (the Writer's RTL/LTR buttons). */
+  dir?: 'rtl' | 'ltr' | null;
+  /** The paragraph style id (`<w:pStyle>`): Heading1, Title, Quote… */
+  style?: string | null;
+  /** A bulleted or numbered list (`<w:numPr>`); null takes a style's list away. */
+  list?: 'bullet' | 'number' | null;
+  /** Line spacing as a multiple of a single line (1, 1.15, 1.5, 2). */
+  line?: number | null;
 }
 
 /** The properties a format can carry, in one place for diffing and copying. */
-export const FORMAT_KEYS = ['bold', 'italic', 'underline', 'size', 'align'] as const;
+export const FORMAT_KEYS = ['bold', 'italic', 'underline', 'size', 'align', 'dir', 'style', 'list', 'line'] as const;
 
 /**
  * True when two formats say the same thing. `undefined` (leave the file's own
@@ -60,7 +70,17 @@ export function sameFormat(a: ParagraphFormat | undefined, b: ParagraphFormat | 
   return FORMAT_KEYS.every((key) => value(a, key) === value(b, key));
 }
 
-export interface DocModel { kind: 'docx'; paragraphs: string[]; formats?: Record<number, ParagraphFormat> }
+export interface DocModel {
+  kind: 'docx';
+  paragraphs: string[];
+  formats?: Record<number, ParagraphFormat>;
+  /**
+   * The rich paragraphs (runs with their own formatting, stable ids), parallel to
+   * `paragraphs` when the Writer opened the file. Absent in the plain model the
+   * older save path and its tests use.
+   */
+  blocks?: DocBlock[];
+}
 export interface SheetsModel {
   kind: 'xlsx' | 'csv';
   grids: Grid[];
@@ -334,8 +354,15 @@ export function paragraphEdit(index: number, before: string, after: string): Edi
     if (m.kind !== 'docx') return m;
     const paragraphs = m.paragraphs.slice();
     while (paragraphs.length <= index) paragraphs.push('');
+    const previous = paragraphs[index] ?? '';
     paragraphs[index] = text;
-    return { ...m, paragraphs };
+    // The rich runs follow the plain text: the change lands in the run it touches.
+    const blocks = m.blocks && m.blocks[index] ? m.blocks.slice() : m.blocks;
+    if (blocks && blocks[index]) {
+      const change = diffText(previous, text);
+      blocks[index] = { ...blocks[index], runs: replaceText(blocks[index].runs, change.start, change.start + change.del, change.ins) };
+    }
+    return blocks ? { ...m, paragraphs, blocks } : { ...m, paragraphs };
   };
   return {
     key: `para:${index}`,
@@ -478,8 +505,8 @@ export function textEdit(before: string, after: string): Edit {
 
 /* ───────────────────────────── history ───────────────────────────── */
 
-/** How many edit steps the user can walk back. The task asks for 30; 50 is cheap. */
-export const HISTORY_LIMIT = 50;
+/** How many edit steps the user can walk back (the suite promises at least 100). */
+export const HISTORY_LIMIT = 200;
 /** Two edits to the same target closer than this merge into one undo step. */
 export const COALESCE_MS = 700;
 

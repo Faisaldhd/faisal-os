@@ -56,6 +56,8 @@ import {
   paragraphText, parsePart, type XmlDoc, type XmlEdit, type XmlElement,
 } from './xmlscan';
 import { entryData, readRawZip, rebuildZip, utf8, type RawZip } from './zip';
+import type { OpaqueRun } from './writer/types';
+import { patchDocxRich } from './writer/docxpatch';
 import {
   formulaAt, gridWidth, sameFormat, type DeckModel, type DocModel, type Grid, type OfficeKind, type OfficeModel,
   type ParagraphFormat, type SheetsModel,
@@ -69,6 +71,8 @@ export interface PatchResult {
   bytes: Uint8Array;
   /** The parts that were rewritten (empty means the archive is untouched). */
   changed: string[];
+  /** New elements (pictures) whose markup the save generated: the model adopts it. */
+  materialized?: Array<{ run: OpaqueRun; xml: string }>;
 }
 
 /** The package kind of a format plan, or null for the formats written from text. */
@@ -87,6 +91,9 @@ export function snapshotModel(model: OfficeModel): OfficeModel {
       kind: 'docx',
       paragraphs: [...model.paragraphs],
       ...(model.formats ? { formats: Object.fromEntries(Object.entries(model.formats).map(([index, format]) => [index, { ...format }])) } : {}),
+      // Runs are never mutated by an edit (every edit builds new ones), so the
+      // snapshot can share them; only the list itself is copied.
+      ...(model.blocks ? { blocks: model.blocks.slice() } : {}),
     };
     case 'pptx': return { kind: 'pptx', slides: model.slides.map((slide) => [...slide]) };
     case 'text': return { kind: 'text', text: model.text };
@@ -116,6 +123,9 @@ export async function patchPackage(
     const archive = readRawZip(original);
     if (kind === 'docx') {
       if (baseline.kind !== 'docx' || current.kind !== 'docx') return null;
+      // The Writer's rich model (runs with their own formatting, stable paragraph
+      // ids) takes the run-aware path; the plain model keeps the original rules.
+      if (baseline.blocks && current.blocks) return await patchDocxRich(archive, baseline, current);
       return await patchDocx(archive, baseline, current);
     }
     if (kind === 'xlsx') {
@@ -135,7 +145,7 @@ function isSheets(model: OfficeModel): model is SheetsModel {
   return model.kind === 'xlsx' || model.kind === 'csv';
 }
 
-async function loadPart(archive: RawZip, name: string): Promise<{ bytes: Uint8Array; xml: string } | null> {
+export async function loadPart(archive: RawZip, name: string): Promise<{ bytes: Uint8Array; xml: string } | null> {
   const bytes = await entryData(archive, name);
   return bytes ? { bytes, xml: new TextDecoder().decode(bytes) } : null;
 }
@@ -163,7 +173,7 @@ export function textParts(text: string): TextPart[] {
 }
 
 /** Word keeps leading and trailing spaces only when `xml:space="preserve"` is set. */
-function textElement(tag: 'w:t' | 'a:t', open: string | null, value: string): string {
+export function textElement(tag: 'w:t' | 'a:t', open: string | null, value: string): string {
   let start = open ?? `<${tag} xml:space="preserve">`;
   if (!/xml:space\s*=/.test(start) && /^\s|\s$/.test(value)) start = `${start.slice(0, -1)} xml:space="preserve">`;
   return `${start}${xmlText(value)}</${tag}>`;
@@ -217,14 +227,14 @@ function textSequence(xml: string, anchor: XmlElement, parts: readonly TextPart[
  * instead of merely well-formed. Unknown children are treated as "after
  * everything", which keeps them at the end where they were.
  */
-const PPR_ORDER = [
+export const PPR_ORDER = [
   'pStyle', 'keepNext', 'keepLines', 'pageBreakBefore', 'framePr', 'widowControl', 'numPr', 'suppressLineNumbers',
   'pBdr', 'shd', 'tabs', 'suppressAutoHyphens', 'kinsoku', 'wordWrap', 'overflowPunct', 'topLinePunct',
   'autoSpaceDE', 'autoSpaceDN', 'bidi', 'adjustRightInd', 'snapToGrid', 'spacing', 'ind', 'contextualSpacing',
   'mirrorIndents', 'suppressOverlap', 'jc', 'textDirection', 'textAlignment', 'textboxTightWrap', 'outlineLvl',
   'divId', 'cnfStyle', 'rPr', 'sectPr', 'pPrChange',
 ];
-const RPR_ORDER = [
+export const RPR_ORDER = [
   'rStyle', 'rFonts', 'b', 'bCs', 'i', 'iCs', 'caps', 'smallCaps', 'strike', 'dstrike', 'outline', 'shadow',
   'emboss', 'imprint', 'noProof', 'snapToGrid', 'vanish', 'webHidden', 'color', 'spacing', 'w', 'kern',
   'position', 'sz', 'szCs', 'highlight', 'u', 'effect', 'bdr', 'shd', 'fitText', 'vertAlign', 'rtl', 'cs', 'em',
@@ -232,7 +242,7 @@ const RPR_ORDER = [
 ];
 
 /** Where a child with this name belongs inside a parent, per the schema order. */
-function insertPointIn(xml: string, parent: XmlElement, order: readonly string[], name: string): number {
+export function insertPointIn(xml: string, parent: XmlElement, order: readonly string[], name: string): number {
   const rank = (child: string): number => {
     const at = order.indexOf(child);
     return at < 0 ? order.length + 1 : at;
