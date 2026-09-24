@@ -9,7 +9,16 @@
  * selection changes no pixels" true by construction.
  */
 import type { Point, Rect } from './types';
-import { maskBounds } from './paint';
+import {
+  combineMasks, ellipseMask, invertMask, maskBounds, maskOutline, polygonMask, rectMask,
+} from './engine/select';
+
+/*
+ * The mask builders are the pixel engine's (engine/select.ts); this file only adds what the
+ * editor needs on top of a bare mask: the document-sized `Selection` with its bounds and exact
+ * outline, and the down-sampled edge trace for marching ants on huge masks.
+ */
+export { rectMask, ellipseMask, polygonMask };
 
 export type SelectionMode = 'replace' | 'add' | 'subtract' | 'intersect';
 
@@ -25,74 +34,6 @@ export interface Selection {
   bounds: Rect;
   /** Exact outline when the selection is one untouched shape; null → trace the mask. */
   outline: Outline | null;
-}
-
-export function rectMask(width: number, height: number, rect: Rect): Uint8Array {
-  const mask = new Uint8Array(width * height);
-  const x0 = Math.max(0, Math.round(rect.x));
-  const y0 = Math.max(0, Math.round(rect.y));
-  const x1 = Math.min(width, Math.round(rect.x + rect.w));
-  const y1 = Math.min(height, Math.round(rect.y + rect.h));
-  for (let y = y0; y < y1; y++) mask.fill(255, y * width + x0, y * width + x1);
-  return mask;
-}
-
-/** An ellipse inscribed in `rect`, anti-aliased on its rim with a 4×4 supersample. */
-export function ellipseMask(width: number, height: number, rect: Rect): Uint8Array {
-  const mask = new Uint8Array(width * height);
-  const rx = rect.w / 2;
-  const ry = rect.h / 2;
-  if (rx <= 0 || ry <= 0) return mask;
-  const cx = rect.x + rx;
-  const cy = rect.y + ry;
-  const y0 = Math.max(0, Math.floor(rect.y));
-  const y1 = Math.min(height, Math.ceil(rect.y + rect.h));
-  const x0 = Math.max(0, Math.floor(rect.x));
-  const x1 = Math.min(width, Math.ceil(rect.x + rect.w));
-  for (let y = y0; y < y1; y++) {
-    for (let x = x0; x < x1; x++) {
-      const ux = (x + 0.5 - cx) / rx;
-      const uy = (y + 0.5 - cy) / ry;
-      const d = ux * ux + uy * uy;
-      // Fully inside/outside away from the rim; supersample only near the boundary.
-      if (d < 0.85) { mask[y * width + x] = 255; continue; }
-      if (d > 1.2) continue;
-      let hits = 0;
-      for (let sy = 0; sy < 4; sy++) {
-        for (let sx = 0; sx < 4; sx++) {
-          const vx = (x + (sx + 0.5) / 4 - cx) / rx;
-          const vy = (y + (sy + 0.5) / 4 - cy) / ry;
-          if (vx * vx + vy * vy <= 1) hits++;
-        }
-      }
-      mask[y * width + x] = Math.round((hits / 16) * 255);
-    }
-  }
-  return mask;
-}
-
-/** A closed polygon (the lasso), even-odd rule, sampled at pixel centres. */
-export function polygonMask(width: number, height: number, points: readonly Point[]): Uint8Array {
-  const mask = new Uint8Array(width * height);
-  if (points.length < 3) return mask;
-  const xs: number[] = [];
-  for (let y = 0; y < height; y++) {
-    const py = y + 0.5;
-    xs.length = 0;
-    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
-      const a = points[i];
-      const b = points[j];
-      if ((a.y > py) !== (b.y > py)) xs.push(a.x + ((py - a.y) * (b.x - a.x)) / (b.y - a.y));
-    }
-    if (xs.length < 2) continue;
-    xs.sort((m, n) => m - n);
-    for (let k = 0; k + 1 < xs.length; k += 2) {
-      const from = Math.max(0, Math.ceil(xs[k] - 0.5));
-      const to = Math.min(width - 1, Math.floor(xs[k + 1] - 0.5));
-      if (to >= from) mask.fill(255, y * width + from, y * width + to + 1);
-    }
-  }
-  return mask;
 }
 
 function fromMask(width: number, height: number, mask: Uint8Array, outline: Outline | null): Selection | null {
@@ -112,14 +53,7 @@ export function combine(
     }
     return mode === 'replace' || !current ? fromMask(width, height, shape, outline) : null;
   }
-  const out = new Uint8Array(width * height);
-  const a = current.mask;
-  for (let i = 0; i < out.length; i++) {
-    if (mode === 'add') out[i] = Math.max(a[i], shape[i]);
-    else if (mode === 'subtract') out[i] = (a[i] * (255 - shape[i]) + 127) / 255;
-    else out[i] = (a[i] * shape[i] + 127) / 255;
-  }
-  return fromMask(width, height, out, null);
+  return fromMask(width, height, combineMasks(current.mask, shape, mode), null);
 }
 
 export function selectAll(width: number, height: number): Selection {
@@ -130,9 +64,7 @@ export function selectAll(width: number, height: number): Selection {
 /** Everything that was not selected becomes selected (and vice versa). */
 export function invertSelection(current: Selection | null, width: number, height: number): Selection | null {
   if (!current) return selectAll(width, height);
-  const out = new Uint8Array(width * height);
-  for (let i = 0; i < out.length; i++) out[i] = 255 - current.mask[i];
-  return fromMask(width, height, out, null);
+  return fromMask(width, height, invertMask(current.mask), null);
 }
 
 /** Selection from a ready-made mask (the magic wand). */
@@ -170,29 +102,11 @@ export function traceEdges(sel: Selection, maxSide = 1024): { scale: number; seg
     for (let x = 0; x < w; x++) {
       const sx = Math.min(sel.width - 1, x * scale + (scale >> 1));
       const sy = Math.min(sel.height - 1, y * scale + (scale >> 1));
-      on[y * w + x] = sel.mask[sy * sel.width + sx] >= 128 ? 1 : 0;
+      on[y * w + x] = sel.mask[sy * sel.width + sx] >= 128 ? 255 : 0;
     }
   }
-  const get = (x: number, y: number) => (x < 0 || y < 0 || x >= w || y >= h ? 0 : on[y * w + x]);
-  const segments: number[] = [];
-  // Horizontal edges: between row y-1 and y.
-  for (let y = 0; y <= h; y++) {
-    let start = -1;
-    for (let x = 0; x <= w; x++) {
-      const edge = x < w && get(x, y - 1) !== get(x, y);
-      if (edge && start < 0) start = x;
-      if (!edge && start >= 0) { segments.push(start * scale, y * scale, x * scale, y * scale); start = -1; }
-    }
-  }
-  // Vertical edges: between column x-1 and x.
-  for (let x = 0; x <= w; x++) {
-    let start = -1;
-    for (let y = 0; y <= h; y++) {
-      const edge = y < h && get(x - 1, y) !== get(x, y);
-      if (edge && start < 0) start = y;
-      if (!edge && start >= 0) { segments.push(x * scale, start * scale, x * scale, y * scale); start = -1; }
-    }
-  }
+  const segments = maskOutline(on, w, h);
+  if (scale > 1) for (let i = 0; i < segments.length; i++) segments[i] *= scale;
   return { scale, segments };
 }
 
