@@ -1,0 +1,373 @@
+/*
+ * Fai$al OS — DeepSeek Harness window styles.
+ *
+ * Layout contract: the toolbar is a fixed-height row (which may wrap) and the
+ * body fills the rest. The body holds two siblings: the persistent frame stage
+ * (only ever *hidden*, so a live chat survives the setup screen) and the panel
+ * host (the checking / setup card). Nothing here overflows the window
+ * horizontally, and the iframe is always 100% of its host.
+ *
+ * Logical properties + --faisal-* tokens only, following src/shell/theme.css.
+ */
+
+.faisal-dsh {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  inline-size: 100%;
+  min-block-size: 0;
+  min-inline-size: 0;
+  background: var(--faisal-bg, #f5f4f1);
+  color: var(--faisal-fg, #1a1d26);
+  font-family: var(--faisal-font, -apple-system, "Segoe UI", "Noto Sans Arabic", sans-serif);
+  font-size: 13px;
+}
+
+/* ── toolbar ─────────────────────────────────────────────────────────── */
+
+.faisal-dsh-bar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--faisal-surface, #fff);
+  border-block-end: 1px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+}
+
+/* The permanent identity badge: always visible, in every view, and it names the
+ * app — never a connection state (the probe cannot tell a 401 from a page). */
+.faisal-dsh-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--faisal-accent, #8f6412) 14%, var(--faisal-surface, #fff));
+  border: 1px solid color-mix(in srgb, var(--faisal-accent, #8f6412) 35%, transparent);
+  color: var(--faisal-fg, #1a1d26);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.faisal-dsh-badge::before {
+  content: '';
+  inline-size: 7px;
+  block-size: 7px;
+  border-radius: 50%;
+  background: var(--faisal-accent, #8f6412);
+}
+
+/* The endpoint may carry a long token; it is LTR, truncated, and never wraps. */
+.faisal-dsh-endpoint {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  max-inline-size: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--faisal-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--faisal-fg-muted, #565b67);
+}
+
+.faisal-dsh-status {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  font-size: 12px;
+  color: var(--faisal-fg-muted, #565b67);
+}
+
+.faisal-dsh-spacer { flex: 1 1 auto; }
+
+.faisal-dsh-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 32px;
+  block-size: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--faisal-radius-sm, 6px);
+  background: transparent;
+  color: var(--faisal-fg, #1a1d26);
+  font: inherit;
+  cursor: pointer;
+}
+.faisal-dsh-btn:hover { background: var(--faisal-surface-2, #ecebe6); }
+.faisal-dsh-btn svg { inline-size: 17px; block-size: 17px; }
+
+.faisal-dsh-action {
+  flex: none;
+  padding: 7px 14px;
+  border: 1px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+  border-radius: 999px;
+  background: var(--faisal-surface-2, #ecebe6);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.faisal-dsh-action:hover { filter: brightness(1.04); }
+.faisal-dsh-action.is-primary {
+  border-color: transparent;
+  background: var(--faisal-accent, #8f6412);
+  color: var(--faisal-accent-fg, #fff);
+  font-weight: 600;
+}
+
+.faisal-dsh-btn:focus-visible,
+.faisal-dsh-action:focus-visible,
+.faisal-dsh-copy:focus-visible,
+.faisal-dsh-doc:focus-visible,
+.faisal-dsh-input:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring, #8f6412);
+  outline-offset: 2px;
+}
+
+/* `hidden` must beat the display rules above, hence the explicit selectors. */
+.faisal-dsh-btn[hidden],
+.faisal-dsh-action[hidden],
+.faisal-dsh-stage[hidden] { display: none; }
+
+/* ── body: a persistent frame stage + a swappable panel ──────────────── */
+
+.faisal-dsh-body {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.faisal-dsh-stage {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.faisal-dsh-notices { flex: 0 0 auto; }
+
+.faisal-dsh-notice {
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--faisal-accent, #8f6412) 10%, var(--faisal-surface, #fff));
+  border-block-end: 1px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.faisal-dsh-framehost {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  min-inline-size: 0;
+}
+
+.faisal-dsh-frame {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  border: none;
+  background: #fff;
+}
+
+.faisal-dsh-panelhost {
+  flex: 1 1 auto;
+  min-block-size: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── checking / setup card ───────────────────────────────────────────── */
+
+.faisal-dsh-card {
+  flex: 0 0 auto;
+  inline-size: min(720px, calc(100% - 28px));
+  margin: 22px auto;
+  padding: 20px 22px;
+  background: var(--faisal-surface, #fff);
+  border: 1px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+  border-radius: var(--faisal-radius, 10px);
+  box-shadow: 0 8px 24px var(--faisal-shadow, rgba(11, 21, 48, 0.26));
+}
+.faisal-dsh-card:not(.is-setup) {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  inline-size: min(460px, calc(100% - 28px));
+  text-align: center;
+}
+
+.faisal-dsh-h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.faisal-dsh-p {
+  margin: 0 0 10px;
+  line-height: 1.75;
+}
+.faisal-dsh-p.is-muted { color: var(--faisal-fg-muted, #565b67); font-size: 12.5px; }
+.faisal-dsh-p.is-error { color: var(--faisal-danger, #c01c28); font-size: 12.5px; }
+
+.faisal-dsh-block {
+  margin-block-start: 16px;
+  padding-block-start: 14px;
+  border-block-start: 1px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+}
+.faisal-dsh-block.is-warning {
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--faisal-danger, #c01c28) 45%, transparent);
+  border-radius: var(--faisal-radius, 10px);
+  background: color-mix(in srgb, var(--faisal-danger, #c01c28) 7%, var(--faisal-surface, #fff));
+}
+
+.faisal-dsh-blocktitle {
+  font-weight: 700;
+  margin-block-end: 8px;
+}
+
+.faisal-dsh-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block-end: 8px;
+}
+
+.faisal-dsh-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--faisal-fg-muted, #565b67);
+}
+.faisal-dsh-spinner {
+  inline-size: 16px;
+  block-size: 16px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+  border-block-start-color: var(--faisal-accent, #8f6412);
+  animation: faisal-dsh-spin 0.8s linear infinite;
+}
+@keyframes faisal-dsh-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .faisal-dsh-spinner { animation: none; }
+}
+
+.faisal-dsh-url {
+  font-family: var(--faisal-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--faisal-fg-muted, #565b67);
+  overflow-wrap: anywhere;
+}
+
+/* ── endpoint form ───────────────────────────────────────────────────── */
+
+.faisal-dsh-label {
+  flex: 1 1 100%;
+  font-weight: 600;
+  margin-block-end: 2px;
+}
+
+.faisal-dsh-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.faisal-dsh-input {
+  flex: 1 1 240px;
+  min-inline-size: 0;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+  background: var(--faisal-surface-2, #ecebe6);
+  color: inherit;
+  font: inherit;
+  font-family: var(--faisal-font-mono, ui-monospace, monospace);
+  font-size: 12.5px;
+}
+.faisal-dsh-input:focus-visible { background: var(--faisal-surface, #fff); }
+
+/* ── copy-ready commands ─────────────────────────────────────────────── */
+
+.faisal-dsh-command { margin-block: 10px; }
+
+.faisal-dsh-commandhead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-block-end: 6px;
+}
+.faisal-dsh-commandlabel {
+  font-weight: 600;
+  font-size: 12.5px;
+}
+
+.faisal-dsh-copy {
+  flex: none;
+  padding: 5px 12px;
+  border: 1px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+  border-radius: 999px;
+  background: var(--faisal-surface-2, #ecebe6);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.faisal-dsh-pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px solid var(--faisal-border, rgba(14, 26, 58, 0.13));
+  border-radius: var(--faisal-radius-sm, 6px);
+  background: var(--faisal-surface-2, #ecebe6);
+  font-family: var(--faisal-font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre;
+}
+
+/* ── limits + docs ───────────────────────────────────────────────────── */
+
+.faisal-dsh-limits {
+  margin: 0;
+  padding-inline-start: 20px;
+  line-height: 1.8;
+}
+.faisal-dsh-limits li { margin-block-end: 4px; }
+
+.faisal-dsh-doc {
+  color: var(--faisal-accent, #8f6412);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* ── narrow window / touch ───────────────────────────────────────────── */
+
+/* The window is the container being sized (see .faisal-window-content in
+ * theme.css), so a narrow window reflows even on a wide screen. */
+@container faisal-window (max-width: 520px) {
+  .faisal-dsh-bar { gap: 6px; padding: 6px 8px; }
+  .faisal-dsh-endpoint { max-inline-size: 100%; flex: 1 1 100%; order: 10; }
+  .faisal-dsh-card { inline-size: calc(100% - 16px); margin-block: 12px; padding: 16px 14px; }
+}
+
+/* Touch: every control is at least 44x44 (WCAG 2.5.5). */
+@media (pointer: coarse) {
+  .faisal-dsh-btn { inline-size: 44px; block-size: 44px; }
+  .faisal-dsh-action { min-block-size: 44px; padding-inline: 18px; }
+  .faisal-dsh-copy { min-block-size: 44px; }
+  .faisal-dsh-input { min-block-size: 44px; padding-block: 10px; }
+}
