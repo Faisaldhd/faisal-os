@@ -90,6 +90,37 @@ function insertInto(target: Editable, text: string): boolean {
   return false;
 }
 
+export interface Point { x: number; y: number }
+export interface Size { width: number; height: number }
+
+/**
+ * Top-left corner for the panel opened at `pointer`, always fully inside the viewport.
+ *
+ * The panel prefers the room right/below the cursor and flips to the other side when that would
+ * push it off screen — the same rule the Windows clipboard panel uses. The final clamp is what
+ * keeps it usable on a 320px phone, where the panel is nearly as wide as the screen.
+ */
+export function placePanel(pointer: Point, size: Size, viewport: Size, gap = 12, margin = 8): { left: number; top: number } {
+  const maxLeft = Math.max(margin, viewport.width - size.width - margin);
+  const maxTop = Math.max(margin, viewport.height - size.height - margin);
+  const left = pointer.x + gap + size.width > viewport.width - margin ? pointer.x - gap - size.width : pointer.x + gap;
+  const top = pointer.y + gap + size.height > viewport.height - margin ? pointer.y - gap - size.height : pointer.y + gap;
+  return { left: Math.min(Math.max(left, margin), maxLeft), top: Math.min(Math.max(top, margin), maxTop) };
+}
+
+/**
+ * The two chords that open the clipboard: Ctrl+Alt+V anywhere, and Super+V where the page
+ * receives the Windows key (full screen).
+ *
+ * Shift is deliberately ignored on the Super chord: the owner wants Win+V to open even while
+ * Shift is held. It still suppresses the Ctrl+Alt chord, because Ctrl+Shift+V is "paste without
+ * formatting" inside apps (Terminal, Editor) and must stay theirs.
+ */
+export function isClipboardChord(ev: Pick<KeyboardEvent, 'ctrlKey' | 'altKey' | 'metaKey' | 'shiftKey'>): boolean {
+  if (ev.metaKey) return !ev.ctrlKey && !ev.altKey;
+  return ev.ctrlKey && ev.altKey && !ev.shiftKey;
+}
+
 /* ─────────────────────────────── the service ─────────────────────────────── */
 
 export interface ClipboardPanel {
@@ -131,12 +162,41 @@ export function mountClipboard(sys: SystemAPI): ClipboardPanel {
     } catch { /* read-only in this browser: button copies simply are not recorded */ }
   }
 
+  // 3. Where the pointer is, so the panel can open under the cursor. Tracked from mount —
+  // capture + passive, so an app that stops propagation cannot hide it and never blocks its own
+  // scrolling — and kept until the next pointer event, because the shortcut carries no
+  // coordinates of its own.
+  let pointer: Point | null = null;
+  const trackPointer = (ev: PointerEvent) => { pointer = { x: ev.clientX, y: ev.clientY }; };
+  window.addEventListener('pointermove', trackPointer, { passive: true, capture: true });
+  window.addEventListener('pointerdown', trackPointer, { passive: true, capture: true });
+
   /* ── the panel ── */
 
   let panel: HTMLElement | null = null;
   let list: HTMLElement;
   let target: Editable | null = null;
   let active = 0;
+
+  /**
+   * Opens the panel at the pointer, falling back to the top-right corner under the top bar when
+   * no pointer event has been seen yet (keyboard-only or touch session). Runs after the panel is
+   * in the DOM, because it needs the measured size to keep the panel inside the viewport, and
+   * again on resize so a rotated phone cannot leave it half off screen.
+   */
+  function place() {
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const anchor = pointer ?? {
+      x: viewport.width - 12,
+      y: (document.querySelector('.faisal-topbar')?.getBoundingClientRect().bottom ?? 0) + 12,
+    };
+    const { left, top } = placePanel(anchor, { width: rect.width, height: rect.height }, viewport);
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+  }
+  window.addEventListener('resize', place);
 
   function items(): HTMLButtonElement[] {
     return [...list.querySelectorAll<HTMLButtonElement>('.faisal-clip-item')];
@@ -230,6 +290,7 @@ export function mountClipboard(sys: SystemAPI): ClipboardPanel {
     panel.append(head, list, hint);
     document.body.append(panel);
     render();
+    place(); // at the pointer, and before focus so focusing cannot scroll away under the panel
     active = 0;
     items()[0]?.focus();
     document.addEventListener('pointerdown', onOutside, true);
@@ -273,12 +334,11 @@ export function mountClipboard(sys: SystemAPI): ClipboardPanel {
   }
 
   // Ctrl+Alt+V everywhere, Super+V where the page receives the Windows key (full screen).
+  // Shift never blocks the Super chord (the owner asked for that explicitly).
   // Capture phase, so the Terminal never receives the chord as input.
   window.addEventListener('keydown', (ev) => {
     const isV = ev.code === 'KeyV' || ev.key.toLowerCase() === 'v';
-    if (!isV || ev.isComposing || ev.shiftKey) return;
-    const chord = (ev.ctrlKey && ev.altKey && !ev.metaKey) || (ev.metaKey && !ev.ctrlKey && !ev.altKey);
-    if (!chord) return;
+    if (!isV || ev.isComposing || !isClipboardChord(ev)) return;
     ev.preventDefault();
     ev.stopPropagation();
     if (panel) close(); else open();
