@@ -45,6 +45,11 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
     // Windows snipping shortcut. The OS takes Win+Shift+S unless the page is in full screen (Keyboard Lock).
     if (ev.metaKey && ev.shiftKey && isKey(ev, 'S')) { ev.preventDefault(); overview.close(); screenshot.capture(); }
   });
+  // Any other key pressed while Super is held makes it a chord (Super+V, Super+D…), never a lone
+  // tap. Capture phase, so a shortcut that stops the event (the clipboard's Super+V) still counts.
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Meta' && ev.key !== 'OS') superAlone = false;
+  }, true);
   window.addEventListener('keyup', (ev) => {
     if ((ev.key === 'Meta' || ev.key === 'OS') && superAlone) { superAlone = false; ev.preventDefault(); overview.toggle(); }
   });
