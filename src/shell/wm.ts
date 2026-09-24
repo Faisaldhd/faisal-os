@@ -165,6 +165,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
       rec.minimized = false;
       rec.el.classList.remove('is-minimized');
       rec.obs?.observe(rec.contentEl);
+      syncMaximizedDock(); // back on screen, a maximized window takes the dock's row again
       changed(id);
     }
     desktopShown = null;
@@ -191,6 +192,7 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
     rec.el.classList.add('is-minimized');
     // A display:none element measures 0×0; apps must not re-layout on that.
     rec.obs?.unobserve(rec.contentEl);
+    syncMaximizedDock(); // an off-screen window may not keep the dock hidden
     changed(id);
     if (focusedId === id) focusTopmost();
   }
@@ -220,14 +222,19 @@ export function createWindowManager(root: HTMLElement, bus: EventBus): WindowMan
    * same tick, so the freed row is actually used.
    *
    * Only an explicit user maximize counts: the narrow-screen/touch auto-fill is not a choice
-   * about chrome, and hiding the launcher strip on a phone would strand the user.
+   * about chrome, and hiding the launcher strip on a phone would strand the user. A minimized
+   * window does not count either: it is off screen, so keeping the strip hidden while it is
+   * minimized (or while a *restored* copy of the app is open) would leave the user with no dock
+   * and no way back to it.
+   *
+   * Callers: maximize/restore, minimize, restore-from-minimize, close and the resize relayout.
    *
    * It emits nothing: the state change that flipped the row already emitted `window:change`,
    * and geometry writes during a relayout are not events either. Apps still see their new size
    * through the per-window ResizeObserver on their content element.
    */
   function syncMaximizedDock() {
-    const want = [...wins.values()].some((r) => r.maximized && !r.autoMaximized);
+    const want = [...wins.values()].some((r) => r.maximized && !r.autoMaximized && !r.minimized);
     if (root.classList.contains('has-maximized-window') === want) return;
     root.classList.toggle('has-maximized-window', want);
     for (const rec of wins.values()) {
