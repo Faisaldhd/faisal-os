@@ -2550,6 +2550,7 @@ function launch(ctx: AppContext): void {
     refreshPageBox();
   }
 
+  let lastZoom = 1;
   function refreshZoomBox(): void {
     const pct = Math.round(viewer.zoom * 100);
     zoomSlider.value = String(pct);
@@ -2559,7 +2560,9 @@ function launch(ctx: AppContext): void {
     zoomValue.setAttribute('aria-label', `${t('pdf.zoomLevel')}: ${pct}%`);
     zoomOutBtn.disabled = viewer.zoom <= ZOOM_MIN + 0.001;
     zoomInBtn.disabled = viewer.zoom >= ZOOM_MAX - 0.001;
-    cancelPlacement();
+    // A box being placed is in screen pixels: a real zoom change drops it, a redraw at the same zoom keeps it.
+    if (Math.abs(viewer.zoom - lastZoom) > 0.0001) cancelPlacement();
+    lastZoom = viewer.zoom;
   }
 
   function zoomStep(dir: 1 | -1): void {
