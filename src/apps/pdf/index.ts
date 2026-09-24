@@ -272,6 +272,8 @@ function launch(ctx: AppContext): void {
 
   root.append(bar, tabs, ribbon, banner, main, statusbar, start, fail, progress);
   win.content.append(root);
+  // Start fetching the page renderer now, in parallel with reading and checking the file.
+  if (args[0]) void loadEngine();
 
   /* ───────────────────────────── state ───────────────────────────── */
 

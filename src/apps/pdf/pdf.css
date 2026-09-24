@@ -1332,7 +1332,7 @@
   .faisal-pdf-group { flex-direction: row; padding: 0; border: 0; }
   .faisal-pdf-grouplabel { display: none; }
   .faisal-pdf-rbtn { min-width: 60px; min-height: 52px; }
-  .faisal-pdf-morebtn { display: inline-flex; position: sticky; inset-inline-end: 0; background: var(--app-glass-strong); }
+  .faisal-pdf-morebtn { display: inline-flex; position: sticky; inset-inline-end: 0; background: var(--faisal-surface, #1f2533); box-shadow: -8px 0 12px -8px rgba(0, 0, 0, .4); }
 
   .faisal-pdf-statusbar { --pdf-status-h: 44px; gap: 4px; padding: 0 4px; }
   .faisal-pdf-statusbar .faisal-pdf-sbtn { min-width: 44px; min-height: 44px; }
