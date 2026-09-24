@@ -83,12 +83,16 @@ function widgetRefs(doc: PDFDocument, field: PDFField): (PDFRef | undefined)[] {
 function widgetsOf(doc: PDFDocument, field: PDFField): FieldWidget[] {
   const refs = widgetRefs(doc, field);
   const radio = field instanceof PDFRadioGroup;
-  return field.acroField.getWidgets().map((w, i) => {
+  // With /Opt the on-values are indices ("0", "1"…); the options list gives the real labels.
+  const labels = radio ? (() => { try { return (field as PDFRadioGroup).getOptions(); } catch { return []; } })() : [];
+  const widgets = field.acroField.getWidgets();
+  return widgets.map((w, i) => {
     const r = w.getRectangle();
     const out: FieldWidget = { page: pageOfWidget(doc, w, refs[i]), rect: { x: round2(r.x), y: round2(r.y), width: round2(r.width), height: round2(r.height) } };
     if (radio) {
       const on = w.getOnValue();
-      if (on) out.option = on.decodeText();
+      if (labels.length === widgets.length) out.option = labels[i];
+      else if (on) out.option = on.decodeText();
     }
     return out;
   });
@@ -283,11 +287,26 @@ export async function flattenForm(bytes: Uint8Array, opts: { arabicFont?: Uint8A
       }
     }
     form.flatten({ updateFieldAppearances: false });
+    // pdf-lib 1.17 deletes the widget objects but leaves their refs in /Annots; a dangling ref
+    // is a broken file for strict readers, so they are dropped here.
+    for (const page of doc.getPages()) {
+      const annots = page.node.Annots();
+      if (!annots) continue;
+      for (let i = annots.size() - 1; i >= 0; i--) {
+        const ref = annots.get(i);
+        if (ref instanceof PDFRef && !doc.context.lookup(ref)) annots.remove(i);
+      }
+      if (!annots.size()) page.node.delete(PDFName.of('Annots'));
+    }
     return `flattened fields=${infos.length}`;
   }, (doc) => {
     const bad: string[] = [];
     const left = doc.catalog.getAcroForm() ? doc.getForm().getFields().length : 0;
     if (left) bad.push(`${left} fields left after flatten`);
+    doc.getPages().forEach((page, i) => {
+      const annots = page.node.Annots();
+      if (annots?.asArray().some((o) => o instanceof PDFRef && !doc.context.lookup(o))) bad.push(`page ${i + 1} has dangling annotation refs`);
+    });
     for (const p of pagesWithWidgets) {
       if (!/\bDo\b/.test(pageContent(doc, p))) bad.push(`page ${p + 1} shows no flattened field`);
     }

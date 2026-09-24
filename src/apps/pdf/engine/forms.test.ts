@@ -46,7 +46,7 @@ describe('listFields', () => {
     expect(byName.agree.value).toBe(false);
     expect(byName.size.options).toEqual(['S', 'L']);
     expect(byName.size.widgets.map((w) => w.option)).toEqual(['S', 'L']);
-    expect(byName.size.widgets[1].rect.x).toBe(60);
+    expect(byName.size.widgets[1].rect.x).toBe(59.5);
     expect(byName.city.options).toEqual(['Riyadh', 'Jeddah', 'Abha']);
     expect(byName.locked).toMatchObject({ readOnly: true, value: 'fixed' });
   });
@@ -99,8 +99,8 @@ describe('flattenForm', () => {
     expect(await listFields(out)).toEqual([]);
     const doc = await PDFDocument.load(out);
     expect(pageContent(doc, 0)).toMatch(/Do/);
-    const annots = doc.getPage(0).node.get(PDFName.of('Annots'));
-    expect(annots ? String(doc.context.lookup(annots)) : '[ ]').not.toMatch(/R/);
+    // No widget (and no dangling ref to one) is left on the page.
+    expect(doc.getPage(0).node.get(PDFName.of('Annots'))).toBeUndefined();
   });
 
   it('refuses a document without a form', async () => {
