@@ -1821,115 +1821,6 @@ body {
   .faisal-drop-badge { animation: none; transition: none; }
 }
 
-/* ===================== Phase 7: the compact shell (mobile layout fixes) =====================
- * One separate block, appended, so it never mixes with the rules above and stays trivial to
- * merge. It fixes what a phone really showed:
- *   1. the Activities dock was 1074px inside a 390px screen (the first and last launcher were
- *      cropped at both ends, 10 of 15 off-screen), and the pinned dock squeezed its launchers
- *      down to 36–41px — below the 44px touch minimum;
- *   2. that strip also ate 104px of the bottom of the screen (an app's own bottom row sat right
- *      against it, and the app grid's last row was cut by it);
- *   3. desktop icons could still show through / beside an app's surface.
- *
- * How it is driven: `dock.ts` measures the strip's real width (ResizeObserver on the shell root)
- * and publishes `--faisal-dock-item`, `--faisal-dock-gap` and `--faisal-dock-pad`; the classes
- * below only consume them. `is-compact` mirrors `device.ts`'s NARROW_BREAKPOINT (700) and the
- * media query at the end of this block is the no-JS/first-paint fallback for it.
- * ========================================================================================== */
-
-:root {
-  --faisal-dock-gap: 10px;
-  --faisal-dock-pad: 16px;
-  /* Wide default; `dock.ts` writes the measured value on the strip itself. */
-  --faisal-dock-item: 56px;
-}
-
-/* Both strips (the pinned dock and the Activities dock) are scrollports: whatever the dash list
- * grows to, the strip can never be wider than the screen. The fitting in `dock.ts` is what keeps
- * a phone from needing this, so a partial launcher at an edge is only ever a very long list. */
-.faisal-dock-strip {
-  max-width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-  /* The strip's own inline padding sits INSIDE the scrollport, so after scrolling to either end
-   * the first/last launcher is fully on screen instead of half under the rounded edge. */
-  scroll-padding-inline: var(--faisal-dock-pad, 16px);
-  gap: var(--faisal-dock-gap, 10px);
-  padding: 10px var(--faisal-dock-pad, 16px);
-}
-.faisal-dock-strip::-webkit-scrollbar { display: none; }
-
-/* A launcher never shrinks: the fitted size is published as a token and `flex: none` keeps the
- * strip's own overflow from squeezing it below the 44px touch minimum. */
-.faisal-dock-strip .faisal-dock-btn {
-  flex: none;
-  position: relative;
-  width: var(--faisal-dock-item, 56px);
-  height: var(--faisal-dock-item, 56px);
-}
-.faisal-dock-strip .faisal-dock-btn svg {
-  width: var(--faisal-dock-item, 56px);
-  height: var(--faisal-dock-item, 56px);
-}
-
-/* "More apps": one tap for the launchers the strip had no room for (the Activities grid holds
- * them all). Same size as every other launcher, so it is just as easy to hit. */
-.faisal-dock-more { color: var(--faisal-accent); opacity: 0.9; }
-.faisal-dock-more::before {
-  content: "";
-  position: absolute;
-  inset: 8px;
-  border-radius: 10px;
-  border: 1px dashed color-mix(in srgb, var(--faisal-accent, #E3B650) 38%, transparent);
-  pointer-events: none;
-}
-.faisal-dock-more:hover { opacity: 1; }
-
-/* Compact shell (window narrower than NARROW_BREAKPOINT, measured — see device.ts). */
-.faisal-desktop.is-compact {
-  --faisal-dock-gap: 6px;
-  --faisal-dock-pad: 8px;
-  --faisal-dock-item: 44px;
-}
-
-/* The dock gives back the vertical space a phone cannot spare: 8px of strip padding and one
- * 44px row instead of a 104px band, so an open app keeps its bottom bar and the app grid keeps
- * its last row. The running dot sits 7px under the launcher, hence the 8px floor. */
-.faisal-desktop.is-compact .faisal-dock-bar {
-  padding-block: 4px calc(6px + env(safe-area-inset-bottom, 0px));
-}
-.faisal-desktop.is-compact .faisal-dock-strip {
-  padding-block: 8px;
-  border-radius: 16px;
-}
-/* The Activities dock lifts its own 22px bottom margin on a phone; the gesture bar keeps 4px. */
-.faisal-desktop.is-compact .faisal-overview { padding-block-end: calc(4px + env(safe-area-inset-bottom, 0px)); }
-.faisal-desktop.is-compact .faisal-overview .faisal-dock { margin-block-end: 0; }
-
-/* An app owns the whole compact surface, so the desktop icon layer steps aside while one is on
- * screen: it can never show through an app, peek out beside it, or be tapped behind it. The
- * icons come back the moment no app is open (`has-window` is kept by wm.ts). */
-.faisal-desktop.is-compact.has-window .faisal-desktop-icons { visibility: hidden; }
-
-/* No-JS / first-paint fallback for `is-compact`: the same numbers as the measured flag.
- * `699` mirrors `width < 700` in device.ts, exactly like the Phase 6 block above. */
-@media (max-width: 699px) {
-  .faisal-desktop {
-    --faisal-dock-gap: 6px;
-    --faisal-dock-pad: 8px;
-    --faisal-dock-item: 44px;
-  }
-  .faisal-desktop .faisal-dock-strip {
-    padding-block: 8px;
-    border-radius: 16px;
-  }
-  .faisal-desktop .faisal-dock-bar {
-    padding-block: 4px calc(6px + env(safe-area-inset-bottom, 0px));
-  }
-  .faisal-desktop .faisal-overview { padding-block-end: calc(4px + env(safe-area-inset-bottom, 0px)); }
-  .faisal-desktop .faisal-overview .faisal-dock { margin-block-end: 0; }
 /* ═══════════════════ «حفظ باسم / تصدير» — the shared save dialog (src/shell/save-as.ts) ═══════════════════
  *
  * One dialog for Office, PDF and Photo. It follows the suite's design bar literally: glass-first
@@ -2317,4 +2208,115 @@ body {
   .faisal-saveas-iconbtn,
   .faisal-saveas-input,
   .faisal-saveas-select { animation: none; transition: none; }
+}
+
+/* ===================== Phase 7: the compact shell (mobile layout fixes) =====================
+ * One separate block, appended, so it never mixes with the rules above and stays trivial to
+ * merge. It fixes what a phone really showed:
+ *   1. the Activities dock was 1074px inside a 390px screen (the first and last launcher were
+ *      cropped at both ends, 10 of 15 off-screen), and the pinned dock squeezed its launchers
+ *      down to 36–41px — below the 44px touch minimum;
+ *   2. that strip also ate 104px of the bottom of the screen (an app's own bottom row sat right
+ *      against it, and the app grid's last row was cut by it);
+ *   3. desktop icons could still show through / beside an app's surface.
+ *
+ * How it is driven: `dock.ts` measures the strip's real width (ResizeObserver on the shell root)
+ * and publishes `--faisal-dock-item`, `--faisal-dock-gap` and `--faisal-dock-pad`; the classes
+ * below only consume them. `is-compact` mirrors `device.ts`'s NARROW_BREAKPOINT (700) and the
+ * media query at the end of this block is the no-JS/first-paint fallback for it.
+ * ========================================================================================== */
+
+:root {
+  --faisal-dock-gap: 10px;
+  --faisal-dock-pad: 16px;
+  /* Wide default; `dock.ts` writes the measured value on the strip itself. */
+  --faisal-dock-item: 56px;
+}
+
+/* Both strips (the pinned dock and the Activities dock) are scrollports: whatever the dash list
+ * grows to, the strip can never be wider than the screen. The fitting in `dock.ts` is what keeps
+ * a phone from needing this, so a partial launcher at an edge is only ever a very long list. */
+.faisal-dock-strip {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  /* The strip's own inline padding sits INSIDE the scrollport, so after scrolling to either end
+   * the first/last launcher is fully on screen instead of half under the rounded edge. */
+  scroll-padding-inline: var(--faisal-dock-pad, 16px);
+  gap: var(--faisal-dock-gap, 10px);
+  padding: 10px var(--faisal-dock-pad, 16px);
+}
+.faisal-dock-strip::-webkit-scrollbar { display: none; }
+
+/* A launcher never shrinks: the fitted size is published as a token and `flex: none` keeps the
+ * strip's own overflow from squeezing it below the 44px touch minimum. */
+.faisal-dock-strip .faisal-dock-btn {
+  flex: none;
+  position: relative;
+  width: var(--faisal-dock-item, 56px);
+  height: var(--faisal-dock-item, 56px);
+}
+.faisal-dock-strip .faisal-dock-btn svg {
+  width: var(--faisal-dock-item, 56px);
+  height: var(--faisal-dock-item, 56px);
+}
+
+/* "More apps": one tap for the launchers the strip had no room for (the Activities grid holds
+ * them all). Same size as every other launcher, so it is just as easy to hit. */
+.faisal-dock-more { color: var(--faisal-accent); opacity: 0.9; }
+.faisal-dock-more::before {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  border-radius: 10px;
+  border: 1px dashed color-mix(in srgb, var(--faisal-accent, #E3B650) 38%, transparent);
+  pointer-events: none;
+}
+.faisal-dock-more:hover { opacity: 1; }
+
+/* Compact shell (window narrower than NARROW_BREAKPOINT, measured — see device.ts). */
+.faisal-desktop.is-compact {
+  --faisal-dock-gap: 6px;
+  --faisal-dock-pad: 8px;
+  --faisal-dock-item: 44px;
+}
+
+/* The dock gives back the vertical space a phone cannot spare: 8px of strip padding and one
+ * 44px row instead of a 104px band, so an open app keeps its bottom bar and the app grid keeps
+ * its last row. The running dot sits 7px under the launcher, hence the 8px floor. */
+.faisal-desktop.is-compact .faisal-dock-bar {
+  padding-block: 4px calc(6px + env(safe-area-inset-bottom, 0px));
+}
+.faisal-desktop.is-compact .faisal-dock-strip {
+  padding-block: 8px;
+  border-radius: 16px;
+}
+/* The Activities dock lifts its own 22px bottom margin on a phone; the gesture bar keeps 4px. */
+.faisal-desktop.is-compact .faisal-overview { padding-block-end: calc(4px + env(safe-area-inset-bottom, 0px)); }
+.faisal-desktop.is-compact .faisal-overview .faisal-dock { margin-block-end: 0; }
+
+/* An app owns the whole compact surface, so the desktop icon layer steps aside while one is on
+ * screen: it can never show through an app, peek out beside it, or be tapped behind it. The
+ * icons come back the moment no app is open (`has-window` is kept by wm.ts). */
+.faisal-desktop.is-compact.has-window .faisal-desktop-icons { visibility: hidden; }
+
+/* No-JS / first-paint fallback for `is-compact`: the same numbers as the measured flag.
+ * `699` mirrors `width < 700` in device.ts, exactly like the Phase 6 block above. */
+@media (max-width: 699px) {
+  .faisal-desktop {
+    --faisal-dock-gap: 6px;
+    --faisal-dock-pad: 8px;
+    --faisal-dock-item: 44px;
+  }
+  .faisal-desktop .faisal-dock-strip {
+    padding-block: 8px;
+    border-radius: 16px;
+  }
+  .faisal-desktop .faisal-dock-bar {
+    padding-block: 4px calc(6px + env(safe-area-inset-bottom, 0px));
+  }
+  .faisal-desktop .faisal-overview { padding-block-end: calc(4px + env(safe-area-inset-bottom, 0px)); }
+  .faisal-desktop .faisal-overview .faisal-dock { margin-block-end: 0; }
 }
