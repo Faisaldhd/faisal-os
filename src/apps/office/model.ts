@@ -507,6 +507,13 @@ export class History {
   get dirty(): boolean { return this.saved !== this.cursor; }
   get undoSteps(): number { return this.cursor; }
   get redoSteps(): number { return this.edits.length - this.cursor; }
+  /**
+   * The edits recorded right now — the steps the owner can walk back. This is what
+   * the status bar's "edits" number reads (`stats.ts`), so it counts undoable steps,
+   * not keystrokes: a burst of typing in one place merges into one step, and the
+   * number stops at the history's own limit.
+   */
+  get steps(): number { return this.edits.length; }
 
   push(edit: Edit): void {
     const last = this.cursor > 0 ? this.edits[this.cursor - 1] : undefined;

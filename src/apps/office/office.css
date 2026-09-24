@@ -6,7 +6,10 @@
  *  • every button is at least 44px tall (the touch-target rule), and no action is
  *    reachable only by hovering;
  *  • the spreadsheet scrolls in both directions instead of shrinking its cells,
- *    and keeps its column order left-to-right even in the Arabic RTL window.
+ *    and keeps its column order left-to-right even in the Arabic RTL window;
+ *  • the bottom bar, the find panel and the import/export panel wrap the same way,
+ *    and focus mode hides every toolbar with the existing tokens and logical
+ *    properties only (no colour is invented, and both themes stay readable).
  */
 
 .faisal-office {
@@ -18,6 +21,14 @@
   color: var(--faisal-fg, #eceef3);
   font-family: var(--faisal-font, -apple-system, "Segoe UI", "Noto Sans Arabic", sans-serif);
 }
+
+/*
+ * `hidden` has to win here: an author rule like `.faisal-office-find { display: flex }`
+ * beats the browser's own `[hidden] { display: none }`, so a bar the window switches
+ * off would otherwise keep showing. This is what really hides the sheet tools, the
+ * Word formatting bar, the notice and the find panel when they are not wanted.
+ */
+.faisal-office [hidden] { display: none; }
 
 /* ───────────────────────────── toolbar ───────────────────────────── */
 
@@ -349,6 +360,132 @@
   white-space: nowrap;
 }
 
+/* ─────────────── find & replace, and local import / export ─────────────── */
+
+/*
+ * Two rows that wrap: the find toggle and the (collapsed) import/export panel on the
+ * first, the find panel on the second when it is open. Nothing overflows at 320px —
+ * the panel body takes the full width whenever it is open.
+ */
+.faisal-office-extras {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--faisal-surface-3, #343d52);
+  border-block-end: 1px solid var(--faisal-border, rgba(255,255,255,.11));
+}
+.faisal-office-io { flex: 0 1 auto; min-width: 0; }
+.faisal-office-io[open] { flex: 1 1 100%; }
+.faisal-office-io > .faisal-office-summary {
+  min-height: 44px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  list-style-position: inside;
+  cursor: pointer;
+  font-size: 13px;
+  border: 1px solid var(--faisal-border, rgba(255,255,255,.18));
+  border-radius: var(--faisal-radius-sm, 6px);
+  background: var(--faisal-surface-2, #283042);
+}
+.faisal-office-iobody { padding-block-start: 8px; }
+.faisal-office-iorow { display: flex; flex-wrap: wrap; gap: 6px; }
+.faisal-office-ionotes {
+  margin: 8px 0 0;
+  padding-inline-start: 18px;
+  font-size: 12px;
+  line-height: 1.6;
+  opacity: .85;
+}
+.faisal-office-ionotes li { overflow-wrap: anywhere; }
+.faisal-office-fileinput { display: none; }
+
+.faisal-office-find {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 10px;
+  background: var(--faisal-surface-2, #283042);
+  border-block-end: 1px solid var(--faisal-border, rgba(255,255,255,.11));
+}
+.faisal-office-findinput {
+  flex: 1 1 140px;
+  min-width: 0;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--faisal-border, rgba(255,255,255,.18));
+  border-radius: var(--faisal-radius-sm, 6px);
+  background: var(--faisal-surface-3, #343d52);
+  color: inherit;
+  font: inherit;
+}
+.faisal-office-findcount { flex: 1 1 100%; font-size: 12.5px; overflow-wrap: anywhere; }
+.faisal-office-findnote { flex: 1 1 100%; font-size: 12px; opacity: .75; overflow-wrap: anywhere; }
+
+/* ─────────────────────────── bottom status bar ─────────────────────────── */
+
+/*
+ * The three live counts and the focus toggle, at the very bottom. It wraps, so 320px
+ * shows the counts on one line and the toggle on the next rather than pushing either
+ * off screen. `overflow-wrap` keeps a long number from widening the window.
+ */
+.faisal-office-stats {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: var(--faisal-surface-3, #343d52);
+  border-block-start: 1px solid var(--faisal-border, rgba(255,255,255,.11));
+}
+.faisal-office-stat { overflow-wrap: anywhere; }
+.faisal-office-focusbtn { margin-inline-start: auto; }
+
+/* ───────────────────────────── focus mode ───────────────────────────── */
+
+/*
+ * Focus / dark reading: every toolbar and panel is hidden and only the text and the
+ * bottom bar remain. The colours are the existing tokens, so both themes stay as
+ * readable as they are everywhere else — nothing new is invented here. Logical
+ * properties only, so the Arabic RTL and the English LTR layouts are the same rule.
+ */
+.faisal-office.is-focus .faisal-office-bar,
+.faisal-office.is-focus .faisal-office-tools,
+.faisal-office.is-focus .faisal-office-format,
+.faisal-office.is-focus .faisal-office-extras,
+.faisal-office.is-focus .faisal-office-find,
+.faisal-office.is-focus .faisal-office-notice,
+.faisal-office.is-focus .faisal-office-limits,
+.faisal-office.is-focus .faisal-office-footer { display: none; }
+
+.faisal-office.is-focus .faisal-office-body { background: var(--faisal-bg, #151a26); }
+.faisal-office.is-focus .faisal-office-doc,
+.faisal-office.is-focus .faisal-office-slides { width: min(860px, 100%); }
+.faisal-office.is-focus .faisal-office-para {
+  border-color: transparent;
+  background: transparent;
+  line-height: 2;
+}
+.faisal-office.is-focus .faisal-office-text { padding: 20px 16px; line-height: 1.9; }
+.faisal-office.is-focus .faisal-office-slide { background: transparent; }
+
+/* The print-ready page lives in a size-zero frame: hidden frames are not printed. */
+.faisal-office-printframe {
+  position: fixed;
+  inset-block-end: 0;
+  inset-inline-end: 0;
+  width: 0;
+  height: 0;
+  border: 0;
+}
+
 /* ─────────────────────────── narrow screens ─────────────────────────── */
 
 @media (max-width: 390px) {
@@ -357,6 +494,8 @@
   .faisal-office-para-index { min-width: 100%; padding-block-start: 0; }
   .faisal-office-para { flex-basis: 100%; }
   .faisal-office-cell { min-width: 84px; }
+  .faisal-office-find .faisal-office-btn { flex: 1 1 calc(50% - 6px); padding: 0 8px; }
+  .faisal-office-focusbtn { flex: 1 1 100%; margin-inline-start: 0; }
 }
 
 /* Touch: rows in the grid get the same 44px target as the buttons. */

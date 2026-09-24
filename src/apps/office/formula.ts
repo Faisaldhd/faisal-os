@@ -11,7 +11,7 @@
  * parse is not a formula at all (`ok: false`), and the caller stores the typed
  * text as a plain value rather than pretending.
  */
-import type { Grid, SheetsModel } from './model';
+import { gridAt, type CellState, type Grid, type SheetsModel } from './model';
 import { columnIndex } from '../viewer/formats';
 import { columnName, isNumericText } from './xml';
 
@@ -286,6 +286,28 @@ export function evaluateFormula(input: string, grid: Grid, self: Cell | null = n
   if (!node) return { ok: false, value: '#VALUE!', canonical: null };
   const value = evaluate(node, { grid, self });
   return { ok: true, value: isError(value) ? value : formatNumber(value), canonical: serialize(node) };
+}
+
+/**
+ * The cell state a piece of text means when it is put into a cell. Shared by the
+ * cell input and by find & replace, so the two can never disagree about what typing
+ * in a cell does: in an .xlsx a text starting with `=` is evaluated at once — the
+ * result goes into the grid, the canonical formula into `<f>` — while anything else,
+ * including a half-typed formula, stays plain text. A CSV has no formulas at all.
+ */
+export function cellStateForText(
+  model: SheetsModel,
+  sheet: number,
+  row: number,
+  col: number,
+  text: string,
+): CellState {
+  if (model.kind !== 'xlsx' || !text.trimStart().startsWith('=')) return { value: text };
+  const grid = gridAt(model, sheet);
+  const outcome = grid ? evaluateFormula(text.trim(), grid, { row, col }) : null;
+  return outcome?.ok && outcome.canonical
+    ? { value: outcome.value, formula: `=${outcome.canonical}` }
+    : { value: text };
 }
 
 /**

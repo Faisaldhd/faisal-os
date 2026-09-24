@@ -17,7 +17,13 @@
  *    the app says so first and rebuilds the package, and the `.bak` keeps the
  *    previous bytes either way;
  *  • honest about everything it cannot do: the limits panel is generated from the
- *    same table the tests verify, not from prose that could drift.
+ *    same table the tests verify, not from prose that could drift;
+ *  • local-first around the edges: a bottom bar counts words, characters and recorded
+ *    edits while the owner types, one small panel finds and replaces inside the
+ *    document, a focus toggle hides every toolbar to leave the text alone, and files
+ *    come in and out through the browser alone — `<input type="file">` or a drop for
+ *    `.txt`/`.csv`, a direct download for `.txt`/`.csv`/`.html`, and the browser's own
+ *    print-to-PDF for a PDF. No server, no cloud, nothing uploaded.
  *
  * Safety rules that hold everywhere below:
  *  • every piece of text is put into the DOM with `textContent` (or `value`),
@@ -35,16 +41,22 @@ import { shellConfirm } from '../../shell/dialog';
 import { MAX_COLS, MAX_ROWS } from '../viewer/formats';
 import { columnName } from './xml';
 import {
-  History, VERIFIED_FORMATS, addColumnEdit, addRowEdit, canDeleteColumn, canDeleteRow,
+  HISTORY_LIMIT, History, VERIFIED_FORMATS, addColumnEdit, addRowEdit, canDeleteColumn, canDeleteRow,
   clearTruncated, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit, gridAt, gridWidth, isTruncated,
   paragraphEdit, paragraphFormatAt, paragraphFormatEdit, planFor, slideTextEdit, textEdit,
   type CellState, type DeckModel, type DocModel, type Edit, type FormatPlan, type OfficeModel,
   type ParagraphAlign, type ParagraphFormat, type SheetsModel, type SupportLevel, type TextModel,
 } from './model';
-import { computeFormulaCells, evaluateFormula } from './formula';
+import { cellStateForText, computeFormulaCells } from './formula';
 import { loadOfficeFile, serializeModel, type LoadRefusal } from './file';
 import { patchPackage, packageKind, snapshotModel, type PatchResult } from './patch';
 import { backupPathFor, saveWithBackup, withinHome } from './save';
+import { editCount, statsForModel } from './stats';
+import { countOccurrences, planReplace, type ReplaceMode } from './search';
+import { exportMime, exportName, plainText, toCsv, toHtml, type ExportFormat } from './export';
+import {
+  IMPORT_TEXT_LIMIT, downloadBlob, importLocalFile, printHtml, type ImportResult,
+} from './local';
 import './strings';
 import './office.css';
 
@@ -52,8 +64,6 @@ import './office.css';
 const VIEW_ROWS = 300;
 const VIEW_COLS = 40;
 const VIEW_PARAGRAPHS = 400;
-/** A text buffer larger than this is refused: a textarea is not a file viewer. */
-const TEXT_LIMIT = 4 * 1024 * 1024;
 /** The font sizes the Word toolbar offers, in points. */
 const FONT_SIZES = [10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36];
 
@@ -91,6 +101,17 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: 
   return node;
 }
 
+/**
+ * One replaceable string of the open document, together with the edit that writes it
+ * back. Find & replace resolves against these, so one code path serves Word
+ * paragraphs, slide paragraphs, the text buffer and sheet cells (a formula cell is
+ * edited as a formula, exactly as typing in it would be).
+ */
+interface ReplaceTarget {
+  text: string;
+  edit: (after: string) => Edit;
+}
+
 /** The extensions of one support level, as a comma-separated list for the UI. */
 function extList(level: SupportLevel): string {
   return VERIFIED_FORMATS.filter((f) => f.level === level).map((f) => f.ext).join(', ');
@@ -99,13 +120,18 @@ function extList(level: SupportLevel): string {
 function launch(ctx: AppContext): void {
   const { sys, window: win, args } = ctx;
   const vfs = sys.vfs;
-  const filePath = args[0] ? normalize(args[0]) : null;
+  /** The file the window shows. It changes when a local import opens another file. */
+  let filePath = args[0] ? normalize(args[0]) : null;
 
   let plan: FormatPlan = planFor(filePath ?? '');
   let model: OfficeModel | null = null;
   let editable = false;
   let busy = false;
   let closed = false;
+  /** Focus mode hides every toolbar and leaves the text plus the bottom bar. */
+  let focusMode = false;
+  /** Whether the find & replace panel is open. */
+  let findOpen = false;
   /**
    * What the file on disk looks like right now: its bytes, and the model they
    * read as. A save patches the bytes and diffs the model, so an edit the owner
@@ -197,6 +223,76 @@ function launch(ctx: AppContext): void {
   const formatHint = el('span', 'faisal-office-hint', t('office.formatHint'));
   formatBar.append(boldBtn, italicBtn, underlineBtn, sizeSelect, ...alignButtons, formatHint);
 
+  /* ───────────── find & replace, focus mode and local import / export ───────────── */
+
+  // One always-visible bar: the find toggle, and one collapsed panel that holds the
+  // import button, the four export actions and an honest note about each one.
+  const extras = el('div', 'faisal-office-extras');
+  const findToggle = action(t('office.findOpen'), () => { setFindOpen(!findOpen); });
+  findToggle.setAttribute('aria-expanded', 'false');
+
+  const ioDetails = el('details', 'faisal-office-io');
+  ioDetails.append(el('summary', 'faisal-office-summary', t('office.ioTitle')));
+  const ioBody = el('div', 'faisal-office-iobody');
+  const importInput = el('input', 'faisal-office-fileinput');
+  importInput.type = 'file';
+  importInput.accept = '.txt,.csv,text/plain,text/csv';
+  importInput.multiple = true;
+  importInput.hidden = true;
+  const importBtn = action(t('office.ioImport'), () => { openImportPicker(); });
+  const txtBtn = action(t('office.ioExportTxt'), () => { exportAs('txt'); });
+  const csvBtn = action(t('office.ioExportCsv'), () => { exportAs('csv'); });
+  const htmlBtn = action(t('office.ioExportHtml'), () => { exportAs('html'); });
+  const pdfBtn = action(t('office.ioExportPdf'), () => { exportPdf(); });
+  const ioRow = el('div', 'faisal-office-iorow');
+  ioRow.append(importBtn, txtBtn, csvBtn, htmlBtn, pdfBtn);
+  const ioNotes = el('ul', 'faisal-office-ionotes');
+  const IO_NOTES = [
+    'office.ioImportHint', 'office.ioDropHint', 'office.ioTextNote',
+    'office.ioCsvNote', 'office.ioHtmlNote', 'office.ioPdfNote',
+  ];
+  for (const key of IO_NOTES) ioNotes.append(el('li', undefined, t(key)));
+  ioBody.append(ioRow, ioNotes);
+  ioDetails.append(ioBody);
+  extras.append(findToggle, ioDetails);
+
+  const findBar = el('div', 'faisal-office-find');
+  findBar.setAttribute('role', 'region');
+  findBar.setAttribute('aria-label', t('office.findPanel'));
+  findBar.hidden = true;
+  const findInput = el('input', 'faisal-office-findinput');
+  findInput.type = 'search';
+  findInput.dir = 'auto';
+  findInput.placeholder = t('office.findQuery');
+  findInput.setAttribute('aria-label', t('office.findQuery'));
+  const replaceInput = el('input', 'faisal-office-findinput');
+  replaceInput.type = 'text';
+  replaceInput.dir = 'auto';
+  replaceInput.placeholder = t('office.findReplacement');
+  replaceInput.setAttribute('aria-label', t('office.findReplacement'));
+  const findCountBtn = action(t('office.findCountAction'), () => { showMatchCount(); });
+  const replaceOneBtn = action(t('office.replaceOne'), () => { applyReplace('one'); });
+  const replaceAllBtn = action(t('office.replaceAll'), () => { applyReplace('all'); });
+  const findCountEl = el('span', 'faisal-office-findcount');
+  findCountEl.setAttribute('role', 'status');
+  const findScopeEl = el('div', 'faisal-office-findnote');
+  const findCaseEl = el('div', 'faisal-office-findnote', t('office.findCaseNote'));
+  findBar.append(findInput, replaceInput, findCountBtn, replaceOneBtn, replaceAllBtn, findCountEl, findScopeEl, findCaseEl);
+
+  /* The bottom bar: the three live counts, and the way into and out of focus mode. */
+  const statsBar = el('div', 'faisal-office-stats');
+  statsBar.setAttribute('role', 'group');
+  statsBar.setAttribute('aria-label', t('office.statBar'));
+  const wordsStat = el('span', 'faisal-office-stat');
+  const charsStat = el('span', 'faisal-office-stat');
+  const editsStat = el('span', 'faisal-office-stat');
+  editsStat.title = t('office.statEditsTitle', { n: HISTORY_LIMIT });
+  const focusBtn = action(t('office.focusOn'), () => { setFocus(!focusMode); });
+  focusBtn.classList.add('faisal-office-focusbtn');
+  focusBtn.title = t('office.focusTitle');
+  focusBtn.setAttribute('aria-pressed', 'false');
+  statsBar.append(wordsStat, charsStat, editsStat, focusBtn);
+
   const noteEl = el('div', 'faisal-office-notice');
   noteEl.setAttribute('role', 'note');
   noteEl.hidden = true;
@@ -210,7 +306,7 @@ function launch(ctx: AppContext): void {
   const footer = el('div', 'faisal-office-footer');
   footer.append(statusEl, pathEl);
 
-  root.append(bar, tools, formatBar, noteEl, contentHost, limits, footer);
+  root.append(bar, tools, formatBar, extras, findBar, noteEl, contentHost, limits, footer, statsBar, importInput);
   win.content.append(root);
 
   /* ─────────────────────────── the limits panel ─────────────────────────── */
@@ -279,6 +375,229 @@ function launch(ctx: AppContext): void {
     deleteColumnBtn.disabled = busy || !at || !canDeleteColumn(sheets, sheets.active);
   }
 
+  /* ─────────────────── the live counts and focus mode ─────────────────── */
+
+  /** What the counts cover, per kind, said in the bottom bar's title. */
+  function statsScope(): string {
+    if (!model) return t('office.statScopeDoc');
+    switch (model.kind) {
+      case 'pptx': return t('office.statScopeSlides');
+      case 'text': return t('office.statScopeText');
+      case 'xlsx':
+      case 'csv': return t('office.statScopeSheet');
+      default: return t('office.statScopeDoc');
+    }
+  }
+
+  /**
+   * The bottom bar, recomputed after every change: words and characters of what is
+   * on screen, and the recorded edit steps of the undo model. Called from `syncBar`,
+   * so typing is enough to move it.
+   */
+  function syncStats(): void {
+    const stats = model ? statsForModel(model) : { words: 0, chars: 0 };
+    wordsStat.textContent = t('office.statWords', { n: stats.words });
+    charsStat.textContent = t('office.statChars', { n: stats.chars });
+    editsStat.textContent = t('office.statEdits', { n: editCount(history) });
+    statsBar.title = statsScope();
+  }
+
+  /**
+   * Focus mode: every toolbar and panel goes away and the text keeps the window. The
+   * bottom bar stays — it is the only way back out, and it is what keeps the toggle
+   * reachable at 320px.
+   */
+  function setFocus(on: boolean): void {
+    focusMode = on;
+    root.classList.toggle('is-focus', on);
+    focusBtn.textContent = on ? t('office.focusOff') : t('office.focusOn');
+    focusBtn.setAttribute('aria-pressed', String(on));
+    if (on) setStatus(t('office.focusNote'));
+    else if (statusEl.textContent === t('office.focusNote')) setStatus('');
+  }
+
+  /* ────────────────────────── find & replace ────────────────────────── */
+
+  function findScopeText(): string {
+    if (!model) return t('office.findScopeDoc');
+    switch (model.kind) {
+      case 'pptx': return t('office.findScopeSlides');
+      case 'text': return t('office.findScopeText');
+      case 'xlsx':
+      case 'csv': return t('office.findScopeSheet');
+      default: return t('office.findScopeDoc');
+    }
+  }
+
+  function setFindOpen(on: boolean): void {
+    findOpen = on;
+    findBar.hidden = !on;
+    findToggle.textContent = on ? t('office.findClose') : t('office.findOpen');
+    findToggle.setAttribute('aria-expanded', String(on));
+    if (!on) return;
+    findScopeEl.textContent = findScopeText();
+    findInput.focus();
+  }
+
+  /**
+   * Every string the panel searches, in document order, each with the edit that
+   * writes a replacement back — so a replacement is one ordinary undoable edit of the
+   * same kind the owner's own typing would have made.
+   */
+  function replaceTargets(): ReplaceTarget[] {
+    const m = model;
+    if (!m) return [];
+    if (m.kind === 'docx') {
+      return m.paragraphs.map((text, index) => ({ text, edit: (after) => paragraphEdit(index, text, after) }));
+    }
+    if (m.kind === 'pptx') {
+      const targets: ReplaceTarget[] = [];
+      m.slides.forEach((paragraphs, slide) => {
+        paragraphs.forEach((text, index) => {
+          targets.push({ text, edit: (after) => slideTextEdit(slide, index, text, after) });
+        });
+      });
+      return targets;
+    }
+    if (m.kind === 'text') return [{ text: m.text, edit: (after) => textEdit(m.text, after) }];
+    const sheet = m.active;
+    const grid = gridAt(m, sheet);
+    return (grid?.rows ?? []).flatMap((row, r) => row.map((value, c) => {
+      // A cell shows its formula when it has one, and a replacement is evaluated
+      // again exactly as typing in the cell would be.
+      const state = cellStateAt(sheet, r, c);
+      return {
+        text: state.formula ?? state.value,
+        edit: (after: string): Edit => formulaCellEdit(sheet, r, c, state, cellStateForText(m, sheet, r, c, after)),
+      };
+    }));
+  }
+
+  /** Reports how many occurrences the query has, without changing anything. */
+  function showMatchCount(): void {
+    const query = findInput.value;
+    if (!query) { findCountEl.textContent = t('office.findEmptyQuery'); return; }
+    const found = countOccurrences(replaceTargets().map((target) => target.text), query);
+    findCountEl.textContent = found ? t('office.findFound', { n: found }) : t('office.findNone');
+  }
+
+  /** Replaces the first occurrence or every one of them, through the undo model. */
+  function applyReplace(mode: ReplaceMode): void {
+    if (!model) return;
+    const query = findInput.value;
+    if (!query) { findCountEl.textContent = t('office.findEmptyQuery'); return; }
+    const targets = replaceTargets();
+    const plan = planReplace(targets.map((target) => target.text), query, replaceInput.value, mode);
+    if (!plan.count) { findCountEl.textContent = t('office.replaceNone'); return; }
+    for (const change of plan.changes) {
+      const target = targets[change.index];
+      if (target) commit(target.edit(change.after));
+    }
+    render();
+    findCountEl.textContent = t('office.replaced', { n: plan.count });
+  }
+
+  /* ──────────────────────── local import ──────────────────────── */
+
+  function openImportPicker(): void {
+    importInput.value = '';
+    importInput.click();
+  }
+
+  function importRefusalMessage(refusal: Extract<ImportResult, { ok: false }>): string {
+    switch (refusal.refusal) {
+      case 'extension': return t('office.ioImportUnsupported', { name: refusal.name });
+      case 'toolarge': return t('office.ioImportTooLarge', { name: refusal.name, limit: IMPORT_TEXT_LIMIT / (1024 * 1024) });
+      case 'binary': return t('office.ioImportBinary', { name: refusal.name });
+      default: return t('office.ioImportDamaged', { name: refusal.name });
+    }
+  }
+
+  /**
+   * One picked or dropped file: it is read in the page, written inside /home/user
+   * under its own name (with the same one-backup rule as every other write) and
+   * opened here. Nothing is uploaded, and the unsaved changes of the file already
+   * open are confirmed away first.
+   */
+  async function importFiles(files: readonly File[]): Promise<void> {
+    if (!files.length) { setNote(t('office.ioImportNone')); return; }
+    const first = files[0];
+    if (!first) return;
+    if (files.length > 1) setStatus(t('office.ioImportFirst'));
+
+    let result: ImportResult;
+    try {
+      result = await importLocalFile(first);
+    } catch (err) {
+      setNote(t('office.ioImportFailed', { message: errorMessage(err) }));
+      return;
+    }
+    if (closed) return;
+    if (!result.ok) { setNote(importRefusalMessage(result)); return; }
+
+    if (history.dirty) {
+      const proceed = await shellConfirm({
+        title: t('office.ioImportDirtyTitle'),
+        message: t('office.ioImportDirtyBody', { name: filePath ? basename(filePath) : t('office.title') }),
+        okLabel: t('office.ioImportOk'),
+        cancelLabel: t('office.cancel'),
+        danger: true,
+      });
+      if (closed || !proceed) return;
+    }
+    try {
+      await saveWithBackup(vfs, result.path, result.bytes);
+    } catch (err) {
+      if (!closed) setNote(t('office.ioImportFailed', { message: errorMessage(err) }));
+      return;
+    }
+    if (closed) return;
+    filePath = result.path;
+    pathEl.textContent = filePath;
+    await open(); // the window shows what is really on disk, exactly as on any open
+    if (closed) return;
+    setStatus(t('office.ioImported', { name: result.name, path: result.path }));
+  }
+
+  /* ──────────────────────── local export ──────────────────────── */
+
+  /** The direction the exported page follows: the app's own locale. */
+  function exportDir(): 'rtl' | 'ltr' {
+    return sys.locale() === 'ar' ? 'rtl' : 'ltr';
+  }
+
+  function exportBase(): string {
+    return filePath ? basename(filePath) : t('office.title');
+  }
+
+  /** A direct download: a Blob URL the browser saves. No request leaves the page. */
+  function exportAs(format: ExportFormat): void {
+    if (!model) return;
+    const base = exportBase();
+    const name = exportName(base, format);
+    const data = format === 'txt' ? plainText(model)
+      : format === 'csv' ? toCsv(model)
+        : toHtml(model, base, exportDir());
+    try {
+      downloadBlob(name, data, exportMime(format));
+    } catch (err) {
+      setNote(t('office.ioExportFailed', { message: errorMessage(err) }));
+      return;
+    }
+    setStatus(t('office.ioExported', { name }));
+  }
+
+  /**
+   * PDF export is the browser's print-to-PDF on a print-ready page. The app does not
+   * write a PDF itself: it cannot embed an Arabic font, and a PDF without one would
+   * print boxes instead of the text — so the UI says "via the browser" and nothing else.
+   */
+  function exportPdf(): void {
+    if (!model) return;
+    printHtml(toHtml(model, exportBase(), exportDir()));
+    setStatus(t('office.ioPrint'));
+  }
+
   /* ──────────────────────── paragraph formatting state ──────────────────────── */
 
   /** The formatting chosen for the focused paragraph (empty when there is none). */
@@ -335,6 +654,7 @@ function launch(ctx: AppContext): void {
     revertBtn.disabled = busy || !filePath;
     syncTools();
     syncFormatBar();
+    syncStats();
   }
 
   /** Every formula's value follows the values it reads, on every model change. */
@@ -497,26 +817,21 @@ function launch(ctx: AppContext): void {
    * A cell's input. A formula (`=…`) is computed at once: the grid gets the result
    * and the model keeps the canonical formula, which the save writes into `<f>`.
    * Text that only looks like a half-typed formula is stored as it is typed, never
-   * as a fake result.
+   * as a fake result. The rule itself lives in `cellStateForText`, so find & replace
+   * and this input can never disagree about what typing in a cell means.
    */
-  function commitCell(sheet: number, row: number, col: number, input: HTMLInputElement): void {
+  function commitCellText(sheet: number, row: number, col: number, text: string): void {
     if (!model || !isSheets(model) || !gridAt(model, sheet)) return;
     active = { row, col }; // the cell being typed in is the active one
     const before = cellStateAt(sheet, row, col);
-    const typed = input.value;
-    let after: CellState;
-    if (model.kind === 'xlsx' && typed.trimStart().startsWith('=')) {
-      const grid = gridAt(model, sheet);
-      const outcome = grid ? evaluateFormula(typed.trim(), grid, { row, col }) : null;
-      after = outcome?.ok && outcome.canonical
-        ? { value: outcome.value, formula: `=${outcome.canonical}` }
-        : { value: typed };
-    } else {
-      after = { value: typed };
-    }
+    const after = cellStateForText(model, sheet, row, col, text);
     if (after.value === before.value && (after.formula ?? null) === (before.formula ?? null)) return;
     commit(formulaCellEdit(sheet, row, col, before, after));
     showFormulaResult();
+  }
+
+  function commitCell(sheet: number, row: number, col: number, input: HTMLInputElement): void {
+    commitCellText(sheet, row, col, input.value);
   }
 
   function renderSheets(m: SheetsModel): HTMLElement {
@@ -648,6 +963,7 @@ function launch(ctx: AppContext): void {
     editable = false;
     active = null;
     history.reset();
+    findCountEl.textContent = ''; // the previous document's matches mean nothing here
     contentHost.replaceChildren(el('div', 'faisal-office-note', t('office.loading')));
     setStatus(t('office.loading'));
     setNote('');
@@ -663,7 +979,7 @@ function launch(ctx: AppContext): void {
       return;
     }
     if (closed) return;
-    if (plan.kind === 'text' && bytes.length > TEXT_LIMIT) { showRefusal('toolarge'); return; }
+    if (plan.kind === 'text' && bytes.length > IMPORT_TEXT_LIMIT) { showRefusal('toolarge'); return; }
 
     const result = await loadOfficeFile(filePath, bytes);
     if (closed) return;
@@ -769,7 +1085,41 @@ function launch(ctx: AppContext): void {
     if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') {
       ev.preventDefault();
       void save();
+      return;
     }
+    if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'f') {
+      ev.preventDefault();
+      setFindOpen(true);
+      return;
+    }
+    if (ev.key === 'Escape' && findOpen) {
+      ev.preventDefault();
+      setFindOpen(false);
+    }
+  });
+
+  findInput.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      showMatchCount();
+    }
+  });
+
+  importInput.addEventListener('change', () => {
+    const files = importInput.files ? [...importInput.files] : [];
+    importInput.value = '';
+    void importFiles(files);
+  });
+
+  // A drop anywhere on the window, not just on the button: same path as the picker.
+  root.addEventListener('dragover', (ev) => {
+    ev.preventDefault();
+    if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy';
+  });
+  root.addEventListener('drop', (ev) => {
+    ev.preventDefault();
+    const files = ev.dataTransfer ? [...ev.dataTransfer.files] : [];
+    void importFiles(files);
   });
 
   win.setCloseGuard(() => {
