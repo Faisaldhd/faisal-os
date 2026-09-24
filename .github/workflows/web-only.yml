@@ -1,0 +1,44 @@
+name: Publish web only (owner's request)
+
+# Normally the web is published together with the desktop app by desktop-release.yml.
+# This exists only for when the owner explicitly asks to update the web without the app.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type WEB-ONLY to publish the web without a new desktop release'
+        required: true
+
+concurrency:
+  group: desktop-release
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require explicit confirmation
+        run: |
+          if [ "${{ inputs.confirm }}" != "WEB-ONLY" ]; then
+            echo "::error::Type WEB-ONLY to confirm publishing the web without the desktop app."; exit 1
+          fi
+
+  web-github-pages:
+    needs: guard
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
+
+  web-cloudflare:
+    needs: guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Point the release branch at this commit
+        run: git push --force origin "$GITHUB_SHA:refs/heads/release"

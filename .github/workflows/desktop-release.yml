@@ -13,6 +13,12 @@ on:
     branches: [main]
     paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch:
+    inputs:
+      target:
+        description: 'What to publish (the owner decides; normally both)'
+        type: choice
+        options: [both, app-only]
+        default: both
 
 # One release at a time, in merge order, so two quick merges can't claim the same version.
 concurrency:
@@ -93,3 +99,31 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Fai\$al OS $TAG" \
             --generate-notes
+
+  # The web goes live only AFTER the desktop release above succeeded, from the very same
+  # commit, so the owner never has one product updated without the other. A docs-only
+  # change skips this whole workflow (nothing in the site or the app changes).
+  web-github-pages:
+    needs: release
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.target != 'app-only' }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    uses: ./.github/workflows/pages.yml
+
+  web-cloudflare:
+    needs: release
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.target != 'app-only' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Cloudflare Pages builds its production site from the `release` branch; moving it
+      # here is what publishes https://faisal-os.pages.dev.
+      - name: Point the release branch at this commit
+        run: git push --force origin "$GITHUB_SHA:refs/heads/release"
+

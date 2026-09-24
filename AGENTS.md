@@ -5,19 +5,21 @@
 Fai$al OS is a desktop OS that runs in the browser (TypeScript + Vite + vitest, no framework).
 Repository: https://github.com/Faisaldhd/faisal-os
 
-## How a change reaches the owner
+## How a change reaches the owner — both products, together
 
-Two products are built from the **same code** on the `main` branch:
+Two products are built from the **same code** on `main`, and they are published **together**:
 
-1. **Web** — https://faisal-os.pages.dev — Cloudflare Pages rebuilds it about 2 minutes after a merge to `main`
-   (a GitHub Pages copy is also deployed by `.github/workflows/pages.yml`).
-2. **Desktop app** (Windows, Electron) — `.github/workflows/desktop-release.yml` publishes a new
-   GitHub Release on every merge to `main`; the installed app finds it, downloads it and asks
-   "Restart now / Later", then restarts on the new version.
+1. A merge to `main` starts `.github/workflows/desktop-release.yml`: tests, the desktop builds, then a new
+   GitHub Release. The installed app finds it, downloads it and asks "Restart now / Later".
+2. **Only after that release succeeds**, the same workflow publishes the web from the same commit:
+   GitHub Pages (`pages.yml`) and Cloudflare Pages (it moves the `release` branch, which is Cloudflare's
+   production branch) → https://faisal-os.pages.dev.
+3. If the desktop build fails, the web is **not** updated either. Fix the failure; never work around it.
 
-So **any PR merged into `main` reaches the web and the desktop app automatically.** Never deploy by hand,
-never commit `dist/`, never bump the app version (it is computed). A change to `.md` files or `docs/` only
-does not publish a new desktop release.
+Publishing one product without the other happens **only when the owner explicitly asks**:
+"Publish web only" (`web-only.yml`, typed confirmation) or Desktop release with `target: app-only`.
+Never trigger these on your own. Never deploy by hand, never commit `dist/`, never bump the app version.
+A change to `.md` files or `docs/` only publishes nothing (neither product changes).
 
 ## Workflow for every task
 
