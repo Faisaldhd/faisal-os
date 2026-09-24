@@ -218,7 +218,7 @@ defineStrings('pdf', {
     imagesDone: 'أُنشئ مستند من {n} صورة: {pages} صفحة.',
     imagesRefused: 'تُخطّيت {name}: {code}',
     opFailed: 'لم تُنفَّذ العملية: {message}',
-    opVerified: 'تُحقّق من الناتج: {summary}',
+    opVerified: 'تُحقّق من الناتج.',
 
     saveTitle: 'الحفظ',
     saveDesc: 'الحفظ الافتراضي ينشئ ملفاً جديداً بجانب الأصل ولا يلمسه. الاستبدال يحتاج تأكيداً ويكتب نسخة .bak واحدة أولاً.',
@@ -726,7 +726,7 @@ defineStrings('pdf', {
     imagesDone: 'Created a document from {n} images: {pages} pages.',
     imagesRefused: 'Skipped {name}: {code}',
     opFailed: 'The operation did not run: {message}',
-    opVerified: 'Output verified: {summary}',
+    opVerified: 'Output verified.',
 
     saveTitle: 'Save',
     saveDesc: 'The default save creates a new file beside the original and never touches it. Replacing needs confirmation and writes one .bak copy first.',

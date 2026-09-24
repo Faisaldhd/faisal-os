@@ -658,7 +658,8 @@ function launch(ctx: AppContext): void {
     state.saved = false;
     if (!keepSelection) state.selection.clear();
     await refreshWorking();
-    setStatus(`${done} · ${t('pdf.opVerified', { summary: result.verified })}`);
+    console.debug('[pdf] verified:', result.verified);
+    setStatus(`${done} · ${t('pdf.opVerified')}`);
     return true;
   }
 
