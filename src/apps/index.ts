@@ -6,6 +6,10 @@ import type { LazyAppModule } from '../kernel/types';
 import { manifest as files } from './files/manifest';
 import { manifest as terminal } from './terminal/manifest';
 import { manifest as editor } from './editor/manifest';
+import { manifest as office } from './office/manifest';
+import { manifest as pdf } from './pdf/manifest';
+import { manifest as photo } from './photo/manifest';
+import { manifest as video } from './video/manifest';
 import { manifest as browser } from './browser/manifest';
 import { manifest as ai } from './ai/manifest';
 import { manifest as calculator } from './calculator/manifest';
@@ -27,6 +31,17 @@ export const BUILTIN_APPS: LazyAppModule[] = [
   lazy(files, () => import('./files')),
   lazy(terminal, () => import('./terminal')),
   lazy(editor, () => import('./editor')),
+  /*
+   * The four store-only editors are registered BEFORE the plain viewers (images,
+   * viewer), because `appForFile` picks the first INSTALLED app that declares a file
+   * extension (src/kernel/apps.ts:192). They are `defaultInstalled: false`, so they
+   * change nothing until the owner installs them from the Store — and once he does,
+   * double-clicking a .docx or a .png opens the editor rather than the viewer.
+   */
+  lazy(office, () => import('./office')),
+  lazy(pdf, () => import('./pdf')),
+  lazy(photo, () => import('./photo')),
+  lazy(video, () => import('./video')),
   lazy(browser, () => import('./browser')),
   lazy(ai, () => import('./ai')),
   lazy(calculator, () => import('./calculator')),

@@ -1,0 +1,129 @@
+import { describe, expect, it } from 'vitest';
+import {
+  clampTime,
+  estimateBytes,
+  formatDuration,
+  formatTime,
+  frameDuration,
+  progressFraction,
+  resolvedTrim,
+  safeDuration,
+  stepTime,
+  timestampToken,
+  wholeRange,
+} from './time';
+
+describe('formatTime', () => {
+  it('formats minutes, seconds and milliseconds', () => {
+    expect(formatTime(0)).toBe('0:00.000');
+    expect(formatTime(1.5)).toBe('0:01.500');
+    expect(formatTime(62.25)).toBe('1:02.250');
+    expect(formatTime(3661.004)).toBe('1:01:01.004');
+  });
+
+  it('rounds to whole milliseconds instead of printing float noise', () => {
+    expect(formatTime(0.0004)).toBe('0:00.000');
+    expect(formatTime(2.9996)).toBe('0:03.000');
+  });
+
+  it('treats negative and non-finite input as zero, never as NaN', () => {
+    expect(formatTime(-5)).toBe('0:00.000');
+    expect(formatTime(Number.NaN)).toBe('0:00.000');
+    expect(formatTime(Number.POSITIVE_INFINITY)).toBe('0:00.000');
+  });
+
+  it('drops the milliseconds for a duration badge', () => {
+    expect(formatDuration(62.25)).toBe('1:02');
+  });
+});
+
+describe('clamping', () => {
+  it('keeps a position inside the file', () => {
+    expect(clampTime(-3, 10)).toBe(0);
+    expect(clampTime(3, 10)).toBe(3);
+    expect(clampTime(30, 10)).toBe(10);
+  });
+
+  it('returns 0 for a position that is not a number', () => {
+    expect(clampTime(Number.NaN, 10)).toBe(0);
+  });
+
+  it('reads an unknown duration as 0 rather than passing NaN on', () => {
+    expect(safeDuration(Number.NaN)).toBe(0);
+    expect(safeDuration(-1)).toBe(0);
+    expect(safeDuration(null)).toBe(0);
+    expect(safeDuration(4.5)).toBe(4.5);
+  });
+});
+
+describe('trim selection', () => {
+  it('resolves an open out point against the real duration', () => {
+    expect(resolvedTrim({ in: 1, out: null }, 10)).toEqual({ start: 1, end: 10 });
+  });
+
+  it('never lets the range invert', () => {
+    expect(resolvedTrim({ in: 9, out: 2 }, 10)).toEqual({ start: 9, end: 9 });
+  });
+
+  it('clamps both ends into the file', () => {
+    expect(resolvedTrim({ in: -4, out: 99 }, 10)).toEqual({ start: 0, end: 10 });
+  });
+
+  it('reports the whole file for a whole-file range', () => {
+    expect(wholeRange(12.5)).toEqual({ start: 0, end: 12.5 });
+    expect(wholeRange(Number.NaN)).toEqual({ start: 0, end: 0 });
+  });
+});
+
+describe('frame stepping', () => {
+  it('uses the measured frame rate when there is one', () => {
+    expect(frameDuration(25)).toBeCloseTo(0.04, 10);
+  });
+
+  it('falls back to 30 fps for a rate it does not know', () => {
+    expect(frameDuration(0)).toBeCloseTo(1 / 30, 10);
+    expect(frameDuration(Number.NaN)).toBeCloseTo(1 / 30, 10);
+    expect(frameDuration(null)).toBeCloseTo(1 / 30, 10);
+  });
+
+  it('steps forward to the next frame boundary', () => {
+    expect(stepTime(0, 1, 25, 10)).toBeCloseTo(0.04, 10);
+    expect(stepTime(0.05, 1, 25, 10)).toBeCloseTo(0.08, 10);
+  });
+
+  it('steps back from a position between two frames', () => {
+    expect(stepTime(0.05, -1, 25, 10)).toBeCloseTo(0.04, 10);
+    expect(stepTime(0.04, -1, 25, 10)).toBeCloseTo(0, 10);
+  });
+
+  it('never steps outside the file', () => {
+    expect(stepTime(0, -1, 30, 10)).toBe(0);
+    expect(stepTime(10, 1, 30, 10)).toBe(10);
+    expect(stepTime(0, 1, 30, 0)).toBe(0);
+  });
+});
+
+describe('progress', () => {
+  it('is a fraction of the duration', () => {
+    expect(progressFraction(5, 10)).toBe(0.5);
+    expect(progressFraction(20, 10)).toBe(1);
+    expect(progressFraction(-1, 10)).toBe(0);
+  });
+
+  it('is 0, not NaN, while the duration is unknown', () => {
+    expect(progressFraction(3, 0)).toBe(0);
+    expect(progressFraction(3, Number.NaN)).toBe(0);
+  });
+});
+
+describe('size and tokens', () => {
+  it('estimates bytes from a bitrate and refuses to guess without one', () => {
+    expect(estimateBytes(8, 8_000_000)).toBe(8_000_000);
+    expect(estimateBytes(10, null)).toBeNull();
+    expect(estimateBytes(10, 0)).toBeNull();
+  });
+
+  it('pads a clock token to six digits', () => {
+    expect(timestampToken(new Date(2026, 0, 2, 3, 4, 5).getTime())).toBe('030405');
+  });
+});

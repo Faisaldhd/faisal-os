@@ -36,6 +36,16 @@ import '../files';
 import '../images';
 import '../monitor';
 import '../stream';
+/*
+ * The four store-only editors keep their copy in a dedicated `strings.ts` too, so
+ * their namespaces are covered by this parity check from the day they are added —
+ * a missing Arabic or English key in an app the owner has to install is still a
+ * missing key. Importing the module (not the app) keeps this cheap.
+ */
+import '../office/strings';
+import '../pdf/strings';
+import '../photo/strings';
+import '../video/strings';
 import '../vault';
 
 /*
