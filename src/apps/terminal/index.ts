@@ -9,7 +9,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import './terminal.css';
 import './strings';
-import type { AppContext, AppModule, TerminalBackend } from '../../kernel/types';
+import type { AppContext, AppModule, ProcessSignal, TerminalBackend } from '../../kernel/types';
 import { t } from '../../kernel/i18n';
 import { SimBackend } from './backends/sim';
 import { TERM_TEXT } from './strings';
@@ -109,6 +109,9 @@ function launch({ sys, window: win, args }: AppContext): void {
     // LRI…PDI keeps "user@faisal: ~" in order inside an RTL title bar
     setTitle: (s: string) => win.setTitle(`\u2066${s}\u2069`),
     listApps: () => sys.apps.list().map((m) => ({ id: m.id, name: m.name.en })),
+    // The kernel's process table, so `ps`, `top` and `kill` report what the OS really runs.
+    processes: (includeExited: boolean) => (includeExited ? sys.proc.all() : sys.proc.list()),
+    signalProcess: (pid: number, signal: ProcessSignal) => sys.proc.signal(pid, signal),
     clear: () => term.write('\x1b[H\x1b[2J\x1b[3J'),
     open: async (path: string, isDir: boolean) => {
       const id = isDir

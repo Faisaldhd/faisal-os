@@ -23,6 +23,7 @@ defineStrings('monitor', {
     tabSystem: 'النظام',
     end: 'إنهاء',
     app: 'التطبيق',
+    pid: 'المعرّف',
     windowId: 'معرّف النافذة',
     uptime: 'مدة التشغيل',
     permissions: 'الصلاحيات',
@@ -90,6 +91,7 @@ defineStrings('monitor', {
     tabSystem: 'System',
     end: 'End',
     app: 'Application',
+    pid: 'PID',
     windowId: 'Window ID',
     uptime: 'Uptime',
     permissions: 'Permissions',
@@ -198,6 +200,12 @@ function launch(ctx: AppContext): void {
   let tab: Tab = 'processes';
   let selectedWindowId: string | null = null;
 
+  // The PID column comes from the kernel's process table, and that table changes without the
+  // Monitor doing anything (an app opens, a window is killed): repaint the list when it does.
+  const offProc = sys.proc.on(() => {
+    if (tab === 'processes') renderProcesses();
+  });
+
   function tabBtn(id: Tab, label: string, svgIcon: string): HTMLButtonElement {
     const b = document.createElement('button');
     b.className = 'faisal-mon-tab';
@@ -290,7 +298,7 @@ function launch(ctx: AppContext): void {
     table.className = 'faisal-mon-table';
     const thead = document.createElement('thead');
     const headRow = document.createElement('tr');
-    for (const label of [t('monitor.app'), t('monitor.windowId'), t('monitor.uptime'), t('monitor.permissions')]) {
+    for (const label of [t('monitor.pid'), t('monitor.app'), t('monitor.windowId'), t('monitor.uptime'), t('monitor.permissions')]) {
       const th = document.createElement('th');
       th.textContent = label;
       headRow.appendChild(th);
@@ -300,6 +308,9 @@ function launch(ctx: AppContext): void {
 
     const tbody = document.createElement('tbody');
     const locale = sys.locale();
+    // The kernel's process table is the source of the PID, so the number here is the same one
+    // `ps` prints in the terminal and `kill` accepts.
+    const pidByWindow = new Map(sys.proc.list().map((p) => [p.windowId, p.pid]));
     for (const r of running) {
       const entry = byId.get(r.appId);
       const tr = document.createElement('tr');
@@ -308,6 +319,10 @@ function launch(ctx: AppContext): void {
         selectedWindowId = r.windowId === selectedWindowId ? null : r.windowId;
         renderProcesses();
       });
+
+      const pidTd = document.createElement('td');
+      pidTd.className = 'faisal-mon-pid';
+      pidTd.textContent = pidByWindow.has(r.windowId) ? String(pidByWindow.get(r.windowId)) : '—';
 
       const appTd = document.createElement('td');
       const cell = document.createElement('div');
@@ -340,7 +355,7 @@ function launch(ctx: AppContext): void {
       }
       permTd.appendChild(chips);
 
-      tr.append(appTd, winTd, uptimeTd, permTd);
+      tr.append(pidTd, appTd, winTd, uptimeTd, permTd);
       tbody.appendChild(tr);
     }
     table.appendChild(tbody);
@@ -857,6 +872,7 @@ function launch(ctx: AppContext): void {
   window.addEventListener('offline', onOnlineChange);
 
   win.onClose(() => {
+    offProc();
     stopFpsLoop();
     clearInterval(tickTimer);
     resizeObserver.disconnect();

@@ -236,6 +236,10 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
       const denied = (what: string) => () => { throw new Error(`EACCES: ${what}`); };
       const scoped: SystemAPI = Object.freeze({
         vfs,
+        // Same-user processes may signal each other, exactly like Linux: `kill` works from any
+        // app, while the system's own processes refuse it. A capability gate can narrow this
+        // later without touching the table itself.
+        proc: sys.proc,
         bus: scopeBus(sys.bus, fsAccess(perms).canRead),
         wm: scopeWM(sys.wm, appId),
         apps: Object.freeze({

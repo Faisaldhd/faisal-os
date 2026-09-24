@@ -50,6 +50,11 @@ function mountMonitor(): { ctx: AppContext; content: HTMLElement; closed: () => 
       catalog: () => [],
     } as unknown as SystemAPI['apps'],
     settings: { get: <T,>(_k: string, f: T) => f, set: () => {} },
+    // The PID column reads the kernel's process table: list() for the rows, on() to repaint.
+    proc: {
+      list: () => [{ pid: 7, appId: 'org.faisal.SystemMonitor', windowId: 'win-1', state: 'running' }],
+      on: () => () => {},
+    },
     locale: () => 'en' as const,
     t,
     notify: () => {},

@@ -1,4 +1,5 @@
 import type { CommandContext, CommandSpec } from '../types';
+import type { ProcessInfo, ProcessSignal } from '../../../../kernel/types';
 import { C, DAYS, MONTHS, MONTHS_LONG, getopt, strftime, tzName } from '../util';
 import { usageError } from './common';
 
@@ -243,6 +244,99 @@ async function source(ctx: CommandContext): Promise<number> {
 function trueCmd(): number { return 0; }
 function falseCmd(): number { return 1; }
 
+/* ─────────────── Processes: the kernel's table (src/kernel/process.ts) ─────────────── */
+
+/** `MM:SS` (or `H:MM:SS`), the shape `ps -o etime` prints. */
+function elapsedLabel(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const p = (n: number) => String(n).padStart(2, '0');
+  const h = Math.floor(total / 3600);
+  return h ? `${h}:${p(Math.floor(total / 60) % 60)}:${p(total % 60)}` : `${p(Math.floor(total / 60))}:${p(total % 60)}`;
+}
+
+function processRow(p: ProcessInfo, now: number, full: boolean): string {
+  const state = p.exit ? `exited(${p.exit.code})` : p.state;
+  const ended = p.exit?.at ?? now;
+  const cells = `${String(p.pid).padStart(5, ' ')} ${state.padEnd(8, ' ')} ${elapsedLabel(ended - p.startedAt).padStart(7, ' ')} ${p.appId}`;
+  return full && p.name && p.name !== p.appId ? `${cells}  ${p.name}` : cells;
+}
+
+function ps(ctx: CommandContext): number {
+  const host = ctx.shell.host;
+  if (!host.processes) { ctx.err('ps: the process table is not available in this terminal\n'); return 1; }
+  // Like ps: bare shows what is running, -a/-e/aux add the processes that already ended,
+  // and -f/aux add the window title next to the command.
+  const all = ctx.args.some((a) => ['-a', '-e', '-A', 'ax', 'aux'].includes(a));
+  const full = ctx.args.some((a) => ['-f', '-l', 'aux'].includes(a));
+  const rows = host.processes(all);
+  ctx.out(`  PID STATE    ELAPSED COMMAND${full ? '  NAME' : ''}\n`);
+  const now = Date.now();
+  for (const p of rows) ctx.out(`${processRow(p, now, full)}\n`);
+  return 0;
+}
+
+function top(ctx: CommandContext): number {
+  const host = ctx.shell.host;
+  if (!host.processes) { ctx.err('top: the process table is not available in this terminal\n'); return 1; }
+  const list = host.processes(false);
+  const running = list.filter((p) => p.state === 'running').length;
+  ctx.out(`top - up ${elapsedLabel(Date.now() - ctx.shell.startedAt)},  ${list.length} process${list.length === 1 ? '' : 'es'}: `
+    + `${running} running, ${list.length - running} sleeping\n`);
+  ctx.out(`  PID STATE    ELAPSED COMMAND\n`);
+  const now = Date.now();
+  for (const p of list) ctx.out(`${processRow(p, now, false)}\n`);
+  ctx.out('one snapshot - this terminal does not repaint; run top again for a fresh one\n');
+  return 0;
+}
+
+function parseSignal(value: string): ProcessSignal | null {
+  const v = value.toUpperCase().replace(/^SIG/, '');
+  if (v === 'KILL' || v === '9') return 'KILL';
+  if (v === 'TERM' || v === '15') return 'TERM';
+  return null;
+}
+
+function kill(ctx: CommandContext): number {
+  const host = ctx.shell.host;
+  const send = host.signalProcess;
+  const table = host.processes;
+  if (!send || !table) { ctx.err('kill: the process table is not available in this terminal\n'); return 1; }
+  let signal: ProcessSignal = 'TERM';
+  const targets: string[] = [];
+  const argv = [...ctx.args];
+  for (let i = 0; i < argv.length; i += 1) {
+    const a = argv[i];
+    if (a === '-l') { ctx.out('TERM KILL\n'); return 0; }
+    if (a === '-s') {
+      const value = argv[i + 1];
+      const parsed = value === undefined ? null : parseSignal(value);
+      if (!parsed) { ctx.err(`kill: invalid signal specification '${value ?? ''}'\n`); return 1; }
+      signal = parsed;
+      i += 1;
+      continue;
+    }
+    if (a.startsWith('-') && a.length > 1) {
+      const parsed = parseSignal(a.slice(1));
+      if (!parsed) { ctx.err(`kill: invalid option -- '${a.slice(1)}'\n`); return 1; }
+      signal = parsed;
+      continue;
+    }
+    targets.push(a);
+  }
+  if (!targets.length) { ctx.err('kill: usage: kill [-s signal | -9] pid ...\n'); return 1; }
+  let status = 0;
+  for (const t of targets) {
+    if (!/^\d+$/.test(t)) { ctx.err(`bash: kill: ${t}: arguments must be process or job IDs\n`); status = 1; continue; }
+    const pid = Number(t);
+    if (send(pid, signal) === 0) continue;
+    // Same wording bash uses, and the same distinction: a protected process exists but refuses.
+    const known = table(true).some((p) => p.pid === pid);
+    ctx.err(`bash: kill: (${pid}) - ${known ? 'Operation not permitted' : 'No such process'}\n`);
+    status = 1;
+  }
+  return status;
+}
+
 export const sysCommands: Record<string, CommandSpec> = {
   whoami: { run: whoami, group: 'system', help: 'print the current user name' },
   id: { run: id, group: 'system', help: 'print user and group ids' },
@@ -264,6 +358,9 @@ export const sysCommands: Record<string, CommandSpec> = {
   exit: { run: exit, group: 'shell', builtin: true, help: 'close the terminal' },
   sudo: { run: sudo, group: 'system', help: 'why there is no root here' },
   su: { run: sudo, group: 'system', help: 'why there is no root here' },
+  ps: { run: ps, group: 'system', help: 'snapshot of running processes (-a ended too, -f names)' },
+  top: { run: top, group: 'system', help: 'one snapshot of the process table' },
+  kill: { run: kill, group: 'system', help: 'signal a process by PID (kill -9 pid)' },
   source: { run: source, group: 'shell', builtin: true, help: 'run a script in the current shell' },
   '.': { run: source, group: 'shell', builtin: true, help: 'same as source' },
   sh: { run: source, group: 'shell', help: 'run a shell script (sh file, sh -c "cmd")' },
