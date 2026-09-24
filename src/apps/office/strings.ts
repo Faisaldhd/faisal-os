@@ -490,3 +490,31 @@ defineStrings('office', {
     zoomOut: 'Zoom out',
   },
 });
+
+/*
+ * «حفظ باسم» — نصوص نافذة الحفظ المشتركة (`src/shell/save-as.ts`) كما يراها المكتب.
+ * A second registration, merged into the same namespace, so this block never touches the
+ * table above it.
+ */
+defineStrings('office', {
+  ar: {
+    saveAs: 'حفظ باسم',
+    saveAsDone: 'حُفظ باسم {name}.',
+    formatDocx: 'مستند Word (.docx)',
+    formatXlsx: 'جدول Excel (.xlsx)',
+    formatPptx: 'عرض PowerPoint (.pptx)',
+    formatCsv: 'قيم مفصولة بفواصل (.csv)',
+    formatMd: 'Markdown (.md)',
+    formatTxt: 'نص عادي (.txt)',
+  },
+  en: {
+    saveAs: 'Save as',
+    saveAsDone: 'Saved as {name}.',
+    formatDocx: 'Word document (.docx)',
+    formatXlsx: 'Excel spreadsheet (.xlsx)',
+    formatPptx: 'PowerPoint presentation (.pptx)',
+    formatCsv: 'Comma-separated values (.csv)',
+    formatMd: 'Markdown (.md)',
+    formatTxt: 'Plain text (.txt)',
+  },
+});

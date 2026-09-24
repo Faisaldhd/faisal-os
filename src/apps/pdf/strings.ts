@@ -261,10 +261,6 @@ defineStrings('pdf', {
     help: 'مساعدة',
     save: 'حفظ',
     saveAs: 'حفظ باسم…',
-    saveAsPath: 'المسار الكامل للملف',
-    saveAsHint: 'داخل /home/user فقط. إن كان الملف موجوداً تُحفظ منه نسخة .bak واحدة أولاً.',
-    saveAsBad: 'اكتب مساراً كاملاً داخل /home/user مثل /home/user/Documents/تقرير.pdf',
-    saveAsReplaceTitle: 'استبدال ملف موجود؟',
     saveVerifyFailed: 'كُتب الملف لكن قراءته من جديد لم تطابق: لا تعتمد على {path} وأعد الحفظ.',
     ribbonLabel: 'شريط الأدوات',
     sideLabel: 'الصفحات والإشارات المرجعية والبحث',
@@ -769,10 +765,6 @@ defineStrings('pdf', {
     help: 'Help',
     save: 'Save',
     saveAs: 'Save as…',
-    saveAsPath: 'Full path of the file',
-    saveAsHint: 'Inside /home/user only. If the file exists, one .bak of it is written first.',
-    saveAsBad: 'Type a full path inside /home/user, like /home/user/Documents/report.pdf',
-    saveAsReplaceTitle: 'Replace an existing file?',
     saveVerifyFailed: 'The file was written but reading it back did not match: do not rely on {path}; save again.',
     ribbonLabel: 'Toolbar',
     sideLabel: 'Pages, bookmarks and search',
@@ -1022,4 +1014,10 @@ defineStrings('pdf', {
     keyEscape: 'Cancel the tool or close the panel',
     keyHelp: 'This list',
   },
+});
+
+/* «حفظ باسم» — the format label for the shared shell dialog (src/shell/save-as.ts). */
+defineStrings('pdf', {
+  ar: { formatPdf: 'مستند PDF (.pdf)' },
+  en: { formatPdf: 'PDF document (.pdf)' },
 });
