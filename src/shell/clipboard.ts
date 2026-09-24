@@ -207,7 +207,17 @@ export function mountClipboard(sys: SystemAPI): ClipboardPanel {
     clear.className = 'faisal-clip-clear';
     clear.textContent = t('shell.clip.clear');
     clear.addEventListener('click', () => { history = []; save(); render(); });
-    head.append(h, clear);
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'faisal-clip-x';
+    x.textContent = '×';
+    x.setAttribute('aria-label', t('shell.clip.close'));
+    x.title = t('shell.clip.close');
+    x.addEventListener('click', () => close());
+    const tools = document.createElement('div');
+    tools.className = 'faisal-clip-tools';
+    tools.append(clear, x);
+    head.append(h, tools);
 
     list = document.createElement('div');
     list.className = 'faisal-clip-list';
@@ -223,7 +233,16 @@ export function mountClipboard(sys: SystemAPI): ClipboardPanel {
     active = 0;
     items()[0]?.focus();
     document.addEventListener('pointerdown', onOutside, true);
+    // Esc closes the panel wherever focus is (even an empty list has nothing to focus).
+    document.addEventListener('keydown', onEscape, true);
     panel.addEventListener('keydown', onKey);
+  }
+
+  function onEscape(ev: KeyboardEvent) {
+    if (ev.key !== 'Escape' || !panel) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    close();
   }
 
   function close() {
@@ -231,6 +250,7 @@ export function mountClipboard(sys: SystemAPI): ClipboardPanel {
     panel.remove();
     panel = null;
     document.removeEventListener('pointerdown', onOutside, true);
+    document.removeEventListener('keydown', onEscape, true);
     // Give focus back to where the owner was typing.
     if (target?.isConnected) target.focus();
   }
@@ -241,7 +261,6 @@ export function mountClipboard(sys: SystemAPI): ClipboardPanel {
 
   function onKey(ev: KeyboardEvent) {
     const all = items();
-    if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); close(); return; }
     if (!all.length) return;
     if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
       ev.preventDefault();

@@ -1700,6 +1700,11 @@ body {
 }
 .faisal-clip-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 14px 8px; }
 .faisal-clip-head h3 { margin: 0; font-size: 15px; }
+.faisal-clip-tools { display: flex; align-items: center; gap: 4px; }
+.faisal-clip-x { appearance: none; border: none; background: transparent; color: var(--faisal-fg-muted); font-size: 20px; line-height: 1; cursor: pointer; inline-size: 32px; block-size: 32px; border-radius: 8px; }
+.faisal-clip-x:hover { background: var(--faisal-surface-2); color: var(--faisal-fg); }
+.faisal-clip-x:focus-visible { outline: 2px solid var(--faisal-accent); outline-offset: 1px; }
+@media (pointer: coarse) { .faisal-clip-x { inline-size: 44px; block-size: 44px; } }
 .faisal-clip-clear { appearance: none; border: none; background: transparent; color: var(--faisal-accent); font: inherit; font-size: 13px; cursor: pointer; padding: 6px 8px; border-radius: 8px; }
 .faisal-clip-clear:hover { background: var(--faisal-surface-2); }
 .faisal-clip-list { overflow-y: auto; padding: 4px 8px; display: flex; flex-direction: column; gap: 4px; }
