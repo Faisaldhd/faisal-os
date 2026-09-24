@@ -28,7 +28,7 @@ import {
   History, VERIFIED_FORMATS, clearTruncated, emptyModel, isTruncated, planFor, textEdit,
   type Edit, type FormatPlan, type OfficeModel, type SheetsModel, type SupportLevel,
 } from './model';
-import { computeFormulaCells, evaluateFormula } from './formula';
+import { computeSheets, parseFormula } from './formula/index';
 import { loadOfficeFile, serializeModel, type LoadRefusal } from './file';
 import { patchPackage, packageKind, snapshotModel, type PatchResult } from './patch';
 import { backupPathFor, saveWithBackup, withinHome } from './save';
@@ -247,7 +247,7 @@ function launch(ctx: AppContext): void {
 
   /** Every formula's value follows the values it reads, on every model change. */
   function recompute(m: OfficeModel): OfficeModel {
-    return m.kind === 'xlsx' || m.kind === 'csv' ? computeFormulaCells(m) : m;
+    return m.kind === 'xlsx' || m.kind === 'csv' ? computeSheets(m) : m;
   }
 
   function commit(edit: Edit): void {
@@ -461,7 +461,7 @@ function launch(ctx: AppContext): void {
           if (!grid) return;
           for (const [key, formula] of sheet.formulas) {
             const [r, c] = key.split(':').map(Number);
-            if (evaluateFormula(formula, grid, { row: r, col: c }).ok) formulas[`${s}:${r}:${c}`] = formula;
+            if (parseFormula(formula).ok) formulas[`${s}:${r}:${c}`] = formula;
           }
         });
         if (Object.keys(formulas).length) return { ...m, formulas } as SheetsModel;

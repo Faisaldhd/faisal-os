@@ -18,7 +18,8 @@ import {
   addColumnEdit, addRowEdit, canDeleteColumn, canDeleteRow, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit,
   gridAt, gridWidth, type CellState, type Edit, type OfficeModel, type SheetsModel,
 } from '../model';
-import { evaluateFormula } from '../formula';
+import { evaluateInModel, formatFormula, parseFormula } from '../formula/index';
+import { formatValue } from '../calc/index';
 import { columnName } from '../xml';
 import { MAX_COLS, MAX_ROWS } from '../../viewer/formats';
 import { el } from '../ui/dom';
@@ -36,6 +37,7 @@ interface Cell { row: number; col: number }
 /** A value shown in its number format (a small subset until the shared formatter lands). */
 export function displayValue(value: string, fmt: string | undefined): string {
   if (!fmt || fmt === 'General' || fmt === '@' || value === '' || !/^-?\d+(\.\d+)?(E[+-]?\d+)?$/i.test(value.trim())) return value;
+  try { return formatValue(Number(value), fmt).text; } catch { /* fall back to the small formatter below */ }
   const n = Number(value);
   const section = fmt.split(';')[0].replace(/\[[^\]]*\]/g, '').replace(/"[^"]*"/g, (q) => q);
   if (/[yd]/i.test(section) || /m{1,4}[/-]/.test(section)) {
@@ -156,8 +158,10 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const before = cellState(r, c);
     let after: CellState;
     if (m.kind === 'xlsx' && typed.trimStart().startsWith('=')) {
-      const outcome = evaluateFormula(typed.trim(), grid, { row: r, col: c });
-      after = outcome.ok && outcome.canonical ? { value: outcome.value, formula: `=${outcome.canonical}` } : { value: typed };
+      const outcome = evaluateInModel(typed.trim(), m, sheet, { row: r, col: c });
+      const parsed = outcome.ok ? parseFormula(typed.trim()) : null;
+      const canonical = parsed && parsed.ok ? formatFormula(parsed.ast) : outcome.canonical;
+      after = outcome.ok && canonical ? { value: outcome.value, formula: `=${canonical}` } : { value: typed };
     } else {
       after = { value: typed };
     }

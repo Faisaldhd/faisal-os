@@ -50,7 +50,7 @@
  */
 import { columnIndex, readDocx, readPptx, readXlsx } from '../viewer/formats';
 import { cellName, isNumericText, jcValue, paragraphPropertiesMarkup, runPropertiesMarkup, runPropertyChildren, xmlText } from './xml';
-import { evaluateFormula } from './formula';
+import { formatFormula, parseFormula } from './formula/index';
 import {
   applyEdits, attr, attrLocal, elementText, elements, elementsOf, localName, paragraphElements, paragraphSlots,
   paragraphText, parsePart, type XmlDoc, type XmlEdit, type XmlElement,
@@ -718,7 +718,8 @@ async function patchXlsx(archive: RawZip, baseline: SheetsModel, current: Sheets
         // A cell needs rewriting when its value or its formula changed: a new formula
         // that happens to compute the same value still has to reach the file's `<f>`.
         if (beforeValue === afterValue && beforeFormula === afterFormula) continue;
-        const formula = afterFormula ? evaluateFormula(afterFormula, { ...after, rows: after.rows }).canonical : null;
+        const parsed = afterFormula ? parseFormula(afterFormula) : null;
+        const formula = parsed && parsed.ok ? formatFormula(parsed.ast, { xlfn: true }) : null;
         const keepF = !!afterFormula && beforeFormula === afterFormula;
         if (afterFormula && formula === null && !keepF) return null;
         cells.push({ row: r, col: c, after: afterValue, formula, keepF });
