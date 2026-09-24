@@ -14,6 +14,7 @@ import { mountDesktop } from './desktop';
 import { mountSession } from './session';
 import { mountLock } from './lock';
 import { mountClipboard } from './clipboard';
+import { mountFileDrop } from './file-drop';
 
 export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   wireAppearance(sys.bus, sys.settings);
@@ -24,6 +25,7 @@ export function mountShell(root: HTMLElement, sys: SystemAPI): void {
   const screenshot = mountScreenshot(sys);
   const lock = mountLock();
   const clipboard = mountClipboard(sys);
+  mountFileDrop(sys);
   const topbar = mountTopbar(
     root,
     sys,

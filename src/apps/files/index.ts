@@ -17,6 +17,7 @@ import {
   type MoveRefusal,
 } from './dnd';
 import { confirmDialog, promptDialog } from './dialog';
+import { captureDrop, collectFiles, saveDropped } from '../../shell/file-drop';
 import { ICONS, icon } from './icons';
 import './files.css';
 
@@ -772,19 +773,17 @@ function launch(ctx: AppContext): void {
   }
 
   async function handleExternalDrop(e: DragEvent) {
-    if (closed) return;
-    const files = e.dataTransfer?.files;
-    if (files && files.length > 0) {
-      await performUploads(files);
-    } else {
-      // Some browsers only expose dropped files through items.
-      const collected: File[] = [];
-      for (const it of Array.from(e.dataTransfer?.items ?? [])) {
-        if (it.kind !== 'file') continue;
-        const f = it.getAsFile();
-        if (f) collected.push(f);
-      }
-      await performUploads(collected);
+    if (closed || !e.dataTransfer) return;
+    // Read while the drop event is live (a DataTransfer is empty afterwards); folders are walked.
+    const src = captureDrop(e.dataTransfer);
+    const dir = currentPath;
+    try {
+      const result = await saveDropped(vfs, dir, await collectFiles(src), t('files.copyOf'));
+      if (closed) return;
+      if (result.failed) showError(result.error);
+    } catch (err) {
+      if (closed) return;
+      showError(err);
     }
     if (closed) return;
     await refresh();
