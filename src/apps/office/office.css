@@ -1,0 +1,317 @@
+/*
+ * Office — the editor window (المكتب).
+ *
+ * Layout rules that matter:
+ *  • the toolbar and the sheet tools wrap, so 320px never pushes a button off screen;
+ *  • every button is at least 44px tall (the touch-target rule), and no action is
+ *    reachable only by hovering;
+ *  • the spreadsheet scrolls in both directions instead of shrinking its cells,
+ *    and keeps its column order left-to-right even in the Arabic RTL window.
+ */
+
+.faisal-office {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: var(--faisal-bg, #151a26);
+  color: var(--faisal-fg, #eceef3);
+  font-family: var(--faisal-font, -apple-system, "Segoe UI", "Noto Sans Arabic", sans-serif);
+}
+
+/* ───────────────────────────── toolbar ───────────────────────────── */
+
+.faisal-office-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--faisal-surface-2, #283042);
+  border-block-end: 1px solid var(--faisal-border, rgba(255,255,255,.11));
+}
+.faisal-office-info { flex: 1 1 140px; min-width: 0; }
+.faisal-office-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.faisal-office-meta { font-size: 12px; opacity: .75; overflow-wrap: anywhere; }
+.faisal-office-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.faisal-office-btn {
+  appearance: none;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--faisal-border, rgba(255,255,255,.18));
+  border-radius: var(--faisal-radius-sm, 6px);
+  background: var(--faisal-surface-3, #343d52);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.faisal-office-btn.is-primary {
+  background: var(--faisal-accent, #3c6eb4);
+  color: var(--faisal-accent-fg, #fff);
+  border-color: transparent;
+}
+.faisal-office-btn:disabled { opacity: .45; cursor: default; }
+.faisal-office-btn:focus-visible,
+.faisal-office-tab:focus-visible {
+  outline: 2px solid var(--faisal-focus-ring-invert, #F0CF7A);
+  outline-offset: 2px;
+}
+
+/* ────────────────────── sheet tools (rows/columns) ────────────────────── */
+
+.faisal-office-tools {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--faisal-surface-3, #343d52);
+  border-block-end: 1px solid var(--faisal-border, rgba(255,255,255,.11));
+}
+.faisal-office-hint { font-size: 12px; opacity: .7; }
+
+.faisal-office-notice {
+  flex: none;
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  background: var(--faisal-surface-2, #283042);
+  border-block-end: 1px solid var(--faisal-border, rgba(255,255,255,.11));
+  overflow-wrap: anywhere;
+}
+
+/* ─────────────────────────────── body ─────────────────────────────── */
+
+.faisal-office-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.faisal-office-note {
+  margin: auto;
+  padding: 24px 16px;
+  max-width: 420px;
+  text-align: center;
+  opacity: .8;
+}
+.faisal-office-more {
+  flex: none;
+  padding: 6px 10px;
+  font-size: 12px;
+  opacity: .75;
+  overflow-wrap: anywhere;
+}
+
+/* Word / PowerPoint paragraphs */
+
+.faisal-office-doc,
+.faisal-office-slides {
+  width: min(760px, 100%);
+  box-sizing: border-box;
+  margin: 0 auto;
+  padding: 12px 12px 20px;
+}
+.faisal-office-para-row {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-block-end: 8px;
+}
+.faisal-office-para-index {
+  flex: none;
+  min-width: 74px;
+  padding-block-start: 12px;
+  font-size: 11.5px;
+  opacity: .6;
+}
+.faisal-office-para {
+  flex: 1 1 180px;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--faisal-border, rgba(255,255,255,.14));
+  border-radius: var(--faisal-radius-sm, 6px);
+  background: var(--faisal-surface-2, #283042);
+  color: inherit;
+  font: inherit;
+  line-height: 1.65;
+  resize: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.faisal-office-slide {
+  margin-block-end: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--faisal-border, rgba(255,255,255,.11));
+  border-radius: var(--faisal-radius, 10px);
+  background: var(--faisal-surface-2, #283042);
+}
+.faisal-office-slidehead { margin: 0 0 8px; font-size: 12.5px; opacity: .7; }
+.faisal-office-slide .faisal-office-note { margin: 0; padding: 4px 0; text-align: start; }
+
+/* spreadsheet */
+
+.faisal-office-sheets { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.faisal-office-tabs {
+  flex: none;
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  border-block-end: 1px solid var(--faisal-border, rgba(255,255,255,.11));
+}
+.faisal-office-tab {
+  appearance: none;
+  flex: none;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--faisal-radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.faisal-office-tab[aria-selected="true"] {
+  background: var(--faisal-accent, #3c6eb4);
+  color: var(--faisal-accent-fg, #fff);
+}
+.faisal-office-gridwrap { flex: 1; min-height: 0; overflow: auto; }
+.faisal-office-table { border-collapse: collapse; font-size: 13px; }
+.faisal-office-table th,
+.faisal-office-table td { border: 1px solid var(--faisal-border, rgba(255,255,255,.11)); padding: 0; }
+.faisal-office-colhead,
+.faisal-office-rowhead,
+.faisal-office-corner {
+  padding: 4px 8px;
+  min-width: 44px;
+  background: var(--faisal-surface-2, #283042);
+  font-weight: 400;
+  font-size: 11.5px;
+  text-align: center;
+  opacity: .85;
+}
+.faisal-office-colhead { position: sticky; inset-block-start: 0; z-index: 2; }
+.faisal-office-rowhead { position: sticky; inset-inline-start: 0; z-index: 1; }
+.faisal-office-corner { position: sticky; inset-block-start: 0; inset-inline-start: 0; z-index: 3; }
+.faisal-office-celld { min-width: 96px; }
+.faisal-office-cell {
+  display: block;
+  width: 100%;
+  min-width: 96px;
+  min-height: 34px;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+.faisal-office-cell:focus { outline: 2px solid var(--faisal-focus-ring-invert, #F0CF7A); outline-offset: -2px; }
+
+/* plain text */
+
+.faisal-office-text {
+  flex: 1;
+  min-height: 240px;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 12px 14px;
+  border: 0;
+  background: var(--faisal-bg, #151a26);
+  color: inherit;
+  font: 13px/1.6 var(--faisal-mono, ui-monospace, "Cascadia Code", Consolas, monospace);
+  resize: none;
+  overflow-wrap: anywhere;
+}
+
+/* refusal card */
+
+.faisal-office-card {
+  margin: auto;
+  padding: 20px;
+  width: min(460px, calc(100% - 32px));
+  box-sizing: border-box;
+  text-align: center;
+  border: 1px solid var(--faisal-border, rgba(255,255,255,.11));
+  border-radius: var(--faisal-radius, 10px);
+  background: var(--faisal-surface-2, #283042);
+}
+.faisal-office-card-title { font-weight: 600; margin-block-end: 8px; }
+.faisal-office-card-text { margin: 0; line-height: 1.7; opacity: .85; overflow-wrap: anywhere; }
+
+/* ───────────────────────── limits and formats ───────────────────────── */
+
+.faisal-office-limits {
+  flex: none;
+  max-height: 45%;
+  overflow: auto;
+  border-block-start: 1px solid var(--faisal-border, rgba(255,255,255,.11));
+  background: var(--faisal-surface-2, #283042);
+  font-size: 12.5px;
+}
+.faisal-office-summary {
+  padding: 12px 12px;
+  min-height: 44px;
+  box-sizing: border-box;
+  cursor: pointer;
+  font-weight: 600;
+}
+.faisal-office-limits-body { padding: 0 12px 12px; }
+.faisal-office-blocktitle { margin-block: 8px 4px; font-weight: 600; }
+.faisal-office-limitlist,
+.faisal-office-formatlist { margin: 0; padding-inline-start: 20px; line-height: 1.7; }
+.faisal-office-formatlist { opacity: .85; overflow-wrap: anywhere; }
+
+/* ───────────────────────────── footer ───────────────────────────── */
+
+.faisal-office-footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: var(--faisal-surface-2, #283042);
+  border-block-start: 1px solid var(--faisal-border, rgba(255,255,255,.11));
+}
+.faisal-office-status { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
+.faisal-office-path {
+  flex: 0 1 auto;
+  max-width: 100%;
+  opacity: .6;
+  direction: ltr;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ─────────────────────────── narrow screens ─────────────────────────── */
+
+@media (max-width: 390px) {
+  .faisal-office-actions { flex: 1 1 100%; }
+  .faisal-office-actions .faisal-office-btn { flex: 1 1 calc(50% - 6px); padding: 0 8px; }
+  .faisal-office-para-index { min-width: 100%; padding-block-start: 0; }
+  .faisal-office-para { flex-basis: 100%; }
+  .faisal-office-cell { min-width: 84px; }
+}
+
+/* Touch: rows in the grid get the same 44px target as the buttons. */
+@media (pointer: coarse) {
+  .faisal-office-cell { min-height: 44px; }
+}

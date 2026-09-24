@@ -1,0 +1,429 @@
+/**
+ * Office — the pure part (المنطق الخالص): which formats this app really handles,
+ * the editable model of a file, the edit operations, and undo/redo.
+ *
+ * No DOM and no VFS here: everything is plain data, so it is testable on its own
+ * and the window in `index.ts` only renders it.
+ *
+ * The supported-format table below is the single source of truth for the app's
+ * honest format list: the UI prints it and the tests assert it against what the
+ * readers in `src/apps/viewer/formats.ts` actually do.
+ */
+import { extensionOf } from '../viewer/formats';
+
+/** The four shapes a file can have once read, plus plain text. */
+export type OfficeKind = 'docx' | 'xlsx' | 'pptx' | 'csv' | 'text';
+
+/** One worksheet (or the single grid of a CSV/TSV file, kept as plain text cells). */
+export interface Grid {
+  name: string;
+  rows: string[][];
+  /** The reader stopped at its row/column limit: rows beyond it were never read. */
+  truncated: boolean;
+}
+
+export interface DocModel { kind: 'docx'; paragraphs: string[] }
+export interface SheetsModel { kind: 'xlsx' | 'csv'; grids: Grid[]; active: number; delimiter: ',' | '\t' }
+export interface DeckModel { kind: 'pptx'; slides: string[][] }
+export interface TextModel { kind: 'text'; text: string }
+
+export type OfficeModel = DocModel | SheetsModel | DeckModel | TextModel;
+
+/* ───────────────────────────── formats ───────────────────────────── */
+
+/** Why a file is refused. `.doc/.xls/.ppt` are legacy binary; anything else is unknown. */
+export type Refusal = 'legacy' | 'unknown';
+
+export interface FormatPlan {
+  ext: string;
+  /** null when the app has no reader for it (`refusal` then says why). */
+  kind: OfficeKind | null;
+  refusal: Refusal | null;
+  /** `.xlsm` is rendered but never saved: rewriting it as OOXML would drop its macros. */
+  readOnly: 'macros' | null;
+  delimiter: ',' | '\t';
+}
+
+/** Editing is offered; read-only is rendered but Save/Add/Remove stay hidden. */
+export type SupportLevel = 'edit' | 'read-only' | 'unsupported';
+
+export interface FormatRow { ext: string; level: SupportLevel; note: string }
+
+/**
+ * Every extension this app knows, and what it really does with it.
+ * `note` is a short English reason used by tests and diagnostics — the UI shows a
+ * translated sentence built from `level` and the extension instead.
+ */
+export const VERIFIED_FORMATS: readonly FormatRow[] = [
+  { ext: '.docx', level: 'edit', note: 'readDocx paragraphs; written back as a fresh OOXML package' },
+  { ext: '.xlsx', level: 'edit', note: 'readXlsx cells; written back as a fresh OOXML package' },
+  { ext: '.xlsm', level: 'read-only', note: 'readXlsx works, but saving would drop the macros' },
+  { ext: '.pptx', level: 'edit', note: 'readPptx slide text; written back as a fresh OOXML package' },
+  { ext: '.csv', level: 'edit', note: 'parseCsv with a comma; written back as CSV' },
+  { ext: '.tsv', level: 'edit', note: 'parseCsv with a tab; written back as TSV' },
+  { ext: '.txt', level: 'edit', note: 'plain UTF-8 text (binary files are refused)' },
+  { ext: '.md', level: 'edit', note: 'shown and edited as raw text; no Markdown preview' },
+  { ext: '.doc', level: 'unsupported', note: 'legacy binary Word format; no reader' },
+  { ext: '.xls', level: 'unsupported', note: 'legacy binary Excel format; no reader' },
+  { ext: '.ppt', level: 'unsupported', note: 'legacy binary PowerPoint format; no reader' },
+];
+
+/** The extensions the manifest offers, in the order the Store description lists them. */
+export const OFFICE_EXTENSIONS: readonly string[] = [
+  '.docx', '.xlsx', '.xlsm', '.pptx', '.csv', '.tsv', '.txt', '.md',
+];
+
+const LEGACY: Record<string, Refusal> = { '.doc': 'legacy', '.xls': 'legacy', '.ppt': 'legacy' };
+
+/** What the app will do with a path, decided by its extension alone. */
+export function planFor(path: string): FormatPlan {
+  const ext = extensionOf(path);
+  const base: FormatPlan = { ext, kind: null, refusal: null, readOnly: null, delimiter: ',' };
+  switch (ext) {
+    case '.docx': return { ...base, kind: 'docx' };
+    case '.xlsx': return { ...base, kind: 'xlsx' };
+    case '.xlsm': return { ...base, kind: 'xlsx', readOnly: 'macros' };
+    case '.pptx': return { ...base, kind: 'pptx' };
+    case '.csv': return { ...base, kind: 'csv' };
+    case '.tsv': return { ...base, kind: 'csv', delimiter: '\t' };
+    case '.txt':
+    case '.md': return { ...base, kind: 'text' };
+    default: return { ...base, refusal: LEGACY[ext] ?? 'unknown' };
+  }
+}
+
+/** A model for an empty file of this plan's kind: one empty paragraph/sheet/slide. */
+export function emptyModel(plan: FormatPlan, name = 'Sheet1'): OfficeModel {
+  switch (plan.kind) {
+    case 'docx': return { kind: 'docx', paragraphs: [''] };
+    case 'xlsx': return { kind: 'xlsx', grids: [{ name: 'Sheet1', rows: [['']], truncated: false }], active: 0, delimiter: ',' };
+    case 'csv': return { kind: 'csv', grids: [{ name, rows: [['']], truncated: false }], active: 0, delimiter: plan.delimiter };
+    case 'pptx': return { kind: 'pptx', slides: [['']] };
+    default: return { kind: 'text', text: '' };
+  }
+}
+
+/* ─────────────────────────── edit operations ─────────────────────────── */
+
+/**
+ * One reversible step. `apply`/`revert` are pure: they return a new model and
+ * never touch the one they are given, which is what makes undo safe after any
+ * number of later edits.
+ *
+ * `key` marks edits that target the same place: typing in one cell pushes an edit
+ * per keystroke, and the History merges those into a single undo step instead of
+ * making the user press Ctrl+Z once per character.
+ */
+export interface Edit {
+  key?: string;
+  apply(model: OfficeModel): OfficeModel;
+  revert(model: OfficeModel): OfficeModel;
+}
+
+/** The grid at `sheet`, or null when the model has no such sheet. */
+export function gridAt(model: OfficeModel, sheet: number): Grid | null {
+  if (model.kind !== 'xlsx' && model.kind !== 'csv') return null;
+  return model.grids[sheet] ?? null;
+}
+
+function replaceGrid(model: SheetsModel, sheet: number, grid: Grid): SheetsModel {
+  return { ...model, grids: model.grids.map((g, i) => (i === sheet ? grid : g)) };
+}
+
+/** Writes a cell value, growing the row and the grid when the address is past the end. */
+export function setCellValue(model: SheetsModel, sheet: number, row: number, col: number, value: string): SheetsModel {
+  const grid = model.grids[sheet];
+  if (!grid) return model;
+  const rows = grid.rows.slice();
+  while (rows.length <= row) rows.push([]);
+  const line = rows[row].slice();
+  while (line.length <= col) line.push('');
+  line[col] = value;
+  rows[row] = line;
+  return replaceGrid(model, sheet, { ...grid, rows });
+}
+
+/** Inserts an empty row at `at` (used by the sheet's "add row" action). */
+export function insertRow(model: SheetsModel, sheet: number, at: number): SheetsModel {
+  const grid = model.grids[sheet];
+  if (!grid) return model;
+  const rows = grid.rows.slice();
+  const index = Math.max(0, Math.min(at, rows.length));
+  const width = gridWidth(grid);
+  rows.splice(index, 0, new Array<string>(width).fill(''));
+  return replaceGrid(model, sheet, { ...grid, rows });
+}
+
+/**
+ * Removes the row at `at`. Removing the last row leaves an empty sheet, which is
+ * valid; the window disables the button instead (`canDeleteRow`), so a user cannot
+ * empty a sheet by accident while undo stays an exact inverse of the edit.
+ */
+export function removeRow(model: SheetsModel, sheet: number, at: number): SheetsModel {
+  const grid = model.grids[sheet];
+  if (!grid || at < 0 || at >= grid.rows.length) return model;
+  const rows = grid.rows.slice();
+  rows.splice(at, 1);
+  return replaceGrid(model, sheet, { ...grid, rows });
+}
+
+/** A sheet keeps its last row: the window greys out "delete row" instead of emptying the grid. */
+export function canDeleteRow(model: OfficeModel, sheet: number): boolean {
+  const grid = gridAt(model, sheet);
+  return !!grid && grid.rows.length > 1;
+}
+
+/** The width of a grid: the longest row, since rows may be ragged. */
+export function gridWidth(grid: Grid): number {
+  return grid.rows.reduce((w, r) => Math.max(w, r.length), 0);
+}
+
+/** A sheet keeps its last column, for the same reason as its last row. */
+export function canDeleteColumn(model: OfficeModel, sheet: number): boolean {
+  const grid = gridAt(model, sheet);
+  return !!grid && gridWidth(grid) > 1;
+}
+
+/** Inserts a column at `at`, one empty cell per row. */
+export function insertColumn(model: SheetsModel, sheet: number, at: number): SheetsModel {
+  const grid = model.grids[sheet];
+  if (!grid) return model;
+  const width = gridWidth(grid);
+  const index = Math.max(0, Math.min(at, width));
+  const rows = grid.rows.map((r) => {
+    const line = r.slice();
+    while (line.length < index) line.push('');
+    line.splice(index, 0, '');
+    return line;
+  });
+  if (!rows.length) rows.push(['']);
+  return replaceGrid(model, sheet, { ...grid, rows });
+}
+
+/** Removes the column at `at`. A row shorter than `at` has no cell there and is left alone. */
+export function removeColumn(model: SheetsModel, sheet: number, at: number): SheetsModel {
+  const grid = model.grids[sheet];
+  if (!grid || at < 0) return model;
+  if (at >= gridWidth(grid)) return model;
+  const rows = grid.rows.map((r) => {
+    const line = r.slice();
+    if (line.length > at) line.splice(at, 1);
+    return line;
+  });
+  return replaceGrid(model, sheet, { ...grid, rows });
+}
+
+function sheetsEdit(
+  model: OfficeModel,
+  change: (m: SheetsModel) => SheetsModel,
+): OfficeModel {
+  return model.kind === 'xlsx' || model.kind === 'csv' ? change(model) : model;
+}
+
+/** An edit that sets one cell, remembering the value it replaced. */
+export function cellEdit(sheet: number, row: number, col: number, before: string, after: string): Edit {
+  return {
+    key: `cell:${sheet}:${row}:${col}`,
+    apply: (m) => sheetsEdit(m, (s) => setCellValue(s, sheet, row, col, after)),
+    revert: (m) => sheetsEdit(m, (s) => setCellValue(s, sheet, row, col, before)),
+  };
+}
+
+/** An edit that inserts a row, capturing the index so undo removes exactly it. */
+export function addRowEdit(sheet: number, at: number): Edit {
+  return {
+    apply: (m) => sheetsEdit(m, (s) => insertRow(s, sheet, at)),
+    revert: (m) => sheetsEdit(m, (s) => removeRow(s, sheet, at)),
+  };
+}
+
+/** An edit that removes a row, keeping its cells so undo restores them exactly. */
+export function deleteRowEdit(sheet: number, at: number, row: string[]): Edit {
+  const value = row.slice();
+  return {
+    apply: (m) => sheetsEdit(m, (s) => removeRow(s, sheet, at)),
+    revert: (m) => sheetsEdit(m, (s) => {
+      const grid = s.grids[sheet];
+      if (!grid) return s;
+      const rows = grid.rows.slice();
+      rows.splice(Math.min(at, rows.length), 0, value.slice());
+      return replaceGrid(s, sheet, { ...grid, rows });
+    }),
+  };
+}
+
+/** An edit that inserts a column. */
+export function addColumnEdit(sheet: number, at: number): Edit {
+  return {
+    apply: (m) => sheetsEdit(m, (s) => insertColumn(s, sheet, at)),
+    revert: (m) => sheetsEdit(m, (s) => removeColumn(s, sheet, at)),
+  };
+}
+
+/** An edit that removes a column, keeping its cells so undo restores them. */
+export function deleteColumnEdit(sheet: number, at: number, values: string[]): Edit {
+  const kept = values.slice();
+  return {
+    apply: (m) => sheetsEdit(m, (s) => removeColumn(s, sheet, at)),
+    revert: (m) => sheetsEdit(m, (s) => {
+      const grid = s.grids[sheet];
+      if (!grid) return s;
+      const rows = grid.rows.map((r, i) => {
+        const line = r.slice();
+        while (line.length < at) line.push('');
+        line.splice(at, 0, kept[i] ?? '');
+        return line;
+      });
+      if (!rows.length) rows.push([kept[0] ?? '']);
+      return replaceGrid(s, sheet, { ...grid, rows });
+    }),
+  };
+}
+
+/** An edit that replaces one paragraph of a Word document (tab/newline text kept as-is). */
+export function paragraphEdit(index: number, before: string, after: string): Edit {
+  const set = (m: OfficeModel, text: string): OfficeModel => {
+    if (m.kind !== 'docx') return m;
+    const paragraphs = m.paragraphs.slice();
+    while (paragraphs.length <= index) paragraphs.push('');
+    paragraphs[index] = text;
+    return { ...m, paragraphs };
+  };
+  return {
+    key: `para:${index}`,
+    apply: (m) => set(m, after),
+    revert: (m) => set(m, before),
+  };
+}
+
+/** An edit that replaces one paragraph of a PowerPoint slide. */
+export function slideTextEdit(slide: number, paragraph: number, before: string, after: string): Edit {
+  const set = (m: OfficeModel, text: string): OfficeModel => {
+    if (m.kind !== 'pptx') return m;
+    const slides = m.slides.map((s, i) => {
+      if (i !== slide) return s;
+      const parts = s.slice();
+      while (parts.length <= paragraph) parts.push('');
+      parts[paragraph] = text;
+      return parts;
+    });
+    return { ...m, slides };
+  };
+  return {
+    key: `slide:${slide}:${paragraph}`,
+    apply: (m) => set(m, after),
+    revert: (m) => set(m, before),
+  };
+}
+
+/** An edit that replaces the whole text of a .txt/.md buffer. */
+export function textEdit(before: string, after: string): Edit {
+  return {
+    key: 'text',
+    apply: (m) => (m.kind === 'text' ? { ...m, text: after } : m),
+    revert: (m) => (m.kind === 'text' ? { ...m, text: before } : m),
+  };
+}
+
+/* ───────────────────────────── history ───────────────────────────── */
+
+/** How many edit steps the user can walk back. The task asks for 30; 50 is cheap. */
+export const HISTORY_LIMIT = 50;
+/** Two edits to the same target closer than this merge into one undo step. */
+export const COALESCE_MS = 700;
+
+/**
+ * Undo/redo over reversible edits.
+ *
+ * The model itself is never stored: each edit knows how to undo itself from the
+ * current model, so 50 steps cost a few strings, not 50 copies of a spreadsheet.
+ * When the oldest edit falls off the end of the limit, the "saved" position is
+ * marked unreachable (`saved = -1`) so a file can never be reported as saved when
+ * its disk state can no longer be reached.
+ */
+export class History {
+  private edits: Edit[] = [];
+  private times: number[] = [];
+  private cursor = 0;
+  private saved = 0;
+
+  constructor(
+    private readonly limit: number = HISTORY_LIMIT,
+    private readonly now: () => number = () => Date.now(),
+  ) {}
+
+  /** True when the model differs from the last saved/loaded state. */
+  get dirty(): boolean { return this.saved !== this.cursor; }
+  get undoSteps(): number { return this.cursor; }
+  get redoSteps(): number { return this.edits.length - this.cursor; }
+
+  push(edit: Edit): void {
+    const last = this.cursor > 0 ? this.edits[this.cursor - 1] : undefined;
+    if (edit.key && last?.key === edit.key && this.now() - this.times[this.cursor - 1] <= COALESCE_MS) {
+      // Same target, same burst of typing: keep the newest change and the oldest
+      // "before", so one undo still goes back to the value before the burst.
+      this.edits[this.cursor - 1] = { key: edit.key, apply: edit.apply, revert: last.revert };
+      this.times[this.cursor - 1] = this.now();
+      return;
+    }
+    this.edits.length = this.cursor;
+    this.times.length = this.cursor;
+    this.edits.push(edit);
+    this.times.push(this.now());
+    this.cursor++;
+    while (this.edits.length > this.limit) {
+      this.edits.shift();
+      this.times.shift();
+      this.cursor--;
+      this.saved = this.saved >= 1 ? this.saved - 1 : -1;
+    }
+  }
+
+  undo(model: OfficeModel): OfficeModel {
+    if (this.cursor === 0) return model;
+    this.cursor--;
+    return this.edits[this.cursor].revert(model);
+  }
+
+  redo(model: OfficeModel): OfficeModel {
+    if (this.cursor >= this.edits.length) return model;
+    const edit = this.edits[this.cursor];
+    this.cursor++;
+    return edit.apply(model);
+  }
+
+  /** Called after a successful save: the current model is now the disk state. */
+  markSaved(): void { this.saved = this.cursor; }
+
+  /** Called after loading (or re-loading) a file: nothing to undo, nothing dirty. */
+  reset(): void {
+    this.edits = [];
+    this.times = [];
+    this.cursor = 0;
+    this.saved = 0;
+  }
+}
+
+/* ─────────────────────────── model helpers ─────────────────────────── */
+
+/** True when the reader hit its limit, so saving would drop rows/columns it never read. */
+export function isTruncated(model: OfficeModel): boolean {
+  return (model.kind === 'xlsx' || model.kind === 'csv') && model.grids.some((g) => g.truncated);
+}
+
+/** After a successful save the file on disk equals the model: nothing is truncated any more. */
+export function clearTruncated(model: OfficeModel): OfficeModel {
+  if (model.kind !== 'xlsx' && model.kind !== 'csv') return model;
+  return { ...model, grids: model.grids.map((g) => (g.truncated ? { ...g, truncated: false } : g)) };
+}
+
+/** A one-line summary of a model, for the window's meta text. */
+export function describeModel(model: OfficeModel): string {
+  switch (model.kind) {
+    case 'docx': return `${model.paragraphs.length}`;
+    case 'xlsx': return `${model.grids.length}`;
+    case 'csv': return `${model.grids[0]?.rows.length ?? 0}`;
+    case 'pptx': return `${model.slides.length}`;
+    default: return `${model.text.length}`;
+  }
+}
