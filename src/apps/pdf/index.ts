@@ -25,6 +25,7 @@ import { basename, dirname } from '../../kernel/path';
 import { t } from '../../kernel/i18n';
 import { nativeWeb } from '../../shell/native-web';
 import { shellConfirm } from '../../shell/dialog';
+import { saveAsDialog } from '../../shell/save-as';
 import { showContextMenu, type ContextMenuItem } from '../../shell/contextmenu';
 import { pushEscapeLayer } from '../../shell/esc';
 import { formatBytes } from '../files/format';
@@ -47,7 +48,7 @@ import { PdfViewer, type FieldWidget } from './viewer';
 import { ThumbPanel } from './thumbs';
 import { ByteHistory } from './history';
 import {
-  addRecent, checkSaveAsPath, freePdfPath, loadRecent, removeRecent, setThumb, storeRecent, type RecentEntry,
+  addRecent, freePdfPath, loadRecent, removeRecent, setThumb, storeRecent, type RecentEntry,
 } from './recent';
 import { buildPageText, findAll, firstHitFrom, snippet, stepHit, type Hit } from './search';
 import { commandFor, shortcutSheet, type CommandId } from './shortcuts';
@@ -1572,38 +1573,39 @@ function launch(ctx: AppContext): void {
     setStatus(t('pdf.saveDoneCopy', { path: target }));
   }
 
+  /**
+   * «حفظ باسم» — the shared shell dialog. It replaces the old form that asked the owner to TYPE
+   * a path: the folder is browsed inside /home/user, the file name and the format are picked
+   * there, replacing is confirmed by the same dialog (one `.bak`, never two), and a cancelled or
+   * failed save writes nothing. The bytes are the ones this window holds, and the written file is
+   * read back by the dialog before it reports "saved".
+   */
   async function saveAs(): Promise<void> {
     if (!state.info || state.readOnly) return;
     if (!(await flushFields())) return;
-    const suggestion = state.untitled ? await untitledTarget() : (await previewSave(sys, { sourcePath: state.path, suffix: t('pdf.saveCopySuffix'), overwrite: false }));
+    const suggestion = state.untitled
+      ? await untitledTarget()
+      : (await previewSave(sys, { sourcePath: state.path, suffix: t('pdf.saveCopySuffix'), overwrite: false }));
     const initial = typeof suggestion === 'string' ? suggestion : suggestion?.ok ? suggestion.plan.target : `${HOME}/document.pdf`;
-    const m = openModal({ title: t('pdf.saveAs') });
-    const input = textInput('faisal-pdf-saveas', initial);
-    input.dir = 'ltr';
-    const hint = el('div', 'faisal-pdf-hint', t('pdf.saveAsHint'));
-    const err = el('div', 'faisal-pdf-p is-error');
-    m.body.append(field('faisal-pdf-saveas', 'pdf.saveAsPath', input), hint, err);
-    const cancel = dialogButton(t('pdf.cancel'));
-    const ok = dialogButton(t('pdf.save'), 'primary');
-    m.actions.append(cancel, ok);
-    cancel.addEventListener('click', () => m.close());
-    const go = async (): Promise<void> => {
-      const path = checkSaveAsPath(input.value);
-      if (!path) { err.textContent = t('pdf.saveAsBad'); return; }
-      const exists = await sys.vfs.exists(path).catch(() => false);
-      if (exists) {
-        const yes = await shellConfirm({
-          title: t('pdf.saveAsReplaceTitle'),
-          message: t('pdf.saveOverwriteWarn', { name: basename(path), bak: `${basename(path)}.bak` }),
-          okLabel: t('pdf.saveOverwriteConfirm'), cancelLabel: t('pdf.cancel'), danger: true,
-        });
-        if (!yes) return;
-      }
-      m.close();
-      await saveTo(path, exists);
-    };
-    ok.addEventListener('click', () => { void go(); });
-    input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); void go(); } });
+    const outcome = await saveAsDialog({
+      vfs: sys.vfs,
+      host: win.content,
+      title: t('pdf.saveAs'),
+      dir: dirname(initial),
+      name: basename(initial).replace(/\.pdf$/i, '') || t('pdf.untitled'),
+      formats: [{ value: 'pdf', label: t('pdf.formatPdf'), ext: 'pdf', mime: 'application/pdf' }],
+      format: 'pdf',
+      saveLabel: t('pdf.save'),
+      encode: async () => state.bytes,
+    });
+    if (outcome.status !== 'saved') return;
+    state.path = outcome.path;
+    state.untitled = false;
+    setDocName(basename(outcome.path), outcome.path);
+    markSaved(outcome.path);
+    await refreshSaveTarget();
+    refreshMergeList();
+    setStatus(t('pdf.saveDoneCopy', { path: outcome.path }));
   }
 
   saveCopy.addEventListener('click', () => { void runSave(false); });
@@ -3324,6 +3326,8 @@ function launch(ctx: AppContext): void {
   /* ───────────────────────────── keyboard ───────────────────────────── */
 
   root.addEventListener('keydown', (ev) => {
+    // The shared Save as dialog owns the keyboard while it is open (Ctrl+S inside it is its own).
+    if (win.content.querySelector('.faisal-saveas-overlay')) return;
     const target = ev.target as HTMLElement;
     const inField = Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
     const id: CommandId | null = commandFor(ev, inField);

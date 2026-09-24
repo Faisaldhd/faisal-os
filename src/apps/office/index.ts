@@ -23,6 +23,7 @@ import { VFSError } from '../../kernel/types';
 import { basename, dirname, normalize } from '../../kernel/path';
 import { getLocale, t } from '../../kernel/i18n';
 import { shellConfirm } from '../../shell/dialog';
+import { saveAsDialog } from '../../shell/save-as';
 import { MAX_COLS, MAX_ROWS, readDocx } from '../viewer/formats';
 import {
   History, VERIFIED_FORMATS, clearTruncated, emptyModel, isTruncated, planFor, textEdit,
@@ -32,6 +33,7 @@ import { computeSheets, parseFormula } from './formula/index';
 import { loadOfficeFile, serializeModel, type LoadRefusal } from './file';
 import { patchPackage, packageKind, snapshotModel, type PatchResult } from './patch';
 import { backupPathFor, saveWithBackup, withinHome } from './save';
+import { defaultSaveFormat, saveFormatChoices, serializeAs, type SaveFormatId } from './save-as';
 import { writePptx } from './pptx';
 import { writeDelimited } from './file';
 import type { Editor, EditorContext } from './editor';
@@ -296,6 +298,7 @@ function launch(ctx: AppContext): void {
             { type: 'button', id: 'new', icon: 'plus', label: t('office.newFile'), showLabel: true, run: () => { void goStart(); } },
             { type: 'button', id: 'opendevice', icon: 'upload', label: t('office.openDevice'), showLabel: true, run: openDevice },
             { type: 'button', id: 'save2', icon: 'save', label: t('office.saveNow'), showLabel: true, enabled: () => !!model && editable && !busy, run: () => { void save(); } },
+            { type: 'button', id: 'saveas', icon: 'save', label: t('office.saveAs'), showLabel: true, enabled: () => !!model && editable && !busy, run: () => { void saveAs(); } },
             { type: 'button', id: 'revert', icon: 'revert', label: t('office.revert'), showLabel: true, enabled: () => !busy && !!filePath, run: () => { void revert(); } },
           ],
         },
@@ -664,6 +667,61 @@ function launch(ctx: AppContext): void {
     }
   }
 
+  /**
+   * «حفظ باسم» — the shared shell dialog (Ctrl+Shift+S, and the File tab).
+   *
+   * Unlike the in-place save this always writes a COMPLETE document, so a package the patcher
+   * refused is perfectly fine here; the truncation warning still applies, because writing a
+   * fresh file is exactly what would drop the rows past the cap. Afterwards the new file is
+   * re-opened, so the editor shows what the file really holds.
+   */
+  async function saveAs(): Promise<void> {
+    if (!model || !editable || busy) return;
+    const source = model;
+    if (isTruncated(source)) {
+      const proceed = await shellConfirm({
+        title: t('office.truncatedTitle'),
+        message: t('office.truncatedBody', { rows: MAX_ROWS, cols: MAX_COLS }),
+        okLabel: t('office.truncatedOk'),
+        cancelLabel: t('office.cancel'),
+        danger: true,
+      });
+      if (!proceed) return;
+    }
+    const currentExt = filePath ? plan.ext.replace(/^\./, '') : '';
+    const formats = saveFormatChoices(source, currentExt).map((choice) => ({
+      value: choice.value, label: t(choice.labelKey), ext: choice.ext, mime: choice.mime,
+    }));
+    const dir = filePath ? dirname(filePath) : '/home/user/Documents';
+    const name = filePath ? basename(filePath).replace(/\.[^.]+$/, '') : t('office.untitled');
+
+    busy = true;
+    syncBar();
+    const outcome = await saveAsDialog({
+      vfs,
+      host: win.content,
+      title: t('office.saveAs'),
+      dir,
+      name,
+      formats,
+      format: defaultSaveFormat(source, currentExt),
+      encode: async (target) => {
+        const format = target.format as SaveFormatId;
+        // A rich Word document is rebuilt (runs, images, tables), exactly like the in-place save.
+        if (format === 'docx' && source.kind === 'docx' && source.blocks) {
+          return (await rebuildDocxRich(source)) ?? serializeAs(source, 'docx');
+        }
+        return serializeAs(source, format);
+      },
+    });
+    busy = false;
+    syncBar();
+    if (outcome.status !== 'saved') return;
+    filePath = normalize(outcome.path);
+    await open();
+    setStatus(t('office.saveAsDone', { name: basename(filePath) }));
+  }
+
   async function revert(): Promise<void> {
     if (!filePath || busy) return;
     if (history.dirty) {
@@ -682,9 +740,13 @@ function launch(ctx: AppContext): void {
   /* ───────────────────────────── wiring ───────────────────────────── */
 
   root.addEventListener('keydown', (ev) => {
+    // The shared Save as dialog owns the keyboard while it is open (it is mounted in this
+    // window, so its overlay is the honest test — the component itself is not modified here).
+    if (win.content.querySelector('.faisal-saveas-overlay')) return;
     const mod = ev.ctrlKey || ev.metaKey;
     const key = ev.key.toLowerCase();
     if (ev.key === 'F1') { ev.preventDefault(); toggleHelp(true); return; }
+    if (mod && key === 's' && ev.shiftKey) { ev.preventDefault(); void saveAs(); return; }
     if (mod && key === 's') { ev.preventDefault(); void save(); return; }
     if (mod && key === 'z' && !ev.shiftKey) {
       const target = ev.target as HTMLElement;

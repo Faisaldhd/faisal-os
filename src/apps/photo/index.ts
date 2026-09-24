@@ -61,11 +61,12 @@ import { SHORTCUTS, describeKeys, matchShortcut, toolKey, type Command, type Too
 import { PICTURES, createGallery, emptyIllustration, isImagePath, pickFile, thumbnail } from './gallery';
 import { History, HISTORY_PRESETS } from './history';
 import {
-  EXPORT_FORMAT_LIST, FORMATS, MAX_EXPORT_BYTES, OPEN_EXTENSIONS, clampQuality, formatForExtension, formatOfTarget,
+  EXPORT_FORMAT_LIST, FORMATS, OPEN_EXTENSIONS, clampQuality, formatForExtension, formatOfTarget,
   type ExportFormat, type SourceFormat,
 } from './formats';
-import { backupPathFor, basenameOf, dirnameOf, isWithinHome, nextCopyPath, planExport, stemOf } from './export-file';
+import { basenameOf, dirnameOf, isWithinHome, stemOf } from './export-file';
 import { DecodeRefusal, decodeSource, probeRuntime, refusalText } from './decode';
+import { saveAsDialog } from '../../shell/save-as';
 import './photo.css';
 
 type Mode = 'gallery' | 'quick' | 'pro';
@@ -494,7 +495,6 @@ export function launch(ctx: AppContext): void {
 
   /* ───────────────────────────── dialogs ───────────────────────────── */
 
-  const exportDlg = modal(root, L('exportTitle'), 'fp-dialog-wide');
   const newDlg = modal(root, L('newTitle'), 'fp-dialog-wide');
   const projectDlg = modal(root, L('saveProjectAs'));
   const helpDlg = modal(root, L('shortcutsTitle'), 'fp-dialog-wide');
@@ -2433,7 +2433,8 @@ export function launch(ctx: AppContext): void {
   }
 
   root.addEventListener('keydown', (e) => {
-    if (exportDlg.isOpen() || newDlg.isOpen() || helpDlg.isOpen()) return;
+    // The shared Save as / Export dialog owns the keyboard while it is open.
+    if (win.content.querySelector('.faisal-saveas-overlay') || newDlg.isOpen() || helpDlg.isOpen()) return;
     if (isTyping(e.target)) {
       if (e.key === 'Escape') (e.target as HTMLElement).blur();
       return;
@@ -2986,10 +2987,6 @@ export function launch(ctx: AppContext): void {
 
   /* ─────────────────────────── saving ─────────────────────────── */
 
-  async function existingIn(dir: string): Promise<string[]> {
-    try { return (await vfs.readdir(dir)).map((e) => e.path); } catch { return []; }
-  }
-
   async function saveProject(as: boolean): Promise<void> {
     if (!doc) return;
     let path = projectPath;
@@ -3093,144 +3090,97 @@ export function launch(ctx: AppContext): void {
     say(L('downloadDone', { name }));
   }
 
+  /**
+   * Export — the shared shell dialog (`src/shell/save-as.ts`) plus this app's own controls.
+   *
+   * The folder browsing, the new-folder button, the file name, the format picker, the replace
+   * question (one `.bak`, never two), the read-back before "saved" and "Download to my device"
+   * all belong to the shared component; Photo only contributes what is specific to pixels:
+   * quality, scale, and the size estimate.
+   */
   function openExport(initial?: ExportFormat): void {
     if (!doc) return;
     if (session) cancelSession();
-    exportDlg.body.replaceChildren();
-    exportDlg.actions.replaceChildren();
     const srcFmt = sourcePath ? formatOfTarget(sourcePath) : null;
     let format: ExportFormat = initial ?? srcFmt ?? 'png';
     if (!canEncode(format)) format = 'png';
     let quality = 92;
     let percent = 100;
     const fmts = EXPORT_FORMAT_LIST.filter(canEncode);
-    const fmt = segmented<ExportFormat>(L('exportFormat'), fmts.map((f) => ({ value: f, label: f === 'jpeg' ? 'JPG' : f.toUpperCase() })), format, (f) => { format = f; sync(); });
-    fmt.root.classList.add('fp-seg-fill');
-    const q = slider(L('exportQuality'), 5, 100, quality, 1, (v) => { quality = v; estimate(); }, (v) => `${v}%`);
-    const sc = slider(L('exportScale'), 5, 200, percent, 1, (v) => { percent = v; sync(); }, (v) => `${v}%`);
-    const dims = el('p', 'fp-muted fp-small');
-    dims.dir = 'ltr';
-    const est = el('p', 'fp-estimate');
-    est.setAttribute('aria-live', 'polite');
-    const note = el('p', 'fp-muted fp-small', L('exportJpegNote'));
-    const nameIn = el('input', 'fp-input');
-    nameIn.dir = 'auto';
-    nameIn.value = stemOf(sourcePath ?? projectPath ?? docName) || L('untitled');
-    nameIn.setAttribute('aria-label', L('exportName'));
-    const extLabel = el('span', 'fp-ext');
-    extLabel.dir = 'ltr';
-    const nameRow = el('div', 'fp-name-row');
-    nameRow.append(nameIn, extLabel);
-    const folder = el('input', 'fp-input');
-    folder.dir = 'ltr';
-    folder.value = sourcePath ? dirnameOf(sourcePath) : projectPath ? dirnameOf(projectPath) : PICTURES;
-    folder.setAttribute('aria-label', L('exportFolder'));
-    const browse = button(L('exportBrowse'), 'secondary', 'folderOpen');
-    browse.addEventListener('click', async () => {
-      const d = await pickFile(root, vfs, { mode: 'folder', start: folder.value || PICTURES });
-      if (d) folder.value = d;
-    });
-    const folderRow = el('div', 'fp-row');
-    folderRow.append(field(L('exportFolder'), folder), browse);
-    const replace = checkbox(L('exportReplace'), false);
-    exportDlg.body.append(
-      field(L('exportFormat'), fmt.root), q.row, sc.row, dims, est, note,
-      el('h3', 'fp-group-title', L('exportName')), nameRow, folderRow, replace.row,
-    );
-    const cancel = button(L('cancel'));
-    cancel.addEventListener('click', () => exportDlg.close());
-    const dl = button(L('exportDownload'), 'secondary', 'download');
-    const save = button(L('exportSave'), 'primary', 'save');
-    exportDlg.actions.append(cancel, dl, save);
+    const dir0 = sourcePath ? dirnameOf(sourcePath) : projectPath ? dirnameOf(projectPath) : PICTURES;
+    const name0 = stemOf(sourcePath ?? projectPath ?? docName) || L('untitled');
 
-    let estTimer = 0;
-    let estToken = 0;
-    function estimate(): void {
-      window.clearTimeout(estTimer);
-      est.textContent = L('exportEstimating');
-      const token = ++estToken;
-      estTimer = window.setTimeout(async () => {
-        try {
-          const bytes = await encodeDoc(format, quality, percent);
-          if (token === estToken) est.textContent = L('exportEstimate', { size: formatSize(bytes.length, getLocale()) });
-        } catch {
-          if (token === estToken) est.textContent = '';
+    void saveAsDialog({
+      vfs,
+      host: win.content,
+      title: L('exportTitle'),
+      dir: dir0,
+      name: name0,
+      format,
+      saveLabel: L('exportSave'),
+      formats: fmts.map((f) => ({
+        value: f,
+        label: f === 'jpeg' ? 'JPG' : f.toUpperCase(),
+        ext: FORMATS[f].extensions[0].replace(/^\./, ''),
+        mime: FORMATS[f].exportMime!,
+      })),
+      extras: (host, api) => {
+        const q = slider(L('exportQuality'), 5, 100, quality, 1, (v) => { quality = v; estimate(); }, (v) => `${v}%`);
+        const sc = slider(L('exportScale'), 5, 200, percent, 1, (v) => { percent = v; sync(); }, (v) => `${v}%`);
+        const dims = el('p', 'fp-muted fp-small');
+        dims.dir = 'ltr';
+        const est = el('p', 'fp-estimate');
+        est.setAttribute('aria-live', 'polite');
+        const note = el('p', 'fp-muted fp-small', L('exportJpegNote'));
+        host.append(q.row, sc.row, dims, est, note);
+
+        let estTimer = 0;
+        let estToken = 0;
+        function estimate(): void {
+          window.clearTimeout(estTimer);
+          est.textContent = L('exportEstimating');
+          const token = ++estToken;
+          estTimer = window.setTimeout(async () => {
+            try {
+              const bytes = await api.encode();
+              if (token === estToken) est.textContent = L('exportEstimate', { size: formatSize(bytes.length, getLocale()) });
+            } catch {
+              if (token === estToken) est.textContent = '';
+            }
+          }, 350);
         }
-      }, 350);
-    }
-    function sync(): void {
-      q.row.hidden = !FORMATS[format].lossy;
-      note.hidden = format !== 'jpeg';
-      const s = exportSize(doc!, percent);
-      dims.textContent = L('exportDims', { w: s.width, h: s.height });
-      extLabel.textContent = FORMATS[format].extensions[0];
-      replace.row.hidden = !(sourcePath && formatOfTarget(sourcePath) === format);
-      if (replace.row.hidden) replace.input.checked = false;
-      estimate();
-    }
-    sync();
-
-    dl.addEventListener('click', async () => {
-      try {
-        const bytes = await encodeDoc(format, quality, percent);
-        download(bytes, `${nameIn.value.trim() || 'image'}${FORMATS[format].extensions[0]}`, FORMATS[format].exportMime!);
-        exportDlg.close();
-      } catch {
-        showError(L('exportUnsupported', { format: format.toUpperCase() }));
+        function sync(): void {
+          const chose = api.format() as ExportFormat;
+          q.row.hidden = !FORMATS[chose].lossy;
+          note.hidden = chose !== 'jpeg';
+          const s = exportSize(doc!, percent);
+          dims.textContent = L('exportDims', { w: s.width, h: s.height });
+          estimate();
+        }
+        api.onChange(() => {
+          const chose = api.format() as ExportFormat;
+          q.row.hidden = !FORMATS[chose].lossy;
+          note.hidden = chose !== 'jpeg';
+          estimate();
+        });
+        sync();
+      },
+      encode: async (target) => encodeDoc(target.format as ExportFormat, quality, percent),
+    }).then((outcome) => {
+      if (outcome.status === 'saved') {
+        rememberRecent(outcome.path);
+        if (!projectPath) savedDoc = doc;
+        updateChrome();
+        say(outcome.backup
+          ? L('exportDoneOverwrite', { path: outcome.path, bak: outcome.backup })
+          : L('exportSaved', { path: outcome.path }));
+      } else if (outcome.status === 'downloaded') {
+        say(L('downloadDone', { name: outcome.path }));
       }
+    }).catch((error: unknown) => {
+      const code = (error as { code?: string })?.code;
+      showError(L('exportFailed', { reason: code === 'EINVAL' ? L('exportQuota') : (error as Error)?.message ?? String(error) }));
     });
-    save.addEventListener('click', async () => {
-      save.disabled = true;
-      try {
-        await runExport(format, quality, percent, nameIn.value, folder.value, replace.input.checked);
-        exportDlg.close();
-      } catch (error) {
-        const code = (error as { code?: string })?.code;
-        showError(L('exportFailed', { reason: code === 'EINVAL' ? L('exportQuota') : (error as Error)?.message ?? String(error) }));
-      } finally {
-        save.disabled = false;
-      }
-    });
-    exportDlg.onClose(() => { window.clearTimeout(estTimer); estToken++; });
-    exportDlg.open();
-  }
-
-  async function runExport(format: ExportFormat, quality: number, percent: number, name: string, folder: string, overwrite: boolean): Promise<void> {
-    if (!doc) return;
-    const dir = (folder.trim() || PICTURES).replace(/\/+$/, '');
-    if (!isWithinHome(dir)) throw new Error(refusalText('out-of-home', sys.locale(), dir));
-    const bytes = await encodeDoc(format, quality, percent);
-    if (bytes.length > MAX_EXPORT_BYTES) throw new Error(L('exportTooBig'));
-    let target: string;
-    let backup = false;
-    if (overwrite && sourcePath) {
-      const plan = planExport({ original: sourcePath, action: 'overwrite', format, existing: await existingIn(dirnameOf(sourcePath)) });
-      if (plan.error) throw new Error(L('exportNoTarget'));
-      target = plan.target;
-      backup = plan.backup;
-    } else {
-      const stem = name.trim().replace(/[/\\]/g, '_').replace(/\.(png|jpe?g|webp)$/i, '') || 'image';
-      await vfs.mkdir(dir, { recursive: true }).catch(() => {});
-      target = nextCopyPath(dir, stem, format, await existingIn(dir), '');
-    }
-    if (backup) {
-      const bak = backupPathFor(target);
-      await vfs.rename(target, bak);
-      try {
-        await vfs.writeFile(target, bytes);
-      } catch (error) {
-        await vfs.rename(bak, target).catch(() => {});
-        throw error;
-      }
-    } else {
-      await vfs.writeFile(target, bytes);
-    }
-    const back = await vfs.readFile(target);
-    if (back.length !== bytes.length) throw new Error(L('exportVerifyFailed'));
-    rememberRecent(target);
-    if (!projectPath) savedDoc = doc;
-    updateChrome();
-    say(backup ? L('exportDoneOverwrite', { path: target, bak: backupPathFor(target) }) : L('exportSaved', { path: target }));
   }
 
   quickExportBtn.addEventListener('click', () => openExport(quickFormat));
