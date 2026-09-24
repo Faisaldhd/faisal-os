@@ -2209,3 +2209,303 @@ body {
   .faisal-saveas-input,
   .faisal-saveas-select { animation: none; transition: none; }
 }
+
+/* ═══════════════════ «الجولة التعريفية» — the shared first-run tour (src/shell/tour.ts) ═══════════════════
+ *
+ * One coach-mark overlay for Office, PDF, Photo and Video. The geometry is computed in
+ * `tour.ts` and applied as physical `top/left/width/height` values, so this stylesheet only has
+ * to draw: a dim layer, a spotlight hole, a tip card with an arrow, and the "?" launcher the
+ * apps hang in their own chrome.
+ *
+ * Colours come from `--app-*` when the host app defines them (all four do, per theme, at their
+ * root) and fall back to theme-aware `--faisal-*` values otherwise — so light and dark are both
+ * correct without a single hard-coded panel colour.
+ *
+ * Layout keys off the WINDOW, not the screen: the overlay is mounted inside `.faisal-window-content`
+ * (the shell's own `container: faisal-window`), so a narrow desktop window gets the phone layout
+ * too; the `@media` block repeats the same values for a host that is not a shell window.
+ *
+ * Appended at the end of the file on purpose, like the save-dialog block above: it is independent
+ * of everything before it (another workstream edits this stylesheet in parallel) and it carries
+ * its own reduced-motion / reduced-transparency overrides.
+ */
+.faisal-tour-overlay {
+  /* Container-query tokens: the compact block below only changes VALUES. */
+  --tour-pad: 16px;
+  --tour-ctl: 32px;              /* buttons, 4px grid */
+  --tour-font: 13px;
+  --tour-tip-w: min(320px, calc(100% - 16px));
+  --tour-tip-radius: 14px;
+
+  /* App tokens when the host provides them, theme-aware shell tokens when it does not. */
+  --tour-surface: var(--app-glass-strong, var(--faisal-surface));
+  --tour-solid: var(--faisal-surface);
+  --tour-hairline: var(--app-hairline-strong, var(--faisal-border));
+  --tour-text: var(--app-text, var(--faisal-fg));
+  --tour-text-2: var(--app-text-2, var(--faisal-fg-muted));
+  --tour-copper: var(--app-copper, #C8894B);
+  --tour-copper-2: var(--app-copper-2, #E0A96D);
+  --tour-blue: var(--app-blue, #5B8DEF);
+  --tour-blue-soft: var(--app-blue-soft, rgba(91, 141, 239, .16));
+  --tour-dim: rgba(6, 10, 22, .62);
+
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  /* Above every piece of app chrome and every app menu / sheet (<= 30), so the tips really do
+   * sit over the buttons they describe. The tour is itself modal, so nothing of the app can open
+   * above it while it is showing. */
+  z-index: 45;
+  overflow: hidden;
+  color: var(--tour-text);
+  font-family: var(--faisal-font);
+  line-height: 1.4;
+  animation: faisal-tour-fade 140ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1));
+  /* Nothing here is content: no text selection, no long-press callout on a phone. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* The dim layer covers everything when a step has no target to point at. */
+.faisal-tour-dim {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  background: var(--tour-dim);
+  pointer-events: none;
+}
+
+/*
+ * The spotlight: a small box around the control with a 9999px shadow, so the highlighted control
+ * keeps its true colours and the rest of the window dims. `pointer-events: none` keeps the hole
+ * inert — a tap anywhere outside the tip advances the tour instead of pressing the app's button.
+ */
+.faisal-tour-spot {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  border-radius: 10px;
+  box-shadow: 0 0 0 9999px var(--tour-dim), 0 0 0 1px var(--tour-copper-2);
+  pointer-events: none;
+  transition: top 220ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1)),
+              left 220ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1)),
+              width 220ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1)),
+              height 220ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+
+.faisal-tour-dim[hidden],
+.faisal-tour-spot[hidden],
+.faisal-tour-arrow[hidden] { display: none; }
+
+.faisal-tour-tip {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  inline-size: var(--tour-tip-w);
+  max-block-size: calc(100% - 16px);
+  box-sizing: border-box;
+  padding: var(--tour-pad);
+  background: var(--tour-surface);
+  color: var(--tour-text);
+  border: 1px solid var(--tour-hairline);
+  border-radius: var(--tour-tip-radius);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .35);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  font-size: var(--tour-font);
+  /* Hidden until tour.ts has placed it, so it never flashes at the window's corner. */
+  visibility: hidden;
+  animation: faisal-tour-in 220ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+.faisal-tour-tip[data-ready="true"] { visibility: visible; }
+
+.faisal-tour-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-inline-size: 0;
+}
+.faisal-tour-title {
+  flex: 1;
+  min-inline-size: 0;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.faisal-tour-body {
+  margin: 0;
+  min-block-size: 0;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  color: var(--tour-text-2);
+}
+
+.faisal-tour-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-block-start: 4px;
+}
+.faisal-tour-count {
+  flex: 1;
+  margin: 0;
+  text-align: center;
+  color: var(--tour-text-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.faisal-tour-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--tour-ctl);
+  padding-inline: 16px;
+  border: 1px solid var(--tour-hairline);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tour-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1)),
+              filter 140ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+.faisal-tour-btn:hover:not(:disabled) { background: var(--tour-blue-soft); }
+.faisal-tour-btn.is-plain { border-color: transparent; color: var(--tour-text-2); }
+/* The primary action is the calm blue fill, with the design bar's navy label (5.6:1). */
+.faisal-tour-btn.is-primary { background: var(--tour-blue); border-color: transparent; color: #0B1220; }
+.faisal-tour-btn.is-primary:hover:not(:disabled) { filter: brightness(1.08); }
+.faisal-tour-btn:disabled { opacity: .45; cursor: default; }
+.faisal-tour-btn[hidden] { display: none; }
+
+.faisal-tour-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  inline-size: var(--tour-ctl);
+  block-size: var(--tour-ctl);
+  padding: 0;
+  border: 1px solid var(--tour-hairline);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tour-text);
+  cursor: pointer;
+  transition: background 140ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+.faisal-tour-x:hover { background: var(--tour-blue-soft); }
+.faisal-tour-x svg { inline-size: 16px; block-size: 16px; }
+.faisal-tour-btn svg { inline-size: 18px; block-size: 18px; }
+
+/* Keyboard focus is always visible, in copper, on every control of the tour. */
+.faisal-tour-tip :is(button, [tabindex]):focus-visible,
+.faisal-tour-help:focus-visible {
+  outline: 2px solid var(--tour-copper-2, var(--faisal-focus-ring));
+  outline-offset: 2px;
+}
+
+/* ── the arrow: a rotated square with two adjacent edges drawn, so it reads as a chevron ── */
+.faisal-tour-arrow {
+  position: absolute;
+  inline-size: 12px;
+  block-size: 12px;
+  background: var(--tour-surface);
+  border: 1px solid var(--tour-hairline);
+  transform: rotate(45deg);
+}
+/* The tip is BELOW the control: the arrow sits on the tip's top edge and points up. */
+.faisal-tour-tip[data-side="below"] .faisal-tour-arrow { top: -7px; border-right: none; border-bottom: none; }
+/* ABOVE: on the bottom edge, pointing down. */
+.faisal-tour-tip[data-side="above"] .faisal-tour-arrow { bottom: -7px; border-left: none; border-top: none; }
+/* RIGHT: on the left edge, pointing left. */
+.faisal-tour-tip[data-side="right"] .faisal-tour-arrow { left: -7px; border-right: none; border-top: none; }
+/* LEFT: on the right edge, pointing right. */
+.faisal-tour-tip[data-side="left"] .faisal-tour-arrow { right: -7px; border-left: none; border-bottom: none; }
+
+/*
+ * The "?" launcher. It lives in the app's own toolbar, NOT inside the overlay, so it uses the
+ * app tokens directly (the `--tour-*` ones above only exist on the overlay).
+ */
+.faisal-tour-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  inline-size: 32px;
+  block-size: 32px;
+  padding: 0;
+  border: 1px solid var(--app-hairline-strong, var(--faisal-border));
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: background 140ms var(--faisal-ease, cubic-bezier(0.2, 0, 0, 1));
+}
+.faisal-tour-help:hover { background: var(--app-blue-soft, rgba(91, 141, 239, .16)); }
+.faisal-tour-help svg { inline-size: 20px; block-size: 20px; }
+
+@keyframes faisal-tour-fade { from { opacity: 0; } }
+@keyframes faisal-tour-in {
+  from { opacity: 0; transform: translateY(8px) scale(.99); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ── window < 700px: full-width tip, 44px targets, the counter on its own row ── */
+@container faisal-window (max-width: 700px) {
+  .faisal-tour-overlay {
+    --tour-pad: 12px;
+    --tour-ctl: 44px;
+    --tour-font: 15px;
+    --tour-tip-w: calc(100% - 16px);
+  }
+  .faisal-tour-count { flex-basis: 100%; order: -1; text-align: start; }
+  .faisal-tour-btn { flex: 1 1 auto; }
+}
+@media (max-width: 700px) {
+  .faisal-tour-overlay {
+    --tour-pad: 12px;
+    --tour-ctl: 44px;
+    --tour-font: 15px;
+    --tour-tip-w: calc(100% - 16px);
+  }
+  .faisal-tour-count { flex-basis: 100%; order: -1; text-align: start; }
+  .faisal-tour-btn { flex: 1 1 auto; }
+}
+
+/* Touch: every target in the tour and the launcher is at least 44x44. */
+@media (pointer: coarse) {
+  .faisal-tour-btn { min-block-size: 44px; }
+  .faisal-tour-x { inline-size: 44px; block-size: 44px; }
+  .faisal-tour-help { inline-size: 44px; block-size: 44px; }
+}
+
+/* Glass needs a backdrop: without one (or when the owner asks for less transparency) the same
+ * layers are drawn opaque instead of turning into unreadable translucency. */
+@supports not (backdrop-filter: blur(1px)) {
+  .faisal-tour-overlay { --tour-surface: var(--tour-solid); }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .faisal-tour-overlay { --tour-surface: var(--tour-solid); }
+  .faisal-tour-tip { backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+
+/* Motion: the tips appear, the spotlight slides and the buttons tint — all of it off for anyone
+ * who asks for less movement. The tour still opens and still advances, it just does not travel. */
+@media (prefers-reduced-motion: reduce) {
+  .faisal-tour-overlay,
+  .faisal-tour-tip,
+  .faisal-tour-spot,
+  .faisal-tour-arrow,
+  .faisal-tour-btn,
+  .faisal-tour-x,
+  .faisal-tour-help { animation: none; transition: none; }
+}

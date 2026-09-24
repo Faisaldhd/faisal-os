@@ -357,3 +357,34 @@ defineStrings('shell', {
     'saveas.quota': 'There is not enough space to save this file.',
   },
 });
+
+/*
+ * «الجولة التعريفية» — نصوص مكوّن الصدفة الموحّد (`tour.ts`).
+ *
+ * A THIRD registration at the end of the file, for the same reason as the block above:
+ * `defineStrings` merges into the namespace, so this one can be added, edited or rebased on its
+ * own without touching a line of what came before it — which matters because another workstream
+ * edits this table in parallel. Arabic first, every key in both languages, identical `{n}` /
+ * `{total}` placeholders. The step text itself is NOT here: it belongs to each app's own
+ * `strings.ts`, next to the controls it talks about.
+ */
+defineStrings('shell', {
+  ar: {
+    'tour.skip': 'تخطي',
+    'tour.next': 'التالي',
+    'tour.back': 'السابق',
+    'tour.done': 'تم',
+    'tour.close': 'إغلاق الجولة',
+    'tour.replay': 'إعادة الجولة التعريفية',
+    'tour.step': 'الخطوة {n} من {total}',
+  },
+  en: {
+    'tour.skip': 'Skip',
+    'tour.next': 'Next',
+    'tour.back': 'Back',
+    'tour.done': 'Done',
+    'tour.close': 'Close the tour',
+    'tour.replay': 'Replay the tour',
+    'tour.step': 'Step {n} of {total}',
+  },
+});
