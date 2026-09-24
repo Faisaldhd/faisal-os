@@ -3,7 +3,7 @@ import { t } from '../kernel/i18n';
 import { renderIcon } from './icon';
 import { MARK_GLYPH_GOLD_SVG, MARK_GLYPH_SVG } from '../brand/logo';
 import { ACCENTS, BRAND_ACCENT_ID, applyTheme, applyAccent, type ThemeMode } from './appearance';
-import { pushEscapeLayer } from './esc';
+import { pushEscapeLayer, setEscapeFallback } from './esc';
 
 const ICON_SYSTEM =
   '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.4" fill="currentColor"/><path d="M4 20c1.2-4.2 4.6-6 8-6s6.8 1.8 8 6" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>';
@@ -273,6 +273,15 @@ export function mountTopbar(
     }
   });
 
+  // Escape with nothing open means "leave full screen", and nothing else. While a popup is open
+  // the stack (esc.ts) keeps the key for itself, so Escape can never drop out of fullscreen by
+  // surprise — and because Escape is locked into the page, freeing fullscreen becomes a choice.
+  setEscapeFallback(() => {
+    if (!document.fullscreenElement) return false;
+    void toggleFullscreen(); // unlocks the keyboard and leaves full screen
+    return true;
+  });
+
   return bar;
 }
 
@@ -288,7 +297,10 @@ async function toggleFullscreen(): Promise<void> {
     }
     await document.documentElement.requestFullscreen();
     // Lets the page receive the Windows/Super key instead of the OS Start menu (Chromium only).
-    await kb?.lock?.(['MetaLeft', 'MetaRight']).catch(() => {});
+    // Escape is locked as well: while it is locked Chromium keeps fullscreen and hands Escape to
+    // the shell, which is what lets Escape close a popup instead of dropping out of fullscreen
+    // (esc.ts — with the fallback below to leave fullscreen on purpose when nothing is open).
+    await kb?.lock?.(['MetaLeft', 'MetaRight', 'Escape']).catch(() => {});
   } catch { /* full screen refused by the browser or frame: nothing to do */ }
 }
 

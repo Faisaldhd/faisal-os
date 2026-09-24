@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { closeTop, escapeLayerCount, pushEscapeLayer } from './esc';
+import { closeTop, escapeLayerCount, pushEscapeLayer, setEscapeFallback } from './esc';
 
 /** Dispatching on `window` is what a real keypress does as far as these listeners are concerned. */
 function pressEscape(): KeyboardEvent {
@@ -48,6 +48,34 @@ describe('escape priority', () => {
     expect(seen).toBe(1);
 
     window.removeEventListener('keydown', listener);
+  });
+
+  it('runs the shell fallback (leave fullscreen) only when nothing of ours is open', () => {
+    let left = 0;
+    setEscapeFallback(() => { left++; return true; });
+
+    const release = pushEscapeLayer(() => {});
+    pressEscape();
+    expect(left).toBe(0); // the open popup keeps the key
+    release();
+
+    expect(pressEscape().defaultPrevented).toBe(true);
+    expect(left).toBe(1);
+
+    setEscapeFallback(null);
+  });
+
+  it('leaves Escape for the app when the shell has no use for it', () => {
+    setEscapeFallback(() => false);
+    let seen = 0;
+    const listener = (ev: KeyboardEvent) => { if (ev.key === 'Escape') seen++; };
+    window.addEventListener('keydown', listener);
+
+    expect(pressEscape().defaultPrevented).toBe(false);
+    expect(seen).toBe(1);
+
+    window.removeEventListener('keydown', listener);
+    setEscapeFallback(null);
   });
 
   it('forgets a surface that closed itself, wherever it sat in the stack', () => {
