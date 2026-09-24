@@ -58,6 +58,8 @@ Two things make it more than a mock desktop: apps are real capability-scoped mod
 
 **Mirror:** <https://faisaldhd.github.io/faisal-os/> — the same build on GitHub Pages, deployed by GitHub Actions on every push to `main` (`.github/workflows/pages.yml` runs `npm ci`, `npm test`, `npm run build`, then publishes `dist/`).
 
+**Contributing (humans and AI assistants):** read [`AGENTS.md`](AGENTS.md). Every PR runs tests + build (`.github/workflows/pr-checks.yml`) and gets a Cloudflare preview; a merge to `main` reaches the web and the desktop app automatically.
+
 ### Screenshot
 
 <!-- TODO: add a screenshot asset (for example docs/screenshot.png) and reference it here, e.g.
