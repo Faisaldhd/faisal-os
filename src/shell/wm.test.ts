@@ -142,6 +142,26 @@ describe('window manager', () => {
     expect(changes).toEqual([a.id, b.id, a.id]);
   });
 
+  it('keeps the dock hidden only for an on-screen maximized window', () => {
+    localStorage.removeItem('faisal.wm.geometry.v1');
+    const wm = createWindowManager(root, bus);
+    const win = wm.open(opts('A'));
+    const dockHidden = () => root.classList.contains('has-maximized-window');
+    expect(dockHidden()).toBe(false);
+
+    wm.toggleMaximize(win.id);
+    expect(dockHidden()).toBe(true);
+
+    wm.minimize(win.id); // off screen now: the dock has to come back
+    expect(dockHidden()).toBe(false);
+
+    win.focus(); // still maximized, so it owns the bottom edge again
+    expect(dockHidden()).toBe(true);
+
+    win.close();
+    expect(dockHidden()).toBe(false);
+  });
+
   it('reopens an app with its last saved size and maximized state', () => {
     localStorage.removeItem('faisal.wm.geometry.v1');
     const wm = createWindowManager(root, bus);
@@ -209,6 +229,14 @@ describe('window manager on a coarse (touch) pointer', () => {
     const touch = createWindowManager(root, bus);
     const filled = touch.open(opts('Touch'));
     expect(elFor(filled).classList.contains('is-maximized')).toBe(true);
+  });
+
+  it('keeps the dock row for the touch auto-fill, which is not a user maximize', () => {
+    stubPointer(true);
+    const wm = createWindowManager(root, bus);
+    const win = wm.open(opts('Touch'));
+    expect(elFor(win).classList.contains('is-maximized')).toBe(true);
+    expect(root.classList.contains('has-maximized-window')).toBe(false);
   });
 
   it('creates zero resize grips for a window opened on a coarse pointer', () => {
