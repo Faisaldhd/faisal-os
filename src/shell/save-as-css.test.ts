@@ -27,8 +27,10 @@ function readSource(relative: string): string {
 const css = readSource('src/shell/theme.css');
 const source = readSource('src/shell/save-as.ts');
 
-/** Everything from our own section header to the end of the file. */
-const block = css.slice(css.indexOf('«حفظ باسم / تصدير»'));
+/** Our own section: from its header up to the next top-level section header (or the end of the file). */
+const rest = css.slice(css.indexOf('«حفظ باسم / تصدير»'));
+const nextSection = rest.search(/\n\/\* [═=]{5,}/);
+const block = nextSection === -1 ? rest : rest.slice(0, nextSection);
 
 const ruleBody = (selector: string): string => {
   const at = block.indexOf(`${selector} {`);
