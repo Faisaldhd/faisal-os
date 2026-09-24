@@ -1,0 +1,480 @@
+/*
+ * Photo Editor styles. Arabic-first RTL: every rule is written with logical properties
+ * (margin-inline, padding-inline, text-align: start) so the same sheet mirrors correctly in
+ * both directions, and the layout never depends on :hover — a touch device must be able to
+ * reach every control. Every button and input is at least 44px tall (the AGENTS.md touch
+ * target), and at 320px/390px the window becomes one scrolling column.
+ */
+
+.faisal-photo {
+  --fp-gap: 8px;
+  --fp-radius: 10px;
+  --fp-bg: #14161c;
+  --fp-panel: #1c1f27;
+  --fp-panel-2: #232733;
+  --fp-line: #343a4a;
+  --fp-text: #e8eaf0;
+  --fp-dim: #a3a9b8;
+  --fp-accent: #4da3ff;
+  --fp-bad: #ff7a7a;
+  display: grid;
+  grid-template-columns: minmax(88px, 116px) minmax(0, 1fr) minmax(240px, 300px);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    'bar bar bar'
+    'tools stage stage'
+    'tools stage inspect';
+  gap: var(--fp-gap);
+  height: 100%;
+  min-height: 0;
+  padding: var(--fp-gap);
+  box-sizing: border-box;
+  background: var(--fp-bg);
+  color: var(--fp-text);
+  font: 13px/1.5 system-ui, "Segoe UI", Tahoma, sans-serif;
+  direction: inherit;
+}
+
+/* Toolbar (row 1) */
+.faisal-photo-toolbar {
+  grid-area: bar;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.faisal-photo-btn,
+.faisal-photo-tool,
+.faisal-photo-primary {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 6px 12px;
+  border: 1px solid var(--fp-line);
+  border-radius: var(--fp-radius);
+  background: var(--fp-panel-2);
+  color: var(--fp-text);
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.faisal-photo-btn:disabled,
+.faisal-photo-tool:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.faisal-photo-btn:focus-visible,
+.faisal-photo-tool:focus-visible,
+.faisal-photo-primary:focus-visible,
+.faisal-photo-range:focus-visible,
+.faisal-photo-number:focus-visible,
+.faisal-photo-select:focus-visible,
+.faisal-photo-text:focus-visible,
+.faisal-photo-textarea:focus-visible,
+.faisal-photo-historybtn:focus-visible {
+  outline: 2px solid var(--fp-accent);
+  outline-offset: 1px;
+}
+
+.faisal-photo-primary {
+  background: var(--fp-accent);
+  border-color: var(--fp-accent);
+  color: #08121f;
+  font-weight: 600;
+}
+
+.faisal-photo-toolbar .faisal-photo-status {
+  display: flex;
+  align-items: center;
+  flex: 1 1 160px;
+  min-height: 44px;
+  padding-inline: 8px;
+  color: var(--fp-dim);
+  overflow-wrap: anywhere;
+}
+
+/* Tool strip */
+.faisal-photo-tools {
+  grid-area: tools;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.faisal-photo-tool {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start;
+  text-align: start;
+}
+
+.faisal-photo-tool[aria-pressed='true'] {
+  border-color: var(--fp-accent);
+  background: #22303f;
+}
+
+.faisal-photo-tool svg,
+.faisal-photo-iconbtn svg {
+  inline-size: 20px;
+  block-size: 20px;
+  flex: 0 0 auto;
+}
+
+/* Stage */
+.faisal-photo-stage {
+  grid-area: stage;
+  position: relative;
+  display: flex;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--fp-line);
+  border-radius: var(--fp-radius);
+  /* The checkerboard is how a transparent PNG reads as transparent rather than as black. */
+  background-color: #0f1116;
+  background-image:
+    linear-gradient(45deg, #1b1e26 25%, transparent 25%, transparent 75%, #1b1e26 75%),
+    linear-gradient(45deg, #1b1e26 25%, transparent 25%, transparent 75%, #1b1e26 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 10px;
+}
+
+.faisal-photo-viewport {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.faisal-photo-frame {
+  position: relative;
+  flex: 0 0 auto;
+  transform-origin: center center;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.faisal-photo-canvas,
+.faisal-photo-overlay {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.faisal-photo-overlay {
+  pointer-events: none;
+}
+
+.faisal-photo-zoomlabel {
+  position: absolute;
+  inset-block-end: 6px;
+  inset-inline-end: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(10, 12, 16, 0.72);
+  color: var(--fp-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.faisal-photo-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+  color: var(--fp-dim);
+}
+
+.faisal-photo-empty[hidden],
+.faisal-photo-frame[hidden] {
+  display: none;
+}
+
+/* Inspector */
+.faisal-photo-inspector {
+  grid-area: inspect;
+  display: flex;
+  flex-direction: column;
+  gap: var(--fp-gap);
+  min-height: 0;
+  overflow: auto;
+  padding-inline-end: 2px;
+}
+
+.faisal-photo-panel {
+  border: 1px solid var(--fp-line);
+  border-radius: var(--fp-radius);
+  background: var(--fp-panel);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.faisal-photo-panel[hidden] {
+  display: none;
+}
+
+.faisal-photo-h {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--fp-dim);
+  text-transform: uppercase;
+}
+
+.faisal-photo-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  min-height: 44px;
+}
+
+.faisal-photo-label {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.faisal-photo-labeltext {
+  flex: 0 0 auto;
+  color: var(--fp-text);
+}
+
+.faisal-photo-value {
+  flex: 0 0 auto;
+  min-width: 3ch;
+  text-align: end;
+  color: var(--fp-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.faisal-photo-range {
+  flex: 1 1 auto;
+  min-width: 90px;
+  height: 44px;
+  margin: 0;
+  accent-color: var(--fp-accent);
+}
+
+.faisal-photo-number,
+.faisal-photo-select,
+.faisal-photo-text,
+.faisal-photo-textarea {
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 1px solid var(--fp-line);
+  border-radius: 8px;
+  background: #10131a;
+  color: var(--fp-text);
+  font: inherit;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.faisal-photo-number {
+  inline-size: 88px;
+}
+
+.faisal-photo-text {
+  inline-size: 100%;
+}
+
+.faisal-photo-textarea {
+  inline-size: 100%;
+  min-height: 72px;
+  resize: vertical;
+}
+
+.faisal-photo-color {
+  inline-size: 56px;
+  block-size: 44px;
+  padding: 2px;
+  border: 1px solid var(--fp-line);
+  border-radius: 8px;
+  background: #10131a;
+}
+
+.faisal-photo-checkrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.faisal-photo-check {
+  inline-size: 22px;
+  block-size: 22px;
+  accent-color: var(--fp-accent);
+}
+
+.faisal-photo-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.faisal-photo-row > * {
+  flex: 1 1 auto;
+}
+
+.faisal-photo-note {
+  margin: 0;
+  color: var(--fp-dim);
+  overflow-wrap: anywhere;
+}
+
+.faisal-photo-note.faisal-photo-bad {
+  color: var(--fp-bad);
+}
+
+.faisal-photo-dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  margin: 0;
+}
+
+.faisal-photo-dl dt {
+  color: var(--fp-dim);
+}
+
+.faisal-photo-dl dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.faisal-photo-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.faisal-photo-historybtn {
+  inline-size: 100%;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 1px solid var(--fp-line);
+  border-radius: 8px;
+  background: var(--fp-panel-2);
+  color: var(--fp-text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.faisal-photo-historybtn[aria-current='true'] {
+  border-color: var(--fp-accent);
+  background: #22303f;
+}
+
+.faisal-photo-list {
+  margin: 0;
+  padding-inline-start: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--fp-dim);
+}
+
+.faisal-photo-caps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Dialogs: fixed, so the stage's transform cannot drag them around. */
+.faisal-photo-dialog {
+  position: fixed;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
+  transform: translate(-50%, -50%);
+  inline-size: min(92vw, 420px);
+  max-block-size: 86vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--fp-line);
+  border-radius: 12px;
+  background: var(--fp-panel);
+  color: var(--fp-text);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  z-index: 40;
+}
+
+.faisal-photo-dialog[hidden] {
+  display: none;
+}
+
+/* ───────────────────────── phones: one scrolling column ───────────────────────── */
+
+@media (max-width: 760px) {
+  .faisal-photo {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(200px, 38vh) auto;
+    grid-template-areas:
+      'bar'
+      'tools'
+      'stage'
+      'inspect';
+    overflow: auto;
+  }
+
+  /* A single horizontal strip is the only workable shape for nine tools at 320px. */
+  .faisal-photo-tools {
+    flex-direction: row;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-block-end: 4px;
+  }
+
+  .faisal-photo-tool {
+    flex: 0 0 auto;
+    min-width: 64px;
+    flex-direction: column;
+    justify-content: center;
+    text-align: center;
+    font-size: 11px;
+  }
+
+  .faisal-photo-inspector {
+    overflow: visible;
+  }
+
+  .faisal-photo-toolbar .faisal-photo-status {
+    flex-basis: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .faisal-photo * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
