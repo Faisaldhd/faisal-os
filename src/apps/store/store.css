@@ -410,14 +410,22 @@
   font-weight: 700;
 }
 
-.faisal-store-badge.is-installed {
-  background: var(--store-accent-tint);
-  border-color: var(--store-accent-line);
-  color: var(--faisal-accent, #8f6412);
+/*
+ * Two states, two hues, and neither borrows the gold that means "act":
+ *   green = this app arrived recently (جديد / New)
+ *   gold  = you already have it (مثبَّت / Installed)
+ * Both are tinted chips with their own border, so the solid gold stays reserved for the one
+ * primary button on screen (the featured banner's). The green comes from the theme's
+ * --faisal-success token, which carries a light and a dark value, so parity is inherited.
+ */
+.faisal-store-badge.is-new {
+  background: color-mix(in srgb, var(--faisal-success, #2e7d4f) 18%, transparent);
+  border-color: color-mix(in srgb, var(--faisal-success, #2e7d4f) 45%, transparent);
+  color: var(--faisal-success, #2e7d4f);
 }
 
-.faisal-store-badge.is-new {
-  background: transparent;
+.faisal-store-badge.is-installed {
+  background: var(--store-accent-tint);
   border-color: var(--store-accent-line);
   color: var(--faisal-accent, #8f6412);
 }
