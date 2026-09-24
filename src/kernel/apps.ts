@@ -106,8 +106,8 @@ export function validateManifest(m: AppManifest): void {
     throw new Error(`App ${id}: unknown category '${String(m.category)}'`);
   }
   if (m.opens !== undefined && (!Array.isArray(m.opens)
-    || m.opens.some((e) => typeof e !== 'string' || !e.startsWith('.')))) {
-    throw new Error(`App ${id}: opens must hold extensions like ".txt"`);
+    || m.opens.some((e) => typeof e !== 'string' || (e !== '*' && !e.startsWith('.'))))) {
+    throw new Error(`App ${id}: opens must hold extensions like ".txt" (or "*" for any file)`);
   }
 }
 
@@ -187,8 +187,10 @@ export function createAppRegistry(getSys: () => SystemAPI): AppRegistry {
     appForFile(path) {
       const dot = path.lastIndexOf('.');
       const ext = dot > path.lastIndexOf('/') ? path.slice(dot).toLowerCase() : '';
-      if (!ext) return undefined;
-      return registry.list().find((m) => m.opens?.includes(ext));
+      const installed = registry.list();
+      // An app that names the extension wins; an app that opens "*" takes every other file.
+      return (ext ? installed.find((m) => m.opens?.includes(ext)) : undefined)
+        ?? installed.find((m) => m.opens?.includes('*'));
     },
     async launch(appId, args = []) {
       const app = apps.get(appId);

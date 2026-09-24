@@ -134,3 +134,30 @@ describe('kernel install/uninstall behaviour via createAppRegistry', () => {
     expect(() => scoped.apps.install('org.faisal.Plain')).toThrow(/EACCES/);
   });
 });
+
+describe('appForFile', () => {
+  it('prefers the app that names the extension, then a "*" app, and skips uninstalled apps', async () => {
+    const { apps } = await setup();
+    const app = (id: string, opens: string[]) => ({
+      manifest: { id, name: { ar: id, en: id }, icon: '', permissions: [], opens },
+      launch() {},
+    });
+    expect(apps.appForFile('/home/u/report.pdf')).toBeUndefined();
+    apps.register(app('org.faisal.Text', ['.txt']));
+    apps.register(app('org.faisal.Any', ['.pdf', '*']));
+    expect(apps.appForFile('/home/u/notes.TXT')?.id).toBe('org.faisal.Text');
+    expect(apps.appForFile('/home/u/report.pdf')?.id).toBe('org.faisal.Any');
+    expect(apps.appForFile('/home/u/setup.exe')?.id).toBe('org.faisal.Any');
+    expect(apps.appForFile('/home/u/Makefile')?.id).toBe('org.faisal.Any');
+    apps.uninstall('org.faisal.Any');
+    expect(apps.appForFile('/home/u/setup.exe')).toBeUndefined();
+  });
+
+  it('rejects an opens entry that is neither ".ext" nor "*"', async () => {
+    const { apps } = await setup();
+    expect(() => apps.register({
+      manifest: { id: 'org.faisal.Bad', name: { ar: 'b', en: 'b' }, icon: '', permissions: [], opens: ['pdf'] },
+      launch() {},
+    })).toThrow(/opens/);
+  });
+});
