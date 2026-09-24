@@ -43,6 +43,22 @@ export function isCoarsePointer(): boolean {
 }
 
 /**
+ * Should a surface this wide use the compact (phone) shell layout?
+ *
+ * PURE, so the shell can decide it from a *measured* width (a ResizeObserver on the shell
+ * root) instead of only from a viewport media query: a narrow desktop window then gets the
+ * same compact chrome as a phone. This is the one place the comparison lives; `theme.css`
+ * mirrors it in `max-width: 699px` as the no-JS/first-paint fallback, and `shouldFillScreen`
+ * below reads it too.
+ *
+ * The comparison is strict (`<`), exactly like the window manager's original narrow check:
+ * at exactly `breakpoint` (700) the desktop layout stays.
+ */
+export function isCompactWidth(width: number, breakpoint = NARROW_BREAKPOINT): boolean {
+  return width < breakpoint;
+}
+
+/**
  * Should a window fill the whole surface instead of floating?
  *
  * PURE: the caller supplies the measurements, so this is testable without a DOM.
@@ -55,8 +71,7 @@ export function isCoarsePointer(): boolean {
  * at exactly `breakpoint` (700) and a fine pointer the window floats as before.
  */
 export function shouldFillScreen(input: { width: number; coarse: boolean; breakpoint?: number }): boolean {
-  const breakpoint = input.breakpoint ?? NARROW_BREAKPOINT;
-  return input.width < breakpoint || input.coarse;
+  return isCompactWidth(input.width, input.breakpoint) || input.coarse;
 }
 
 /**

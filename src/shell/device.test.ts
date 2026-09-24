@@ -1,5 +1,22 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { NARROW_BREAKPOINT, isCoarsePointer, shouldFillScreen, watchPointerKind } from './device';
+import { NARROW_BREAKPOINT, isCoarsePointer, isCompactWidth, shouldFillScreen, watchPointerKind } from './device';
+
+describe('isCompactWidth', () => {
+  // The shell's compact chrome (the measured dock, the icons standing aside) and the window
+  // manager's "fill the surface" answer must agree on where narrow begins.
+  it('is strict at NARROW_BREAKPOINT, exactly like the media query mirroring it', () => {
+    expect(isCompactWidth(320)).toBe(true);
+    expect(isCompactWidth(390)).toBe(true);
+    expect(isCompactWidth(699)).toBe(true);
+    expect(isCompactWidth(700)).toBe(false);
+    expect(isCompactWidth(1280)).toBe(false);
+  });
+
+  it('accepts an explicit breakpoint and never depends on the pointer', () => {
+    expect(isCompactWidth(900, 1024)).toBe(true);
+    expect(isCompactWidth(1024, 1024)).toBe(false);
+  });
+});
 
 describe('shouldFillScreen', () => {
   const matrix = [
