@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite';
-import { pwa } from './build/pwa';
+import { pwa } from './build/pwa.ts';
 
 export default defineConfig({
   base: './',
