@@ -57,6 +57,7 @@ import {
 } from './xmlscan';
 import { entryData, readRawZip, rebuildZip, utf8, type RawZip } from './zip';
 import type { OpaqueRun } from './writer/types';
+import type { Revision } from './writer/revisions';
 import { patchDocxRich } from './writer/docxpatch';
 import { patchDeck } from './impress/deckpatch';
 import { addRelationship, ensureOverride } from './pkg';
@@ -125,6 +126,7 @@ export async function patchPackage(
   original: Uint8Array,
   baseline: OfficeModel,
   current: OfficeModel,
+  tracked: readonly Revision[] = [],
 ): Promise<PatchResult | null> {
   try {
     if (!original.length) return null;
@@ -133,7 +135,8 @@ export async function patchPackage(
       if (baseline.kind !== 'docx' || current.kind !== 'docx') return null;
       // The Writer's rich model (runs with their own formatting, stable paragraph
       // ids) takes the run-aware path; the plain model keeps the original rules.
-      if (baseline.blocks && current.blocks) return await patchDocxRich(archive, baseline, current);
+      // Pending tracked changes are written by that same path, as `w:ins`/`w:del`.
+      if (baseline.blocks && current.blocks) return await patchDocxRich(archive, baseline, current, false, tracked);
       return await patchDocx(archive, baseline, current);
     }
     if (kind === 'xlsx') {
