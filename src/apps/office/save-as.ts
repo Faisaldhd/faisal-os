@@ -9,8 +9,9 @@
 import { serializeModel, writeDelimited } from './file';
 import { utf8 } from './zip';
 import type { OfficeModel } from './model';
+import { odtTitleOf, toOdt } from './writer/odt';
 
-export type SaveFormatId = 'docx' | 'xlsx' | 'pptx' | 'csv' | 'md' | 'txt';
+export type SaveFormatId = 'docx' | 'odt' | 'xlsx' | 'pptx' | 'csv' | 'md' | 'txt';
 
 export interface SaveFormatChoice {
   value: SaveFormatId;
@@ -23,6 +24,7 @@ export interface SaveFormatChoice {
 
 const INFO: Record<SaveFormatId, { ext: string; mime: string; labelKey: string }> = {
   docx: { ext: 'docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', labelKey: 'office.formatDocx' },
+  odt: { ext: 'odt', mime: 'application/vnd.oasis.opendocument.text', labelKey: 'office.formatOdt' },
   xlsx: { ext: 'xlsx', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', labelKey: 'office.formatXlsx' },
   pptx: { ext: 'pptx', mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', labelKey: 'office.formatPptx' },
   csv: { ext: 'csv', mime: 'text/csv', labelKey: 'office.formatCsv' },
@@ -33,6 +35,16 @@ const INFO: Record<SaveFormatId, { ext: string; mime: string; labelKey: string }
 const choice = (id: SaveFormatId): SaveFormatChoice => ({ value: id, ...INFO[id] });
 
 /**
+ * A format this app can WRITE but not read back yet. Saving a document as one of these is an
+ * export: the bytes are written (and the shell's own one-`.bak` rule applies if the file is
+ * replaced), and the open document keeps its own file, because re-opening an `.odt` would fail —
+ * the reader has no OpenDocument support yet (import is a later slice, said plainly in the UI).
+ */
+export function isExportOnlyFormat(format: SaveFormatId): boolean {
+  return format === 'odt';
+}
+
+/**
  * The formats this model can be written as, with the one matching the file it came from FIRST
  * (so "Save as" on a `.md` keeps `.md` unless the owner picks otherwise).
  */
@@ -41,12 +53,17 @@ export function saveFormatChoices(model: OfficeModel, currentExt = ''): SaveForm
   const order = <T extends SaveFormatChoice>(list: T[]): T[] =>
     [...list].sort((a, b) => Number(b.ext === ext) - Number(a.ext === ext));
   switch (model.kind) {
-    case 'docx': return order([choice('docx'), choice('txt')]);
+    case 'docx': return order([choice('docx'), choice('odt'), choice('txt')]);
     case 'xlsx':
     case 'csv': return order([choice('xlsx'), choice('csv')]);
     case 'pptx': return [choice('pptx')];
     default: return order([choice('txt'), choice('md')]);
   }
+}
+
+/** The label key of one format, for a status line that names what was written. */
+export function saveFormatLabelKey(format: SaveFormatId): string {
+  return INFO[format].labelKey;
 }
 
 /** The format the dialog opens on: the first choice, which is the file's own kind. */
@@ -73,6 +90,9 @@ export function serializeAs(model: OfficeModel, format: SaveFormatId): Uint8Arra
     case 'docx':
       if (model.kind !== 'docx') throw new Error(`office: cannot write a ${model.kind} file as .docx`);
       return serializeModel(model);
+    case 'odt':
+      if (model.kind !== 'docx') throw new Error(`office: cannot write a ${model.kind} file as .odt`);
+      return toOdt(model, { title: odtTitleOf(model, 'Untitled'), created: new Date().toISOString() });
     case 'xlsx':
       if (model.kind !== 'xlsx' && model.kind !== 'csv') throw new Error(`office: cannot write a ${model.kind} file as .xlsx`);
       return serializeModel({ ...model, kind: 'xlsx' });
