@@ -41,7 +41,7 @@ import {
   readFormFields, removePages, reorderPages, rotatePages, setMetadata,
   type DocInfo, type FormFieldInfo, type FormReadResult, type OpResult, type SignatureImageInput,
 } from './pdfdoc';
-import { previewSave, saveBytes, writePlan } from './save';
+import { previewSave, saveBytes, writePlan, type WriteFailureReason } from './save';
 import * as writer from './writer';
 import { engineSupported, loadEngine, openForRender, type PdfJsDocument, type PdfJsLib } from './render';
 import { PdfViewer, type FieldWidget } from './viewer';
@@ -616,6 +616,21 @@ function launch(ctx: AppContext): void {
   function opMessage(code: PdfRefusalCode | 'noBytes', detail: string): string {
     const base = code === 'noBytes' ? t('pdf.saveNoBytes') : t(refusalKey(code));
     return detail ? `${base} (${detail})` : base;
+  }
+
+  /**
+   * What to say when a write fails. A refusal by the storage limits names the limit it hit (and
+   * the fact that nothing was written); everything else keeps the plain refusal, but never the
+   * bare «تعذّر الحفظ.» with no reason.
+   */
+  function saveFailureMessage(saved: { code: 'outsideHome' | 'noBytes' | 'writeFailed'; reason?: WriteFailureReason }): string {
+    if (saved.reason === 'file-too-big') {
+      return t('pdf.saveTooBig', { max: formatBytes(sys.vfs.quota.file, sys.locale()) });
+    }
+    if (saved.reason === 'storage-full') {
+      return t('pdf.storeFull', { total: formatBytes(sys.vfs.quota.total, sys.locale()) });
+    }
+    return opMessage(saved.code, '');
   }
 
   let idle: Promise<void> = Promise.resolve();
@@ -1701,7 +1716,7 @@ function launch(ctx: AppContext): void {
     setBusy(false);
     if (closed) return;
     if (!saved.ok) {
-      setStatus(opMessage(saved.code, ''), true);
+      setStatus(saveFailureMessage(saved), true);
       return;
     }
     if (!verified) { setStatus(t('pdf.saveVerifyFailed', { path: saved.path }), true); return; }
@@ -1729,7 +1744,7 @@ function launch(ctx: AppContext): void {
     const verified = saved.ok ? await verifySaved(saved.path, state.bytes) : false;
     setBusy(false);
     if (closed) return;
-    if (!saved.ok) { setStatus(opMessage(saved.code, ''), true); return; }
+    if (!saved.ok) { setStatus(saveFailureMessage(saved), true); return; }
     if (!verified) { setStatus(t('pdf.saveVerifyFailed', { path: saved.path }), true); return; }
     state.path = target;
     state.untitled = false;

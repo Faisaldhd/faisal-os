@@ -292,7 +292,15 @@ export async function probeFormats(probe: DecodeProbe, samples: ProbeSamples): P
 
 /** The pixel count the editor will allocate (24 MP ≈ 100 MB of RGBA). */
 export const MAX_PIXELS = 24_000_000;
-/** The VFS refuses a single file above 20 MB (src/vfs/index.ts:24), so exports are capped. */
+/**
+ * The EDITOR'S OWN cap for one encoded export — a policy of this app, not a platform limit.
+ *
+ * A canvas encode of a very large image costs far more memory than the file it produces, so the
+ * editor stays well below what the file system would accept. The file system's real limits live
+ * in `src/vfs/quota.ts` and follow the platform tier (desktop 100 MB per file / 1 GB in total,
+ * mobile 30 MB / 300 MB, the desktop app 500 MB / 4 GB); the user-visible limit text quotes those
+ * numbers at run time, so nothing here has to be kept in step with them.
+ */
 export const MAX_EXPORT_BYTES = 20 * 1024 * 1024;
 
 /** True when `pixels` fits the editor's budget; the message names the limit. */

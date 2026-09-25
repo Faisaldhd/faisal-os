@@ -42,6 +42,27 @@ export interface SaveResult {
   bytes: number;
 }
 
+/** Why a write was refused, in words the owner can act on. */
+export type SaveFailure = 'file-too-big' | 'storage-full' | 'outside-home' | 'write-failed';
+
+/**
+ * Turns a write failure into a reason the window can translate.
+ *
+ * The kernel refuses BOTH quota cases with the same `EINVAL` code and the message "quota" — one
+ * file above the per-file limit, or a store that is full — so the reason is decided by comparing
+ * the bytes with the limit the VFS reports right now. That is the only honest way to tell a
+ * refusal the owner can fix ("make it smaller") from one they cannot ("delete something").
+ * A refusal outside home carries its own code; anything else is a plain failure.
+ */
+export function saveFailure(err: unknown, bytes: number, quota: { file: number }): SaveFailure {
+  if (!(err instanceof VFSError)) return 'write-failed';
+  if (err.code === 'EACCES') return 'outside-home';
+  if (err.code === 'EINVAL' || err.message === 'quota') {
+    return bytes > quota.file ? 'file-too-big' : 'storage-full';
+  }
+  return 'write-failed';
+}
+
 /**
  * Writes `data` to `path`, keeping the previous content in one `.bak` file.
  *

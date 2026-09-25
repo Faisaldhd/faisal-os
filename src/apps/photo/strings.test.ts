@@ -72,4 +72,36 @@ describe('photo strings — parity between Arabic and English', () => {
     expect(t('photo.title')).toBe('Photo Editor');
     setLocale('ar');
   });
+
+  /*
+   * The limits panel used to promise "20 MB per file and 50 MB in total" while the file system
+   * was already allowing 100 MB / 1 GB (`src/vfs/quota.ts`). The numbers follow the platform
+   * tier, so the only text that cannot go stale is one that quotes them at run time — these
+   * checks are what stop a future edit from typing a number back in.
+   */
+  it('quotes the live storage limits instead of hard-coding them', () => {
+    for (const locale of ['ar', 'en'] as Locale[]) {
+      setLocale(locale);
+      const raw = t('photo.limitQuota');
+      expect(raw, `photo.limitQuota [${locale}]`).toContain('{file}');
+      expect(raw, `photo.limitQuota [${locale}]`).toContain('{total}');
+      expect(raw, `photo.limitQuota [${locale}]`).not.toMatch(/\b(20|50)\s*(MB|ميجابايت|ميغابايت)/);
+      const filled = t('photo.limitQuota', { file: '100 MB', total: '1 GB' });
+      expect(filled).toContain('100 MB');
+      expect(filled).toContain('1 GB');
+      expect(filled).not.toContain('{');
+    }
+    setLocale('ar');
+  });
+
+  it('tells the truth about a scaled-down open, rather than blaming a file limit', () => {
+    for (const locale of ['ar', 'en'] as Locale[]) {
+      setLocale(locale);
+      expect(keysIn(locale), `photo.openScaled [${locale}]`).toContain('photo.openScaled');
+      expect(t('photo.openScaled'), `photo.openScaled [${locale}]`).not.toBe('photo.openScaled');
+      // The removed key promised a 20 MB limit that the file system never had.
+      expect(keysIn(locale), `photo.exportTooBig [${locale}]`).not.toContain('photo.exportTooBig');
+    }
+    setLocale('ar');
+  });
 });
