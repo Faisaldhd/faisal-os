@@ -20,7 +20,7 @@ import {
   addShape, addSlide, deckEdit, deleteShape, deleteSlide, duplicateSlide, moveSlide, newPicture, newShape, setAnim, setBounds,
   setParaStyle, setShapeText, setTransition, SLIDE_LAYOUTS, type NewShapeKind, type SlideLayoutKind,
 } from './ops';
-import { paraStyleOf, type ParaStyle, type ParaStylePatch } from './parafmt';
+import { controlColor, paraStyleOf, type ParaStyle, type ParaStylePatch } from './parafmt';
 import { drawSlide, fitSlide, fitWidth } from './render';
 import { startShow } from './show';
 import './strings';
@@ -572,7 +572,8 @@ export function createSlideEditor(ctx: EditorContext): Editor {
               options: () => FONT_SIZES.map((n) => ({ value: String(n), label: String(n) })),
               value: () => String(style()?.size ?? ''), onChange: (v) => formatText({ size: Number(v) }) },
             { type: 'color', id: 'fontColor', icon: 'textColor', label: t('impress.fontColor'), palette: PALETTE, noneLabel: t('impress.colorAuto'),
-              value: () => style()?.color ?? null, onPick: (hex) => formatText({ color: hex }) },
+              // The control reads bare hex (it prefixes its own `#`), the model keeps `#RRGGBB`.
+              value: () => controlColor(style()?.color ?? null), onPick: (hex) => formatText({ color: hex }) },
             { type: 'button', id: 'alignRight', icon: 'alignRight', label: t('impress.alignRight'), enabled: canText, pressed: () => style()?.align === 'r', run: () => formatText({ align: 'r' }) },
             { type: 'button', id: 'alignCenter', icon: 'alignCenter', label: t('impress.alignCenter'), enabled: canText, pressed: () => style()?.align === 'ctr', run: () => formatText({ align: 'ctr' }) },
             { type: 'button', id: 'alignLeft', icon: 'alignLeft', label: t('impress.alignLeft'), enabled: canText, pressed: () => style()?.align === 'l', run: () => formatText({ align: 'l' }) },

@@ -22,6 +22,24 @@ const ARABIC = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFE
 
 const hex = (c: string): string => c.replace('#', '').toUpperCase();
 
+/**
+ * A colour as the model keeps it: `#RRGGBB`.
+ *
+ * The ribbon's colour control speaks bare hex (`C00000`, the way Writer keeps its runs) and the
+ * file reader speaks `#C00000`. The model keeps only the second, because that is the string every
+ * painting path hands to CSS — a bare `C00000` is not a colour the browser accepts, so the run
+ * silently kept the inherited one on screen while the saved file carried the right value.
+ */
+export function modelColor(value: string | null): string | null {
+  const bare = value ? hex(value) : '';
+  return /^[0-9A-F]{6}$/.test(bare) ? `#${bare}` : null;
+}
+
+/** The reverse: the bare `RRGGBB` a colour control reads, since it prefixes its own `#`. */
+export function controlColor(value: string | null): string | null {
+  return value ? hex(value) : null;
+}
+
 /** The run properties this editor owns. */
 export type ParaStylePatch = Partial<Pick<DeckPara, 'bold' | 'italic' | 'underline' | 'size' | 'color' | 'align'>>;
 

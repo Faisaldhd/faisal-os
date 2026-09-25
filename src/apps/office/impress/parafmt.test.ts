@@ -13,7 +13,7 @@ import { registeredKeys } from '../../../kernel/i18n';
 import { readDeck, type Deck, type DeckPara } from './deck';
 import { patchDeck } from './deckpatch';
 import { setParaStyle, setShapeText, addShape, newShape } from './ops';
-import { autoAlign, paraStyleOf, sameParaStyle, setAttrText, styleParagraphXml, styleRunTag } from './parafmt';
+import { autoAlign, controlColor, modelColor, paraStyleOf, sameParaStyle, setAttrText, styleParagraphXml, styleRunTag } from './parafmt';
 import { readRawZip } from '../zip';
 import './strings';
 
@@ -201,6 +201,56 @@ describe('formatting survives the surgical save', () => {
     const patched = await patchDeck(readRawZip(bytes), before, before);
     expect(patched).not.toBeNull();
     expect(patched!.changed).toEqual([]);
+  });
+});
+
+/**
+ * The colour control hands over bare hex (`PALETTE` carries `C00000`), and a bare hex is not a
+ * colour CSS accepts: the run kept whatever it inherited while the file was saved correctly, so
+ * the stage and the thumbnail disagreed with the file until it was reopened. The model keeps one
+ * representation — `#RRGGBB` — and this is where that is enforced.
+ */
+describe('the colour a picker hands over', () => {
+  it('is normalised to the one form the model and CSS both understand', () => {
+    expect(modelColor('C00000')).toBe('#C00000');
+    expect(modelColor('#c00000')).toBe('#C00000');
+    expect(modelColor('#C8894B')).toBe('#C8894B');
+    expect(modelColor(null)).toBeNull();
+    expect(modelColor('')).toBeNull();
+    expect(modelColor('red')).toBeNull();
+  });
+
+  it('goes back to the control as the bare hex it reads', () => {
+    expect(controlColor('#C00000')).toBe('C00000');
+    expect(controlColor('C00000')).toBe('C00000');
+    expect(controlColor(null)).toBeNull();
+  });
+
+  it('reaches the model paintable, and the file as bare hex, in one round trip', async () => {
+    const bytes = newDeckPptx('Hello', 'World');
+    const before = await deckOf(bytes);
+    const uid = firstTextShape(before);
+    // Exactly what a swatch in the ribbon hands over, with no `#`.
+    const after = setParaStyle(before, 0, uid, { color: 'C00000' });
+    const painted = after.slides[0].shapes.find((s) => s.uid === uid)!;
+    expect(painted.paras[0].color).toBe('#C00000');
+
+    const patched = await patchDeck(readRawZip(bytes), before, after);
+    expect(patched).not.toBeNull();
+    const xml = await slideXml(patched!.bytes);
+    expect(xml).toContain('srgbClr val="C00000"');
+
+    const back = await deckOf(patched!.bytes);
+    expect(back.slides[0].shapes[firstIndexWithText(back, 'Hello')].paras[0].color).toBe('#C00000');
+  });
+
+  it('still clears the colour for Automatic', async () => {
+    const bytes = newDeckPptx('Hello', 'World');
+    const before = await deckOf(bytes);
+    const uid = firstTextShape(before);
+    const coloured = setParaStyle(before, 0, uid, { color: 'C00000' });
+    const cleared = setParaStyle(coloured, 0, uid, { color: null });
+    expect(cleared.slides[0].shapes.find((s) => s.uid === uid)!.paras[0].color).toBeNull();
   });
 });
 
