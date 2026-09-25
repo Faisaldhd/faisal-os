@@ -6,6 +6,11 @@
  * one page either side hold a canvas, drawn at the screen's pixel density (capped per canvas),
  * and canvases further away are released — memory stays bounded on a 300-page file.
  *
+ * A second view mode lays the SAME page boxes out two at a time inside a `.faisal-pdf-spread` row
+ * (`setSpread`), paired by `spread.ts` — the cover alone, then 2‑3 · 4‑5. Because a row is a plain
+ * static element, every page's `offsetTop` stays the top of its row, so scrolling, the "current
+ * page" probe, the visible range and the release distance keep working untouched.
+ *
  * Over each drawn page sit, in order: the text layer (selection, copy, search highlights), the
  * link layer (internal jumps and external links), the form layer (the document's own AcroForm
  * fields as real inputs), the annotation hit layer and the tool overlay used by the window's
@@ -18,6 +23,9 @@ import {
   anchoredScroll, clampZoom, CSS_UNITS, fitZoom, outputScale, pageAtOffset, pageSize, renderOrder,
   totalRotation, viewportTransform, visibleRange, boxToView, type PageGeom, type ZoomMode,
 } from './viewport';
+import {
+  neighbourPage, pagesOfPage, pagesOfSpread, spreadCount, spreadForPage, type Spread, type SpreadOptions,
+} from './spread';
 import { buildPageText, hitSpans, type Hit } from './search';
 import { KIND_KEYS } from './labels';
 
@@ -96,6 +104,8 @@ export class PdfViewer {
   private firstPaintDone = false;
   private resizeObserver: ResizeObserver | null = null;
   private destroyed = false;
+  private spreadValue = false;
+  private rows: HTMLDivElement[] = [];
   private pinch: { dist: number; zoom: number; x: number; y: number } | null = null;
   private pointers = new Map<number, { x: number; y: number }>();
 
@@ -129,6 +139,12 @@ export class PdfViewer {
   get mode(): ZoomMode { return this.modeValue; }
   get viewRotation(): number { return this.rotationValue; }
   get document(): PdfJsDocument | null { return this.doc; }
+  /** True when the pages are laid out two at a time. */
+  get spread(): boolean { return this.spreadValue; }
+
+  private spreadOptions(): SpreadOptions {
+    return { spread: this.spreadValue, coverAlone: true };
+  }
 
   /**
    * Shows a new document (or the same one after an edit). With `keep`, the reading position,
@@ -162,8 +178,11 @@ export class PdfViewer {
       return this.makeSlot(index, page, geom);
     });
     for (const extra of oldSlots.slice(pages.length)) extra.box.remove();
-    if (!keep) this.frame.textContent = '';
-    for (const slot of this.slots) if (!slot.box.isConnected) this.frame.append(slot.box);
+    if (!keep) {
+      this.frame.textContent = '';
+      this.rows = [];
+    }
+    this.buildFrame();
     if (!keep) {
       this.rotationValue = 0;
       this.modeValue = 'fitWidth';
@@ -180,6 +199,7 @@ export class PdfViewer {
     for (const slot of this.slots) slot.task?.cancel();
     this.slots = [];
     this.frame.textContent = '';
+    this.rows = [];
     this.tops = [];
     this.heights = [];
     if (this.doc) void this.doc.loadingTask.destroy().catch(() => {});
@@ -219,6 +239,72 @@ export class PdfViewer {
 
   /* ───────────────────────────── layout ───────────────────────────── */
 
+  /**
+   * Puts the page boxes where the current view mode wants them: straight into the frame for one
+   * page at a time, or inside one `.faisal-pdf-spread` row per pair. A row is deliberately NOT
+   * positioned, so the frame stays the offset parent of every page and `offsetTop` keeps meaning
+   * "top of this page's row" — which is what scrolling, `offsetInPage` and the probe rely on.
+   */
+  private buildFrame(): void {
+    if (!this.spreadValue) {
+      // Leaving the spread takes every row away and puts the pages back in the frame, in order.
+      for (const row of this.rows.splice(0)) row.remove();
+      for (const slot of this.slots) if (slot.box.parentElement !== this.frame) this.frame.append(slot.box);
+      return;
+    }
+    const wanted = spreadCount(this.slots.length, this.spreadOptions());
+    for (const extra of this.rows.splice(wanted)) extra.remove();
+    for (let index = 0; index < wanted; index++) {
+      if (!this.rows[index]) {
+        const row = document.createElement('div');
+        row.className = 'faisal-pdf-spread';
+        row.dataset.spread = String(index);
+        this.rows[index] = row;
+      }
+      const row = this.rows[index];
+      for (const page of pagesOfSpread(index, this.slots.length, this.spreadOptions())) {
+        const slot = this.slots[page];
+        if (slot) row.append(slot.box);
+      }
+      // Appending an existing child moves it, so the rows end up in spread order.
+      if (row.childElementCount) this.frame.append(row);
+    }
+  }
+
+  /** Two pages side by side (or back to one), keeping the reading position and the zoom mode. */
+  setSpread(on: boolean): void {
+    const next = Boolean(on);
+    if (this.spreadValue === next) return;
+    this.spreadValue = next;
+    this.buildFrame();
+    this.layout();
+    if (this.modeValue !== 'custom') this.applyMode(false);
+    this.goToPage(this.current);
+    this.schedule();
+  }
+
+  /** The spread the reading position is in: its number, how many there are, and its pages. */
+  spreadInfo(): { spread: Spread | null; total: number } {
+    const options = this.spreadOptions();
+    return { spread: spreadForPage(this.current, this.slots.length, options), total: spreadCount(this.slots.length, options) };
+  }
+
+  /** Moves one SPREAD forward (`dir` 1) or back (-1), or one page at a time in single-page mode. */
+  goToSpread(dir: 1 | -1): void {
+    if (!this.slots.length) return;
+    const target = this.spreadValue
+      ? neighbourPage(this.current, this.slots.length, this.spreadOptions(), dir)
+      : this.current + (dir < 0 ? -1 : 1);
+    this.goToPage(target);
+  }
+
+  /** The first page of the spread that holds `page` (what the window shows as "the page"). */
+  private spreadStartOf(page: number): number {
+    if (!this.spreadValue || !this.slots.length) return page;
+    const pages = pagesOfPage(page, this.slots.length, this.spreadOptions());
+    return pages.length ? pages[0] : page;
+  }
+
   private layout(): void {
     const scale = this.zoomValue * CSS_UNITS;
     for (const slot of this.slots) {
@@ -242,14 +328,33 @@ export class PdfViewer {
     }
   }
 
+  /**
+   * The box a page may use: the scroller MINUS the frame's own padding, because the frame keeps
+   * that padding around every page. Counting it is what keeps a fit a real fit on a phone — and a
+   * presentation page inside the screen instead of one scrollbar below it.
+   */
   private availableSize(): { width: number; height: number } {
-    return { width: this.scroller.clientWidth || 800, height: this.scroller.clientHeight || 600 };
+    return {
+      width: Math.max(120, (this.scroller.clientWidth || 800) - this.framePadding('row')),
+      height: Math.max(120, (this.scroller.clientHeight || 600) - this.framePadding('column')),
+    };
+  }
+
+  /** The frame's horizontal (`row`) or vertical (`column`) padding, 0 where there is no layout. */
+  private framePadding(direction: 'row' | 'column'): number {
+    if (typeof getComputedStyle !== 'function') return 0;
+    const style = getComputedStyle(this.frame);
+    const first = parseFloat(direction === 'row' ? style.paddingLeft : style.paddingTop) || 0;
+    const second = parseFloat(direction === 'row' ? style.paddingRight : style.paddingBottom) || 0;
+    return first + second;
   }
 
   private applyMode(keepPosition: boolean): void {
     if (this.modeValue === 'custom' || !this.slots.length) return;
     const slot = this.slots[Math.max(0, this.current)] ?? this.slots[0];
-    const zoom = fitZoom(this.modeValue, slot.geom, this.rotationValue, this.availableSize(), this.gutter());
+    // A spread shares the available width between two pages, so a fit stays a fit for the pair.
+    const columns = this.spreadValue ? 2 : 1;
+    const zoom = fitZoom(this.modeValue, slot.geom, this.rotationValue, this.availableSize(), this.gutter(), columns);
     if (Math.abs(zoom - this.zoomValue) > 0.001) this.setZoomInternal(zoom, keepPosition);
     this.hooks.onZoomChange(this.zoomValue, this.modeValue);
   }
@@ -311,7 +416,8 @@ export class PdfViewer {
     const i = Math.max(0, Math.min(this.slots.length - 1, index));
     this.measure();
     this.scroller.scrollTop = Math.max(0, (this.tops[i] ?? 0) - 8 + offset);
-    this.setCurrent(i);
+    // Both pages of a spread share one top, so "the page" is the first page of the pair.
+    this.setCurrent(this.spreadStartOf(i));
     this.schedule();
   }
 
@@ -374,7 +480,17 @@ export class PdfViewer {
     const top = this.scroller.scrollTop;
     const height = this.scroller.clientHeight || 600;
     const probe = top + height * 0.3;
-    this.setCurrent(pageAtOffset(this.tops, this.heights, probe));
+    /*
+     * The probe only means something while the document can SCROLL. When everything fits on screen
+     * — a short file, or a page fitted to a phone — the probe stays at page 1, and reading it would
+     * undo every move the owner makes (the presentation would look frozen). Then the navigation,
+     * not the scroll, decides which page is current.
+     */
+    if (this.scroller.scrollHeight > height + 2) {
+      // In spread mode the two pages of a row share one top, so the probe always reports the FIRST
+      // page of the pair: the page box and the spread indicator then describe the whole spread.
+      this.setCurrent(this.spreadStartOf(pageAtOffset(this.tops, this.heights, probe)));
+    }
     const [first, last] = visibleRange(this.tops, this.heights, top, top + height);
     const order = renderOrder(first, last, this.slots.length, RENDER_EXTRA, this.current);
     const keep = new Set(order);

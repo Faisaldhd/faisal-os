@@ -96,4 +96,19 @@ describe('pdf.css touch targets', () => {
     expect(body).toContain('position: fixed');
     expect(body).toContain('inset-inline-start: -10000px');
   });
+
+  it('lays a spread out as a plain flex row, and hides the chrome in a presentation', () => {
+    // Two pages side by side: the row must be a flex line, and it must NOT be positioned — a
+    // positioned row would become the offset parent and break every page offset in the viewer.
+    const row = blockFor('.faisal-pdf-spread');
+    expect(row).toContain('display: flex');
+    expect(row).not.toContain('position:');
+    // The presentation hides the app's own chrome, including the status bar with the page box.
+    expect(css).toContain('.faisal-pdf.is-present .faisal-pdf-statusbar');
+    expect(css).toContain('.faisal-pdf.is-present .faisal-pdf-ribbon');
+    // Its bar is the only control left: over the page, and never revealed by hover.
+    const bar = blockFor('.faisal-pdf-presentbar');
+    expect(bar).toContain('position: absolute');
+    expect(bar).toContain('z-index: 30');
+  });
 });

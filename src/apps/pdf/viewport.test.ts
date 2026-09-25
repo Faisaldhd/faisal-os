@@ -48,6 +48,28 @@ describe('page size and fit', () => {
     const p = fitZoom('fitPage', A4, 0, { width: 800, height: 600 }, 0);
     expect(pageSize(A4, 0, p).height).toBeCloseTo(600);
   });
+
+  it('shares the available width between two pages in a spread, and fits the pair in height', () => {
+    // Two pages side by side: each one gets half of the width, plus one gutter between them.
+    const w = fitZoom('fitWidth', A4, 0, { width: 800, height: 600 }, 10, 2);
+    expect(pageSize(A4, 0, w).width).toBeCloseTo((800 - 4 * 10) / 2);
+    // Both pages of the spread fit on screen, so the pair is as wide as the space (minus gutters).
+    expect(pageSize(A4, 0, w).width * 2 + 4 * 10).toBeCloseTo(800);
+    // The height of a pair is the height of one page: fitPage takes the smaller of the two limits.
+    const p = fitZoom('fitPage', A4, 0, { width: 800, height: 600 }, 10, 2);
+    expect(p).toBeCloseTo(fitZoom('fitWidth', A4, 0, { width: 800, height: 600 }, 10, 2));
+    expect(pageSize(A4, 0, p).height).toBeLessThanOrEqual(600);
+  });
+
+  it('keeps the single-page result exactly as it was when asked for one column', () => {
+    for (const mode of ['fitWidth', 'fitPage'] as const) {
+      expect(fitZoom(mode, A4, 0, { width: 800, height: 600 }, 12)).toBe(
+        fitZoom(mode, A4, 0, { width: 800, height: 600 }, 12, 1),
+      );
+    }
+    // A nonsense column count is treated as one page rather than dividing by something strange.
+    expect(fitZoom('fitWidth', A4, 0, { width: 800, height: 600 }, 0, 0)).toBeCloseTo(800 / (595 * CSS_UNITS));
+  });
 });
 
 describe('viewport transform (same as pdf.js PageViewport)', () => {

@@ -69,11 +69,23 @@ export function pageSize(geom: PageGeom, viewRotation: number, zoom: number): { 
 /**
  * The zoom that makes a page fill the available width (`fitWidth`) or fit whole inside the
  * available box (`fitPage`). `gutter` is the space kept around the page on each side.
+ *
+ * `columns` is 2 in the two-page spread: the SAME page width is then shared by both pages of the
+ * spread (one outer gutter each plus one between them), and the height is unchanged, so the pairs
+ * and the lone cover that follows them all stay at one zoom instead of jumping per row.
  */
-export function fitZoom(mode: 'fitWidth' | 'fitPage', geom: PageGeom, viewRotation: number, avail: { width: number; height: number }, gutter = 16): number {
+export function fitZoom(
+  mode: 'fitWidth' | 'fitPage',
+  geom: PageGeom,
+  viewRotation: number,
+  avail: { width: number; height: number },
+  gutter = 16,
+  columns = 1,
+): number {
   const unit = pageSize(geom, viewRotation, 1);
   if (unit.width <= 0 || unit.height <= 0) return 1;
-  const byWidth = Math.max(avail.width - 2 * gutter, 40) / unit.width;
+  const cols = Math.max(1, Math.floor(Number.isFinite(columns) ? columns : 1));
+  const byWidth = Math.max(avail.width - 2 * gutter * cols, 40) / (unit.width * cols);
   if (mode === 'fitWidth') return clampZoom(byWidth);
   const byHeight = Math.max(avail.height - 2 * gutter, 40) / unit.height;
   return clampZoom(Math.min(byWidth, byHeight));
