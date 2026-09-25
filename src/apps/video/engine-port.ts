@@ -9,6 +9,7 @@
  * Both preview and export draw with the same code from the same model
  * (`project.ts` resolvers), which is what makes the preview match the export.
  */
+import type { Mp4Plan } from './engine/mp4-plan';
 import type { MediaType, Project } from './project';
 import type { Rect } from './render-math';
 
@@ -37,8 +38,10 @@ export interface VideoExportOptions {
   width: number;
   height: number;
   fps: number;
-  /** A MIME type `MediaRecorder.isTypeSupported` accepted. */
+  /** A MIME type `MediaRecorder.isTypeSupported` accepted (ignored when `mp4` is set). */
   mime: string;
+  /** A WebCodecs plan (`planMp4`): encode a real MP4 frame by frame instead of recording. */
+  mp4?: Mp4Plan | null;
   videoBitrate: number;
   audioBitrate: number;
   /** Timeline range to export; the whole project when omitted. */

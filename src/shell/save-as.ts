@@ -306,12 +306,21 @@ function iconButton(markup: string, label: string, cls: string): HTMLButtonEleme
   b.type = 'button';
   b.setAttribute('aria-label', label);
   b.title = label;
+  b.append(glyph(markup));
+  return b;
+}
+
+/**
+ * Every icon of the dialog goes through here: the 20px size is set on the element itself, so an
+ * icon never falls back to the SVG default (it filled the phone sheet when a stylesheet rule was
+ * missing) and the CSS class only has to fine-tune it (16px in the breadcrumbs).
+ */
+function glyph(markup: string): SVGElement {
   const svg = renderIcon(markup);
   svg.setAttribute('width', '20');
   svg.setAttribute('height', '20');
   svg.setAttribute('class', 'faisal-saveas-icon');
-  b.append(svg);
-  return b;
+  return svg;
 }
 
 function button(label: string, cls: string, text?: string): HTMLButtonElement {
@@ -409,7 +418,7 @@ export function saveAsDialog(opts: SaveAsOptions): Promise<SaveAsOutcome> {
   newFolderInput.placeholder = t('shell.saveas.newFolderHint');
   newFolderInput.setAttribute('aria-label', t('shell.saveas.newFolder'));
   const newFolderBtn = button(t('shell.saveas.create'), 'faisal-saveas-btn is-secondary', t('shell.saveas.create'));
-  newFolderBtn.prepend(renderIcon(ICON.folderPlus));
+  newFolderBtn.prepend(glyph(ICON.folderPlus));
   newFolderRow.append(newFolderInput, newFolderBtn);
 
   /* ── name + format ── */
@@ -463,7 +472,7 @@ export function saveAsDialog(opts: SaveAsOptions): Promise<SaveAsOutcome> {
   /* ── footer ── */
   const cancelBtn = button(t('shell.saveas.cancel'), 'faisal-saveas-btn is-plain', t('shell.saveas.cancel'));
   const downloadBtn = button(t('shell.saveas.download'), 'faisal-saveas-btn is-secondary', t('shell.saveas.download'));
-  downloadBtn.prepend(renderIcon(ICON.download));
+  downloadBtn.prepend(glyph(ICON.download));
   downloadBtn.hidden = opts.allowDownload === false;
   const saveBtn = button(opts.saveLabel ?? t('shell.saveas.save'), 'faisal-saveas-btn is-primary', opts.saveLabel ?? t('shell.saveas.save'));
   actions.append(cancelBtn, downloadBtn, saveBtn);
@@ -512,7 +521,7 @@ export function saveAsDialog(opts: SaveAsOptions): Promise<SaveAsOutcome> {
       if (crumbs.childElementCount) crumbs.append(el('span', 'faisal-saveas-crumb-sep', '/'));
       const b = button(crumb.home ? t('shell.saveas.home') : crumb.label, 'faisal-saveas-crumb', crumb.home ? t('shell.saveas.home') : crumb.label);
       b.dir = 'auto';
-      if (crumb.home) b.prepend(renderIcon(ICON.home));
+      if (crumb.home) b.prepend(glyph(ICON.home));
       if (crumb.path === dir) {
         b.classList.add('is-current');
         b.setAttribute('aria-current', 'true');
@@ -533,7 +542,7 @@ export function saveAsDialog(opts: SaveAsOptions): Promise<SaveAsOutcome> {
     for (const folder of folders) {
       const row = button(folder.name, 'faisal-saveas-folder', folder.name);
       row.dir = 'auto';
-      row.prepend(renderIcon(ICON.folder));
+      row.prepend(glyph(ICON.folder));
       row.addEventListener('click', () => { if (!busy) void goTo(folder.path); });
       folderList.append(row);
     }

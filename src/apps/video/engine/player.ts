@@ -134,8 +134,19 @@ export class TimelineRenderer {
     if (seq === this.seekSeq && !this.playing) this.draw(t);
   }
 
+  /**
+   * Parks every element on its exact frame at `time`, then draws (the MP4
+   * export steps through the film this way, as fast as frames decode).
+   */
+  async renderAt(time: number): Promise<void> {
+    const t = Math.max(0, Math.min(Number.isFinite(time) ? time : 0, this.duration));
+    this.clock.set(t);
+    await this.prepare(t, false);
+    this.draw(t);
+  }
+
   /** Parks every element needed at `time` on its exact frame (bounded wait). */
-  private async prepare(time: number): Promise<void> {
+  private async prepare(time: number, waitFrame = true): Promise<void> {
     const project = this.project;
     if (!project) return;
     const needs = clipsNeeded(project, time, 0.5);
@@ -147,7 +158,7 @@ export class TimelineRenderer {
       if (!el) continue;
       if (!el.paused) el.pause();
       this.mixer.silence(el);
-      waits.push(seekAccurate(el, need.sourceTime, 2500));
+      waits.push(seekAccurate(el, need.sourceTime, 2500, waitFrame));
     }
     this.pool.retain(keep);
     await Promise.all(waits);

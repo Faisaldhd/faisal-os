@@ -427,7 +427,7 @@
 .fvs.is-narrow .fvs-card-name, .fvs.is-narrow .fvs-card-meta { font-size: 13px; }
 .fvs-card.is-error .fvs-card-meta { color: var(--app-danger); white-space: normal; }
 .fvs-card.is-offline .fvs-card-meta { color: var(--app-copper-2); }
-.fvs-card-actions { display: flex; justify-content: flex-end; gap: 4px; padding: 4px; }
+.fvs-card-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; padding: 4px; }
 .fvs-sheet .fvs-pool-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 
 /* ─── inspector ─── */

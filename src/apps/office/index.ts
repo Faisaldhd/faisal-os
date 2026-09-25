@@ -34,7 +34,8 @@ import { loadOfficeFile, serializeModel, type LoadRefusal } from './file';
 import { patchPackage, packageKind, snapshotModel, type PatchResult } from './patch';
 import { backupPathFor, saveWithBackup, withinHome } from './save';
 import { defaultSaveFormat, saveFormatChoices, serializeAs, type SaveFormatId } from './save-as';
-import { writePptx } from './pptx';
+import { newDeckPptx } from './pptx';
+import { deckTexts, readDeck } from './impress/deck';
 import { writeDelimited } from './file';
 import type { Editor, EditorContext } from './editor';
 import { button, clamp, downloadBytes, el, NARROW_BREAKPOINT, observeSize } from './ui/dom';
@@ -453,6 +454,15 @@ function launch(ctx: AppContext): void {
     if (m.kind === 'docx') {
       return { kind: 'docx', paragraphs: m.paragraphs, blocks: m.paragraphs.map((text, id) => ({ id, runs: [{ t: 'text', text, props: {} }] })) };
     }
+    if (m.kind === 'pptx' && bytes.length) {
+      // A complete presentation opens in the slide editor; a package without
+      // ppt/presentation.xml keeps the plain paragraph view.
+      try {
+        const deck = await readDeck(bytes);
+        if (deck.slides.length) return { kind: 'pptx', slides: deckTexts(deck), deck };
+      } catch { /* the plain paragraphs still edit and save */ }
+      return m;
+    }
     if (m.kind === 'xlsx' && bytes.length) {
       try {
         bookLook = await readBookLook(bytes);
@@ -561,7 +571,7 @@ function launch(ctx: AppContext): void {
 
   function newBytes(kind: NewKind): Uint8Array {
     if (kind === 'docx') return emptyDocxPackage(getLocale() === 'ar');
-    if (kind === 'pptx') return writePptx([[t('office.newDeckTitle'), t('office.newDeckSubtitle')]]);
+    if (kind === 'pptx') return newDeckPptx(t('office.newDeckTitle'), t('office.newDeckSubtitle'));
     return serializeModel(emptyModel(planFor('a.xlsx')));
   }
 
@@ -650,6 +660,10 @@ function launch(ctx: AppContext): void {
         model = recompute(await enrich(model, data));
         editor?.dispose();
         mountEditor();
+      } else if (model.kind === 'pptx' && model.deck && patched.changed.length) {
+        // New slides and shapes now live in parts of their own: re-read so the next
+        // save edits them in place instead of adding them again.
+        model = await enrich(model, data);
       } else if (model.kind === 'xlsx' && bookLook === null) {
         bookLook = await readBookLook(data).catch(() => null);
       }
@@ -710,6 +724,11 @@ function launch(ctx: AppContext): void {
         // A rich Word document is rebuilt (runs, images, tables), exactly like the in-place save.
         if (format === 'docx' && source.kind === 'docx' && source.blocks) {
           return (await rebuildDocxRich(source)) ?? serializeAs(source, 'docx');
+        }
+        // A slide deck is patched from the file it came from, so nothing is lost.
+        if (format === 'pptx' && source.kind === 'pptx' && source.deck && onDiskBytes && onDiskModel) {
+          const patched = await patchPackage('pptx', onDiskBytes, onDiskModel, source);
+          if (patched) return patched.bytes;
         }
         return serializeAs(source, format);
       },

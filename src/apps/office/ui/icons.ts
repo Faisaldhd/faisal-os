@@ -118,6 +118,13 @@ export const ICONS = {
   text: ['M5 6h14', 'M12 6v13', 'M9 19h6'],
   heading: ['M6 5v14', 'M16 5v14', 'M6 12h10'],
   quote: ['M5 11h4v6H5z', 'M5 11c0-3 1-5 4-6', 'M14 11h4v6h-4z', 'M14 11c0-3 1-5 4-6'],
+  rect: ['M4 6h16v12H4z'],
+  ellipse: ['M12 5c4.4 0 8 3.1 8 7s-3.6 7-8 7-8-3.1-8-7 3.6-7 8-7z'],
+  arrow: ['M4 10h9V6l7 6-7 6v-4H4z'],
+  line: ['M5 19L19 5'],
+  transition: ['M3 6h9v12H3z', 'M15 6h6', 'M15 12h6', 'M15 18h6'],
+  sparkle: ['M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z'],
+  timer: ['M12 8v5l3 2', 'M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16z', 'M9 2h6'],
 } as const;
 
 export type IconName = keyof typeof ICONS;

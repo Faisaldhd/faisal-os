@@ -28,6 +28,7 @@ import { projectDuration, type Project } from '../project';
 import { encodeWav } from '../wav';
 import { decodeBytes, decodeUrl, MixCancelled, renderMixOffline } from './audio-mix';
 import { recordProject, exportRange } from './exporter';
+import { encodeProjectMp4 } from './mp4-export';
 import { toCanvas, viewFor, type Size } from './layout';
 import { MediaPool } from './media-pool';
 import { TimelineRenderer } from './player';
@@ -181,6 +182,7 @@ export class CanvasStudioEngine implements StudioEngine {
     this.busy = true;
     this.emitState();
     try {
+      if (options.mp4) return await encodeProjectMp4(this.project, this.frame, this.pool.getLookup(), options.mp4, options);
       return await recordProject(this.project, this.frame, this.pool.getLookup(), options);
     } finally {
       this.busy = false;

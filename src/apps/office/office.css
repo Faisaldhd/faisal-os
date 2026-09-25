@@ -628,5 +628,87 @@
   .fo-sheettab, .fo-tab, .fo-panel-tab, .fo-nav-item, .fo-menu-item, .fo-link { min-height: 44px; }
 }
 
+/* ─────────────── Impress: slides at their real layout, show, presenter ─────────────── */
+
+.fo-impress.is-rich .fo-rail { overflow: hidden; }
+.fo-rail-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.fo-rail-add { flex: none; justify-content: center; }
+.fo-impress.is-rich .fo-thumb { user-select: none; -webkit-user-select: none; touch-action: pan-y; }
+.fo-impress.is-rich .fo-thumb-slide { flex: none; padding: 0; aspect-ratio: auto; background: transparent; display: block; }
+.fo-thumb.is-dragging { opacity: .5; }
+.fo-thumb.is-drop .fo-thumb-slide { box-shadow: 0 0 0 2px var(--app-blue); }
+.fo-canvasframe { position: relative; flex: none; }
+.fo-canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; direction: ltr; overflow: hidden; font-family: var(--fo-doc-font); color: #000; }
+.fo-sh { position: absolute; box-sizing: border-box; }
+.fo-sh > svg { position: absolute; left: 0; top: 0; }
+.fo-sh-img { width: 100%; height: 100%; display: block; pointer-events: none; }
+.fo-sh.is-missing, .fo-sh.is-object { border: 1px dashed #9aa0aa; display: grid; place-items: center; }
+.fo-sh-label { color: #6b7280; font-size: 14px; }
+.fo-sh-text { position: absolute; inset: 0; box-sizing: border-box; padding: 3.6px 7.2px; display: flex; flex-direction: column; justify-content: flex-start; }
+.fo-sh-text.is-ctr { justify-content: center; }
+.fo-sh-text.is-b { justify-content: flex-end; }
+.fo-sh-p { line-height: 1.2; white-space: pre-wrap; overflow-wrap: break-word; unicode-bidi: plaintext; }
+.fo-sh-p.is-prompt { color: #8a8f99; }
+.fo-sh-table { width: 100%; height: 100%; border-collapse: collapse; font-size: 14px; }
+.fo-sh-table td { border: 1px solid #9aa0aa; padding: 4px; }
+.fo-sh.is-pending { visibility: hidden; }
+.fo-sh.is-fadein { animation: fo-imp-fade .5s cubic-bezier(.2, 0, 0, 1); }
+.fo-sh.is-editing .fo-sh-text { visibility: hidden; }
+.fo-sh-edit { position: absolute; z-index: 2; box-sizing: border-box; margin: 0; padding: 3.6px 7.2px; border: 1px solid var(--app-blue); border-radius: 0; background: rgba(255, 255, 255, .92); font-family: var(--fo-doc-font); line-height: 1.2; resize: none; outline: none; }
+.fo-slidestage.is-rich { justify-content: center; overflow: hidden; }
+.fo-editframe { box-shadow: 0 8px 32px rgba(0, 0, 0, .28); touch-action: none; }
+.fo-editframe .fo-canvas { border-radius: 6px; }
+.fo-editframe .fo-sh { cursor: move; }
+.fo-selection { position: absolute; inset: 0; pointer-events: none; }
+.fo-selbox { position: absolute; outline: 2px solid var(--app-blue); }
+.fo-selbox.is-locked { outline-style: dashed; }
+.fo-handle { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; box-sizing: border-box; background: #fff; border: 2px solid var(--app-blue); border-radius: 50%; pointer-events: auto; touch-action: none; }
+.fo-handle::before { content: ''; position: absolute; inset: -8px; }
+.fo-handle.is-nw { left: 0; top: 0; cursor: nwse-resize; }
+.fo-handle.is-n { left: 50%; top: 0; cursor: ns-resize; }
+.fo-handle.is-ne { left: 100%; top: 0; cursor: nesw-resize; }
+.fo-handle.is-e { left: 100%; top: 50%; cursor: ew-resize; }
+.fo-handle.is-se { left: 100%; top: 100%; cursor: nwse-resize; }
+.fo-handle.is-s { left: 50%; top: 100%; cursor: ns-resize; }
+.fo-handle.is-sw { left: 0; top: 100%; cursor: nesw-resize; }
+.fo-handle.is-w { left: 0; top: 50%; cursor: ew-resize; }
+@media (pointer: coarse) { .fo-handle::before { inset: -16px; } }
+
+.fo-show.is-deck { place-items: stretch; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; cursor: default; }
+.fo-show-main { grid-area: 1 / 1; min-width: 0; min-height: 0; display: grid; place-items: center; overflow: hidden; cursor: pointer; }
+.fo-show-side { display: none; }
+.fo-show-bar { grid-row: 2; grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; padding: 8px 12px; color: #ddd; }
+.fo-show.is-deck .fo-show-btn { color: #ddd; }
+.fo-show.is-deck .fo-show-count { position: static; min-width: 56px; text-align: center; }
+.fo-show-clock { min-width: 56px; text-align: center; font-variant-numeric: tabular-nums; color: var(--app-copper-2); font-size: 15px; }
+.fo-show:not(.is-presenter) .fo-show-clock, .fo-show:not(.is-presenter) .fo-show-ponly { display: none; }
+.fo-show.is-presenter { background: var(--app-bg); grid-template-columns: minmax(0, 1fr) minmax(220px, 32%); }
+.fo-show.is-presenter .fo-show-side { grid-area: 1 / 2; display: flex; flex-direction: column; gap: 12px; padding: 12px; min-height: 0; overflow: auto; color: var(--app-text); border-inline-start: 1px solid var(--app-hairline); }
+.fo-show-label { font-size: 12px; font-weight: 700; color: var(--app-text-2); margin-bottom: 4px; }
+.fo-show-notes { flex: 1; min-height: 0; overflow: auto; }
+.fo-show-notetext { margin: 0; white-space: pre-wrap; font-size: 18px; line-height: 1.5; }
+.fo-show-end { margin: 0; color: var(--app-text-3); }
+.is-enter-fade { animation: fo-imp-fade .5s cubic-bezier(.2, 0, 0, 1); }
+.is-enter-push { animation: fo-imp-push .5s cubic-bezier(.2, 0, 0, 1); }
+@keyframes fo-imp-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fo-imp-push { from { transform: translateY(100%); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .is-enter-fade, .is-enter-push, .fo-sh.is-fadein { animation: none; } }
+@media (pointer: coarse) { .fo-show.is-deck .fo-show-btn { min-width: 44px; min-height: 44px; } }
+
+@container office (max-width: 700px) {
+  .fo-impress.is-rich .fo-rail { flex-direction: row; align-items: center; gap: 8px; }
+  .fo-rail-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+  .fo-impress.is-rich .fo-thumb { width: auto; touch-action: pan-x; }
+  .fo-rail-add { min-height: 44px; }
+  .fo-rail-add .fo-btn-label { display: none; }
+}
+@media (max-width: 700px) {
+  .fo-show.is-presenter { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto; }
+  .fo-show.is-presenter .fo-show-side { grid-area: 2 / 1; flex-direction: row; max-height: 38vh; border-inline-start: 0; border-block-start: 1px solid var(--app-hairline); }
+  .fo-show.is-presenter .fo-show-bar { grid-row: 3; }
+  .fo-show-next { flex: none; width: 40%; }
+  .fo-show-notetext { font-size: 15px; }
+}
+
 /* `hidden` always wins over a component's own display (tool panels, zoom, notes). */
 .faisal-office [hidden] { display: none !important; }

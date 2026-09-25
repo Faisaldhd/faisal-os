@@ -17,6 +17,7 @@ export interface PoolHost {
   importFromDevice(): void;
   add(item: MediaItem): void;
   relink(item: MediaItem): void;
+  convert(item: MediaItem): void;
   remove(item: MediaItem): void;
   inUse(id: string): boolean;
 }
@@ -135,6 +136,11 @@ export class PoolView {
       const add = iconButton(s('addToTimeline', { name: item.name }), 'plus', 'fvs-iconbtn is-accent');
       add.addEventListener('click', () => this.host.add(item));
       row.append(add);
+    } else if (item.status === 'error' && item.convertible) {
+      const convert = button(s('convert'), 'fvs-btn is-small is-primary', 'convert');
+      convert.setAttribute('aria-label', s('convertName', { name: item.name }));
+      convert.addEventListener('click', () => this.host.convert(item));
+      row.append(convert);
     } else if (item.status === 'offline') {
       const relink = button(s('relink'), 'fvs-btn is-small', 'link');
       relink.addEventListener('click', () => this.host.relink(item));

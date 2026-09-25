@@ -25,6 +25,9 @@ export {
 export {
   addPageNumbers, addStamp, addTextWatermark, type PageNumbersInput, type StampInput, type WatermarkInput,
 } from './engine/stamp';
+export {
+  applyRedactions, glyphsInAreas, type DecodedImage, type RedactionArea, type RedactReport, type RedactResult,
+} from './engine/redact';
 
 /** True now that the real engine is wired in (the window used to say "coming" without it). */
 export const ENGINE_READY = true;

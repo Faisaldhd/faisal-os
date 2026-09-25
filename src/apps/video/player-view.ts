@@ -41,6 +41,7 @@ export interface PlayerHost {
   saveSelection(item: MediaItem, range: { start: number; end: number }): void;
   toggleFullscreen(target: HTMLElement): void;
   status(text: string): void;
+  convert(item: MediaItem): void;
   narrow(): boolean;
   openSheet(panel: HTMLElement, title: string): void;
   closeSheet(): void;
@@ -58,6 +59,7 @@ export class PlayerView {
   private readonly inHandle: HTMLElement;
   private readonly outHandle: HTMLElement;
   private readonly timeLabel: HTMLElement;
+  private readonly convertBtn: HTMLButtonElement;
   private readonly playBtn: HTMLButtonElement;
   private readonly muteBtn: HTMLButtonElement;
   private readonly volume: HTMLInputElement;
@@ -88,7 +90,13 @@ export class PlayerView {
     emptyArt.append(icon('playlist'));
     const addFirst = button(s('addClips'), 'fvs-btn is-primary', 'plus');
     addFirst.addEventListener('click', () => this.host.addClips());
-    this.empty.append(emptyArt, el('p', 'fvs-empty-title', s('playerEmpty')), el('p', 'fvs-empty-hint', s('playerEmptyHint')), addFirst);
+    this.convertBtn = button(s('convert'), 'fvs-btn is-primary', 'convert');
+    this.convertBtn.hidden = true;
+    this.convertBtn.addEventListener('click', () => {
+      const media = this.currentMedia();
+      if (media?.convertible) this.host.convert(media);
+    });
+    this.empty.append(emptyArt, el('p', 'fvs-empty-title', s('playerEmpty')), el('p', 'fvs-empty-hint', s('playerEmptyHint')), this.convertBtn, addFirst);
 
     // Controls (glass) over the bottom of the picture.
     const controls = el('div', 'fvs-player-controls');
@@ -247,6 +255,7 @@ export class PlayerView {
     const [title, hint] = [this.empty.querySelector('.fvs-empty-title'), this.empty.querySelector('.fvs-empty-hint')];
     if (title) title.textContent = media?.status === 'error' ? media.name : s('playerEmpty');
     if (hint) hint.textContent = media?.status === 'error' ? media.error : s('playerEmptyHint');
+    this.convertBtn.hidden = !(media?.status === 'error' && media.convertible);
     if (!media || media.status === 'error') {
       this.host.showProject(emptyProject('auto'));
       this.paintTime();

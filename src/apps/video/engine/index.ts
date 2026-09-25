@@ -18,3 +18,5 @@ export { LiveMixer, renderMixOffline, decodeBytes, decodeUrl, waveformOf, minMax
 export { layerPlan, textPlan, textFont, safeAreas, quantize, frameCount, viewFor, toCanvas } from './layout';
 export { TimelineRenderer } from './player';
 export { MediaPool, seekAccurate } from './media-pool';
+export { planMp4, hasWebCodecs, encodeProjectMp4 } from './mp4-export';
+export type { Mp4Plan } from './mp4-plan';

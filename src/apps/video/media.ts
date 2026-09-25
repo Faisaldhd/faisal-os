@@ -39,6 +39,8 @@ export interface MediaItem {
   peaks: Float32Array | null;
   /** The raw bytes, kept (when small enough) for the offline audio render. */
   bytes: Uint8Array | null;
+  /** The decoder refused the codec (HEVC, mp4v…): offer "Convert". */
+  convertible?: boolean;
 }
 
 const THUMB_COUNT = 12;
@@ -192,6 +194,7 @@ export class MediaLibrary {
     if (!existing) this.items.push(item);
     item.path = path;
     item.status = 'loading';
+    item.convertible = false;
     this.changed();
     try {
       const bytes = await this.vfs.readFile(path);
@@ -282,7 +285,8 @@ export class MediaLibrary {
     } catch (err) {
       const message = err instanceof Error ? err.message : '';
       // Error 3/4 is the decoder saying no: name the codec problem, not a vague failure.
-      this.fail(item, /media error [34]|error$/.test(message)
+      item.convertible = /media error [34]|error$/.test(message);
+      this.fail(item, item.convertible
         ? this.describe.codec(extensionOf(item.name).toLowerCase() || '?', item.size)
         : this.describe.unreadable(message));
       return;

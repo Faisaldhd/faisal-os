@@ -21,6 +21,8 @@ import { OFFICE_EXTENSIONS, VERIFIED_FORMATS } from './model';
 import { serializeModel } from './file';
 import { contentTypes } from './ooxml';
 import { readRawZip, utf8, writeZip } from './zip';
+import { newDeckPptx } from './pptx';
+import { deckTexts, readDeck } from './impress/deck';
 import './strings';
 
 const HOME_FILE = '/home/user/test.csv';
@@ -637,6 +639,33 @@ describe('the office surgical save', () => {
     expect(xml).toContain('<a:rPr lang="en-US" i="1"/>');
     expect(xml).toContain('First ');
     expect(xml).not.toContain('Second');
+  });
+
+  it('draws a complete presentation at its real layout and saves a duplicated slide surgically', async () => {
+    const fixture = newDeckPptx('Opening', 'Subtitle');
+    const store = memVfs({ '/home/user/show.pptx': fixture });
+    const { content, launch } = harness(store.vfs);
+    launch('/home/user/show.pptx');
+    await settle();
+
+    expect(content.querySelector('.fo-impress.is-rich')).not.toBeNull();
+    const stage = content.querySelector('.fo-slidestage .fo-canvas');
+    expect(stage?.querySelectorAll('.fo-sh').length).toBe(2);
+    expect(stage?.textContent).toContain('Opening');
+    expect(content.querySelectorAll('.fo-rail-list .fo-thumb').length).toBe(1);
+
+    button(content, t('office.impDuplicate'))?.click();
+    await settle();
+    expect(content.querySelectorAll('.fo-rail-list .fo-thumb').length).toBe(2);
+    vi.mocked(shellConfirm).mockClear();
+    button(content, t('office.save'))?.click();
+    await until(() => meta(content).includes(t('office.clean')) && store.files.has('/home/user/show.pptx.bak'));
+    // A surgical save: no rebuild warning, and the theme kept its bytes.
+    expect(vi.mocked(shellConfirm).mock.calls.some(([o]) => o.title === t('office.rebuildTitle'))).toBe(false);
+    const saved = store.files.get('/home/user/show.pptx') ?? new Uint8Array();
+    expect(identicalBytes(recordsOf(fixture).get('ppt/theme/theme1.xml'), recordsOf(saved).get('ppt/theme/theme1.xml'))).toBe(true);
+    const deck = await readDeck(saved);
+    expect(deckTexts(deck)).toEqual([['Opening', 'Subtitle'], ['Opening', 'Subtitle']]);
   });
 
   it('warns before a structural edit rebuilds the file, and keeps the original in the .bak', async () => {

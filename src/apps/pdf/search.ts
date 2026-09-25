@@ -128,3 +128,65 @@ export function firstHitFrom(hits: readonly Hit[], page: number): number {
   const at = hits.findIndex((hit) => hit.page >= page);
   return at < 0 ? 0 : at;
 }
+
+/* ───────── positions: search-to-redact and the redaction check ───────── */
+
+/** A pdf.js text item with its position (PDF user space, the unrotated page). */
+export interface PositionedItem extends TextItemLike { transform: number[]; width: number; height: number; dir?: string }
+
+export interface UserBox { x: number; y: number; width: number; height: number }
+
+/**
+ * The box (PDF user space) of characters `start..end` of one item. Characters are assumed to
+ * share the item's width evenly — close enough to mark them, and the marks are shown before
+ * anything is removed. RTL items are measured from the right. `pad` grows the box a little.
+ */
+export function spanBox(item: PositionedItem, start: number, end: number, pad = 0): UserBox | null {
+  const len = item.str.length;
+  const [a, b, c, d, e, f] = item.transform;
+  const run = Math.hypot(a, b);
+  const rise = Math.hypot(c, d);
+  if (!len || !run || !rise || !(item.width > 0)) return null;
+  const h = item.height > 0 ? item.height : rise;
+  const rtl = item.dir === 'rtl';
+  const s0 = (rtl ? 1 - end / len : start / len) * item.width;
+  const s1 = (rtl ? 1 - start / len : end / len) * item.width;
+  const ux = a / run; const uy = b / run; // along the baseline
+  const vx = c / rise; const vy = d / rise; // up
+  const xs: number[] = []; const ys: number[] = [];
+  for (const s of [s0 - pad, s1 + pad]) {
+    for (const t of [-0.25 * h - pad, 0.9 * h + pad]) { xs.push(e + ux * s + vx * t); ys.push(f + uy * s + vy * t); }
+  }
+  const x = Math.min(...xs); const y = Math.min(...ys);
+  return { x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y };
+}
+
+/** Every hit of `query` on one page as boxes to redact (one box per item piece). */
+export function hitBoxes(items: readonly PositionedItem[], query: string, pad = 1): UserBox[] {
+  const page = buildPageText(items);
+  const lengths = items.map((i) => i.str.length);
+  const out: UserBox[] = [];
+  for (const [s, e] of findAll(page.text, query)) {
+    for (const span of hitSpans(page, lengths, s, e)) {
+      const box = spanBox(items[span.item], span.start, span.end, pad);
+      if (box) out.push(box);
+    }
+  }
+  return out;
+}
+
+/** How many visible characters of the items still sit (by their centre) inside the boxes. */
+export function charsInBoxes(items: readonly PositionedItem[], boxes: readonly UserBox[]): number {
+  let n = 0;
+  for (const item of items) {
+    for (let k = 0; k < item.str.length; k++) {
+      if (!item.str[k].trim()) continue;
+      const box = spanBox(item, k, k + 1);
+      if (!box) continue;
+      const cx = box.x + box.width / 2;
+      const cy = box.y + box.height / 2;
+      if (boxes.some((r) => cx >= r.x && cx <= r.x + r.width && cy >= r.y && cy <= r.y + r.height)) n++;
+    }
+  }
+  return n;
+}

@@ -65,15 +65,18 @@ export function nextFrame(video: HTMLVideoElement, ms = 150): Promise<void> {
  * Moves an element to `time` and resolves when that frame can be drawn (bounded).
  * When another seek on the same element is still running, it keeps waiting
  * until the element settles (or the time budget runs out).
+ * `waitFrame: false` skips waiting for the frame to be *presented* (an
+ * off-screen element may never present one); after `seeked` the decoded frame
+ * is already drawable, which is all the frame-by-frame export needs.
  */
-export async function seekAccurate(el: HTMLMediaElement, time: number, ms = 2000): Promise<void> {
+export async function seekAccurate(el: HTMLMediaElement, time: number, ms = 2000, waitFrame = true): Promise<void> {
   const deadline = Date.now() + ms;
   const left = () => Math.max(10, deadline - Date.now());
   if (el.readyState === 0) await waitFor(el, 'loadedmetadata', ms);
   const target = Math.max(0, Math.min(time, Number.isFinite(el.duration) && el.duration > 0 ? el.duration - 1e-3 : time));
   if (Math.abs(el.currentTime - target) < 1e-3 && el.readyState >= 2 && !el.seeking) return;
   const isVideo = typeof HTMLVideoElement !== 'undefined' && el instanceof HTMLVideoElement;
-  const frame = isVideo ? nextFrame(el as HTMLVideoElement, ms) : Promise.resolve();
+  const frame = isVideo && waitFrame ? nextFrame(el as HTMLVideoElement, ms) : Promise.resolve();
   const seeked = waitFor(el, 'seeked', ms);
   try {
     el.currentTime = target;
@@ -83,7 +86,7 @@ export async function seekAccurate(el: HTMLMediaElement, time: number, ms = 2000
   await seeked;
   for (let guard = 0; guard < 4 && el.seeking && Date.now() < deadline; guard++) await waitFor(el, 'seeked', left());
   if (el.readyState < 2) await waitFor(el, 'loadeddata', Math.min(500, left()));
-  await Promise.race([frame, new Promise((r) => setTimeout(r, Math.min(200, left())))]);
+  if (waitFrame) await Promise.race([frame, new Promise((r) => setTimeout(r, Math.min(200, left())))]);
 }
 
 interface Entry {

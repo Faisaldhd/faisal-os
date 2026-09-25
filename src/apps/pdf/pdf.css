@@ -1442,3 +1442,16 @@
     transition-duration: 1ms !important;
   }
 }
+
+/* ── redaction marks (true removal; drawn in the page overlay, never block the pointer) ── */
+.faisal-pdf-redactmark {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--app-danger);
+  border-radius: 6px;
+  background: repeating-linear-gradient(135deg, rgba(229, 72, 77, .28) 0 4px, rgba(229, 72, 77, .08) 4px 8px);
+  pointer-events: none;
+}
+.faisal-pdf-redactlist { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; max-height: 240px; overflow-y: auto; }
+.faisal-pdf-redactrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.faisal-pdf-redactrow .faisal-pdf-chip { flex: 1; min-width: 0; justify-content: flex-start; }
