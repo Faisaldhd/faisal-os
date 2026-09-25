@@ -20,6 +20,7 @@ const RUNTIME_ONLY = [
   /^assets\/NotoNaskhArabic-/,      // the Arabic face embedded into PDFs
   /^assets\/LiberationSans-/,       // the four Liberation faces embedded into PDFs
   /^assets\/Foxit.*\.pfb$/,         // pdf.js standard fonts (Symbol/Serif/Fixed/Dingbats)
+  /^assets\/heic[.-]/,              // the HEIC decoder (worker + loader), used only for iPhone photos
 ];
 
 function walk(dir: string): string[] {
