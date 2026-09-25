@@ -18,6 +18,7 @@ import { emptyModel, planFor, SHEET_ROWS, type FormatPlan, type Grid, type Offic
 import { writeDocx, writeXlsx } from './ooxml';
 import { writePptx } from './pptx';
 import { readDocxFormats } from './patch';
+import { readOdt } from './writer/odtread';
 import { utf8 } from './zip';
 
 export type LoadRefusal = 'legacy' | 'unknown' | 'binary' | 'damaged';
@@ -40,6 +41,21 @@ export async function loadOfficeFile(path: string, bytes: Uint8Array): Promise<L
   try {
     switch (plan.kind) {
       case 'docx': {
+        // An OpenDocument text file is read by the Writer's own ODF reader, into the same model a
+        // Word file produces — so everything the editor can do works on it unchanged.
+        if (plan.odf) {
+          const read = await readOdt(bytes);
+          if (!read.ok) return { ok: false, plan, refusal: 'damaged' };
+          return {
+            ok: true, plan, empty: false,
+            model: {
+              kind: 'docx',
+              paragraphs: read.document.paragraphs,
+              blocks: read.document.blocks,
+              ...(Object.keys(read.document.formats).length ? { formats: read.document.formats } : {}),
+            },
+          };
+        }
         const paragraphs = await readDocx(bytes);
         // What the file already says about bold/italic/size/alignment, so the
         // toolbar shows the truth and an untouched property is never rewritten.

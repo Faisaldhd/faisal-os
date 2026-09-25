@@ -35,16 +35,6 @@ const INFO: Record<SaveFormatId, { ext: string; mime: string; labelKey: string }
 const choice = (id: SaveFormatId): SaveFormatChoice => ({ value: id, ...INFO[id] });
 
 /**
- * A format this app can WRITE but not read back yet. Saving a document as one of these is an
- * export: the bytes are written (and the shell's own one-`.bak` rule applies if the file is
- * replaced), and the open document keeps its own file, because re-opening an `.odt` would fail —
- * the reader has no OpenDocument support yet (import is a later slice, said plainly in the UI).
- */
-export function isExportOnlyFormat(format: SaveFormatId): boolean {
-  return format === 'odt';
-}
-
-/**
  * The formats this model can be written as, with the one matching the file it came from FIRST
  * (so "Save as" on a `.md` keeps `.md` unless the owner picks otherwise).
  */
@@ -59,11 +49,6 @@ export function saveFormatChoices(model: OfficeModel, currentExt = ''): SaveForm
     case 'pptx': return [choice('pptx')];
     default: return order([choice('txt'), choice('md')]);
   }
-}
-
-/** The label key of one format, for a status line that names what was written. */
-export function saveFormatLabelKey(format: SaveFormatId): string {
-  return INFO[format].labelKey;
 }
 
 /** The format the dialog opens on: the first choice, which is the file's own kind. */

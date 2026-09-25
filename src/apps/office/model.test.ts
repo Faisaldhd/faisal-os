@@ -74,7 +74,7 @@ describe('planFor', () => {
     }
     // The extensions the manifest offers are exactly the ones that are not refused.
     expect(VERIFIED_FORMATS.filter((f) => f.level !== 'unsupported').map((f) => f.ext).sort())
-      .toEqual(['.csv', '.docx', '.md', '.pptx', '.tsv', '.txt', '.xlsm', '.xlsx'].sort());
+      .toEqual(['.csv', '.docx', '.md', '.odt', '.pptx', '.tsv', '.txt', '.xlsm', '.xlsx'].sort());
   });
 });
 
