@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>خارطة Fai$al OS — ما تمّ وما تبقّى</title>
+<style>
+  :root{
+    --bg:#0b1020; --bg2:#131a30; --card:rgba(255,255,255,.055); --line:rgba(255,255,255,.12);
+    --ink:#eef2ff; --dim:#a8b3d4; --ok:#43d19e; --warn:#ffc857; --bad:#ff6b81; --accent:#5b8def; --accent2:#9b7bff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:
+      radial-gradient(1100px 600px at 85% -10%, rgba(91,141,239,.28), transparent 60%),
+      radial-gradient(900px 600px at 10% 110%, rgba(155,123,255,.20), transparent 60%),
+      var(--bg);
+    color:var(--ink); font-family:"Segoe UI","Noto Naskh Arabic",system-ui,sans-serif; line-height:1.75; padding:32px 22px 60px}
+  .wrap{max-width:1120px;margin:0 auto}
+  header{display:flex;flex-wrap:wrap;gap:18px;align-items:flex-end;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:26px}
+  h1{margin:0;font-size:30px;letter-spacing:.2px}
+  h1 span{background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .meta{color:var(--dim);font-size:13.5px;text-align:left;direction:ltr}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:14px;margin:0 0 30px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px;backdrop-filter:blur(6px)}
+  .kpi b{display:block;font-size:26px;line-height:1.2}
+  .kpi small{color:var(--dim);font-size:12.5px}
+  h2{font-size:20px;margin:34px 0 14px;display:flex;align-items:center;gap:10px}
+  h2::before{content:"";width:9px;height:9px;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px 18px}
+  .card h3{margin:0 0 10px;font-size:16px;color:#fff}
+  ul{margin:0;padding-inline-start:20px}
+  li{margin:5px 0;color:#dbe3ff;font-size:14.3px}
+  li b{color:#fff}
+  .done li::marker{color:var(--ok)}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:16px;overflow:hidden;font-size:14.2px}
+  th,td{padding:11px 13px;border-bottom:1px solid var(--line);text-align:start;vertical-align:top}
+  th{background:rgba(255,255,255,.05);color:#fff;font-weight:600}
+  tr:last-child td{border-bottom:0}
+  td.sz{white-space:nowrap;color:var(--warn)}
+  .bars{display:grid;gap:12px}
+  .bar{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px 16px}
+  .bar .t{display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px}
+  .track{height:10px;border-radius:99px;background:rgba(255,255,255,.09);overflow:hidden}
+  .fill{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--ok))}
+  .pill{display:inline-block;font-size:12px;padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--dim);margin-inline-start:6px}
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+  .proof{background:linear-gradient(180deg,rgba(67,209,158,.12),rgba(67,209,158,.03));border:1px solid rgba(67,209,158,.35);border-radius:16px;padding:16px 18px;margin-top:14px}
+  .proof h3{margin:0 0 8px;color:#d9fff0;font-size:16px}
+  .proof code{background:rgba(0,0,0,.35);padding:2px 6px;border-radius:6px;font-size:13px;direction:ltr;display:inline-block}
+  footer{margin-top:34px;border-top:1px solid var(--line);padding-top:14px;color:var(--dim);font-size:13px}
+  @media print{body{background:#fff;color:#111}.card,.kpi,table,.proof{background:#fff;border-color:#ccc}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>خارطة <span>Fai$al OS</span> — ما تمّ وما تبقّى</h1>
+      <div style="color:var(--dim);font-size:14px">تقرير حالة للإصدار 0.2 · سطح مكتب كامل في المتصفح + تطبيق Windows من نفس الكود</div>
+    </div>
+    <div class="meta">
+      ٢٥ سبتمبر ٢٠٢٦<br>
+      main @ <b>4c67285</b>
+    </div>
+  </header>
+
+  <div class="kpis">
+    <div class="kpi"><b>٣١</b><small>PR دخلت main في هذه الحملة (#86 → #116)</small></div>
+    <div class="kpi"><b>٢٥٦٩</b><small>اختبارًا ناجحًا · 157 ملفًا · <span class="ok">0 فشل</span></small></div>
+    <div class="kpi"><b>٢٠</b><small>تطبيقًا داخل النظام</small></div>
+    <div class="kpi"><b>١٢٦٬٩٣٩</b><small>سطرًا في <code>src/</code></small></div>
+    <div class="kpi"><b class="ok">٠</b><small>أخطاء Console في كل إثبات</small></div>
+    <div class="kpi"><b class="ok">٠</b><small>عمل مكرر دخل main</small></div>
+  </div>
+
+  <h2>تمّ ✅</h2>
+  <div class="grid">
+    <div class="card done">
+      <h3>المكتب — Calc</h3>
+      <ul>
+        <li><b>شبكة افتراضية إلى ١٠ آلاف صف</b> (كانت 300)</li>
+        <li>فرز · تصفية · تنسيق شرطي · مخططات · تنسيق أرقام</li>
+        <li><b>مقبض تعبئة وسلاسل</b> بتعديل واحد قابل للتراجع</li>
+        <li>عرض أعمدة وملاءمة · شريط تنسيق · تحقق مدخلات</li>
+        <li>إدراج/حذف صفوف وأعمدة <b>مع إزاحة المراجع</b> · تحذير المراجع الدائرية</li>
+      </ul>
+    </div>
+    <div class="card done">
+      <h3>المكتب — Writer</h3>
+      <ul>
+        <li><b>حفظ تلقائي لا يلمس المستند</b> + استرجاع بسؤال</li>
+        <li><b>تتبّع التعديلات</b>: علامات شكل لا لون · قبول/رفض · قرار = تعديل حقيقي</li>
+        <li><b>تصدير <code>.odt</code></b> بحاوية OpenDocument سليمة</li>
+        <li>أعمدة · جداول · تعليقات</li>
+      </ul>
+    </div>
+    <div class="card done">
+      <h3>PDF</h3>
+      <ul>
+        <li><b>تشفير AES‑128</b> بكلمة مرور وصلاحيات (نسخ/طباعة/تعديل)</li>
+        <li><b>«الله»</b> بربط صحيح · bidi يوافق المتصفح</li>
+        <li><b>صفحتان + وضع عرض ملء الشاشة</b></li>
+        <li>حجب · توقيع · أختام · نماذج</li>
+      </ul>
+    </div>
+    <div class="card done">
+      <h3>الصور</h3>
+      <ul>
+        <li>طبقات · أقنعة طبقات · مشروع <code>.fphoto</code></li>
+        <li><b>HEIC/HEIF</b> بحمل كسول ومستثنى من التخزين المسبق</li>
+        <li>تحويل حر بمقابض · مصغّرات فلاتر من الصورة</li>
+        <li><b>مساطر</b> بعلامات مطابقة للهندسة (فرق ≤1px)</li>
+      </ul>
+    </div>
+    <div class="card done">
+      <h3>الفيديو</h3>
+      <ul>
+        <li>تصدير <b>MP4 حقيقي</b> · تحويل <b>HEVC</b></li>
+        <li>مسطرة زمنية · إنشاء وترتيب الشرائح</li>
+        <li>زر التحويل في مكان رسالة الكودك</li>
+        <li>حارس «التعليق الصامت» مع مهلة صريحة</li>
+      </ul>
+    </div>
+    <div class="card done">
+      <h3>الصدفة والنظام والجودة</h3>
+      <ul>
+        <li>نموذج عمليات (<code>ps</code>/<code>kill</code> بسلوك حقيقي)</li>
+        <li>إصلاحات جوال · قائمة سياق · <b>«حفظ باسم» موحّد</b></li>
+        <li><b>التطبيقات الأربعة مثبّتة افتراضيًا</b> · خزنة مشفّرة · قفل مستخدم</li>
+        <li><b>تخزين مسبق −67%</b> · رسائل خطأ صادقة · حصص مُتحقَّقة حيًّا</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="proof">
+    <h3>🟢 حاجز الإصدار: مُثبت مُغلق — بالدليل</h3>
+    <div style="font-size:14.2px;color:#dff7ee">
+      كان تشغيل إصدار Windows يسقط مرتين عند <code>npm test</code> فيُخطّى المثبّت ونشرا الويب («آلة بطيئة قُرئت كمنتج معطوب»).
+      أُصلحت الميزانيات الزمنية ومهل الاختبارات، والتحقق النهائي على تشغيل الدمج <code>4c67285</code>:
+      <div style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px">
+        <div class="card" style="padding:9px 12px"><span class="ok">✅</span> build (windows-latest)</div>
+        <div class="card" style="padding:9px 12px"><span class="ok">✅</span> build (macos · ubuntu)</div>
+        <div class="card" style="padding:9px 12px"><span class="ok">✅</span> release — نُشر لا تُخطّى</div>
+        <div class="card" style="padding:9px 12px"><span class="ok">✅</span> web-cloudflare + github-pages</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>المتبقّي ⏳</h2>
+  <table>
+    <thead><tr><th>#</th><th>البند</th><th>الحجم</th><th>الأثر</th></tr></thead>
+    <tbody>
+      <tr><td>١</td><td><b>استيراد <code>.odt</code></b> (فتح ملفات OpenDocument)</td><td class="sz">متوسط</td><td>توافق مباشر مع LibreOffice/Word</td></tr>
+      <tr><td>٢</td><td><b>كتابة تتبّع التعديلات في الملف</b> (<code>w:ins</code>/<code>w:del</code>)</td><td class="sz">متوسط</td><td>العلامات تُحفظ للمستلم لا للجلسة</td></tr>
+      <tr><td>٣</td><td><b>Writer: حواشٍ · إحالات · دمج مراسلات · قوالب</b></td><td class="sz">كبير</td><td>معالج نصوص كامل</td></tr>
+      <tr><td>٤</td><td><b>Calc: كتابة التصفية/التنسيق الشرطي/المخططات في الملف</b></td><td class="sz">متوسط</td><td>حاليًا <b>عرض فقط ومعلن</b> داخل اللوحات</td></tr>
+      <tr><td>٥</td><td><b>Calc: جداول محورية · دوال أكثر</b></td><td class="sz">كبير</td><td>تحليل بيانات</td></tr>
+      <tr><td>٦</td><td><b>الفيديو: حفظ النبرة عند تغيير السرعة · تصدير أسرع من الوقت الحقيقي</b></td><td class="sz">متوسط</td><td>جودة التحرير</td></tr>
+      <tr><td>٧</td><td><b>Impress: الشريحة الرئيسية · SmartArt/خطوط ربط</b></td><td class="sz">متوسط</td><td>احترافية العروض</td></tr>
+      <tr><td>٨</td><td><b>الصور: قوائم فلاتر مخصّصة · توثيق أداء 12MP</b></td><td class="sz">صغير</td><td>صقل</td></tr>
+      <tr><td>٩</td><td><b>CI: بوابات E2E وأداء</b></td><td class="sz">صغير‑متوسط</td><td>منع الانحدار مبكرًا</td></tr>
+      <tr><td>١٠</td><td><b>تحقق فعلي على تطبيق Windows المثبّت</b> (تثبيت + تحديث تلقائي)</td><td class="sz">صغير</td><td>يحتاج جهازك</td></tr>
+    </tbody>
+  </table>
+
+  <h2>النِسَب</h2>
+  <div class="bars">
+    <div class="bar"><div class="t"><span>«المهام الصفراء» — آخر تكليف صريح</span><b class="ok">١٠٠٪</b></div><div class="track"><div class="fill" style="width:100%"></div></div></div>
+    <div class="bar"><div class="t"><span>التدقيق (حجم · تخزين · تشغيل · جوال)</span><b class="ok">١٠٠٪</b></div><div class="track"><div class="fill" style="width:100%"></div></div></div>
+    <div class="bar"><div class="t"><span>حزمة التطبيقات الأربعة (المرحلة ٢)</span><b class="ok">≈ ٩٨٪</b></div><div class="track"><div class="fill" style="width:98%"></div></div></div>
+    <div class="bar"><div class="t"><span>خط الإصدار والنشر الآلي</span><b class="ok">≈ ٩٠٪</b></div><div class="track"><div class="fill" style="width:90%"></div></div></div>
+    <div class="bar"><div class="t"><span>خارطة owner-spec الكاملة (مستوى LibreOffice)</span><b class="warn">≈ ٧٦٪</b></div><div class="track"><div class="fill" style="width:76%"></div></div></div>
+  </div>
+
+  <h2>الانضباط — أرقام لا تُرى في الكود</h2>
+  <div class="grid">
+    <div class="card"><h3>٦ <span class="pill">عيوب حقيقية</span></h3>
+      <ul>
+        <li>مستند Writer لا يقبل الكتابة بعد الحفظ</li>
+        <li>شريط الحالة لا يتحدّث بعد الاسترجاع</li>
+        <li>قياس صف: CSS يقول 24px والمتصفح يرسم 23px</li>
+        <li>علامة تتبّع تُرسم بصمت بعد إزاحة نصّها</li>
+        <li><b>تنسيق يبقى على الصف الذي تركته البيانات</b></li>
+        <li>وسم XML يُفسد تحليل <code>content.xml</code></li>
+      </ul>
+    </div>
+    <div class="card"><h3>٧ <span class="pill">شغل مكرر أُوقف</span></h3>
+      <ul>
+        <li>أُوقف <b>قبل كتابة الكود</b> بمقارنة الخطة بالمدموج</li>
+        <li>حُذفت مهمتان ومهندسان أُوقفا لحظة اكتشاف التغطية</li>
+        <li><b>صفر عمل مكرر دخل main</b></li>
+      </ul>
+    </div>
+    <div class="card"><h3>٤ <span class="pill">اعتذارات مسؤولة</span></h3>
+      <ul>
+        <li>مهندسون رفضوا تسليمًا بجودة ناقصة عند نفاد رصيدهم</li>
+        <li>كل واحد ترك <b>خطة أو ملاحظات نقلها المهندس التالي</b></li>
+        <li>نتيجة: لا رقعة نصف موصولة دخلت main</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>مخاطر وشروط صريحة</h2>
+  <div class="card">
+    <ul>
+      <li><b><code>.odt</code> لم يُفتح في LibreOffice/Word</b> — غير مثبّتين على الجهاز؛ التحقق: البنية والأجزاء وتحليل XML داخل المتصفح، ومسار العربية مُثبت في الاختبار النقي <span class="pill">معلن</span></li>
+      <li><b>لا <code>retry</code> في الاختبارات</b> (لا تعمية للتذبذب)، ورفع المهلة <b>هامش أمان صُرّح به</b> لا «إصلاح مُثبت» <span class="pill">شفافية</span></li>
+      <li><b>اللمس الحقيقي على جهاز</b> غير مُختبَر؛ الجوال مقيس على 390 و320 في متصفح سطح المكتب</li>
+      <li><b>صور <code>.docx</code> الأصلية لا تُصدَّر إلى <code>.odt</code></b> (النموذج لا يحمل بايتاتها) — معلن في اللوحة نفسها</li>
+      <li><b>الميزات المعلنة «عرض فقط»</b> في Calc (تصفية · تنسيق شرطي · أرقام · مخططات) مكتوب ذلك داخل كل لوحة، ولا ادّعاء حفظ</li>
+    </ul>
+  </div>
+
+  <footer>
+    المصادر: سجلات GitHub Actions (رصد مباشر لتشغيل <code>4c67285</code>) · جولة كاملة على آخر <code>main</code> (157 ملفًا · 2569 اختبارًا · 0 فشل) · لوحة المهام ولوحة القرارات في مجلد التصميم · تقارير المهندسين بالأدوار الأربعة.
+  </footer>
+</div>
+</body>
+</html>
