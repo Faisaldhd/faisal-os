@@ -41,6 +41,7 @@ export const ICONS = {
   text: svg('<path d="M5 6V4h14v2M12 4v16M9 20h6"/>'),
   stamp: svg('<path d="M9 13V9a3 3 0 1 1 6 0v4"/><path d="M4 16a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v1H4zM6 20h12"/>'),
   signature: svg('<path d="M3 17c2-5 4-9 6-9 2.5 0-1.5 9 1 9 1.8 0 2.4-4 4-4 1.2 0 .8 3 2.5 3 1 0 1.9-1 2.5-2"/><path d="M3 21h18"/>'),
+  redact: svg('<rect x="3" y="9" width="18" height="6" rx="1" fill="currentColor"/><path d="M5 5h9M5 19h6M17 19h2"/>'),
   cover: svg('<rect x="4" y="7" width="16" height="10" rx="1.5"/><path d="M4 12h16" stroke-dasharray="2 2.5"/>'),
   watermark: svg('<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/><path d="M9.5 15a2.5 2.5 0 0 0 2.5 2.5"/>'),
   info: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5M12 8v.01"/>'),

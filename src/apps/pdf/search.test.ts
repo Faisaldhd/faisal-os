@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildPageText, findAll, firstHitFrom, foldForSearch, hitSpans, snippet, stepHit } from './search';
+import { buildPageText, charsInBoxes, findAll, firstHitFrom, foldForSearch, hitBoxes, hitSpans, snippet, spanBox, stepHit } from './search';
 
 describe('pdf search', () => {
   it('joins items and remembers where each starts', () => {
@@ -46,5 +46,26 @@ describe('pdf search', () => {
     expect(stepHit(3, -1, -1)).toBe(2);
     expect(firstHitFrom([{ page: 0, start: 0, end: 1 }, { page: 4, start: 0, end: 1 }], 2)).toBe(1);
     expect(firstHitFrom([{ page: 0, start: 0, end: 1 }], 9)).toBe(0);
+  });
+});
+
+describe('search-to-redact positions', () => {
+  const item = { str: 'ab SECRET cd', transform: [12, 0, 0, 12, 100, 500], width: 120, height: 12, hasEOL: false };
+  it('boxes a hit inside an item, in PDF user space', () => {
+    const boxes = hitBoxes([item], 'secret', 0);
+    expect(boxes).toHaveLength(1);
+    expect(boxes[0].x).toBeCloseTo(130);
+    expect(boxes[0].width).toBeCloseTo(60);
+    expect(boxes[0].y).toBeCloseTo(497);
+  });
+  it('measures RTL items from the right', () => {
+    const b = spanBox({ ...item, dir: 'rtl' }, 0, 2)!;
+    expect(b.x).toBeCloseTo(200);
+    expect(b.width).toBeCloseTo(20);
+  });
+  it('counts the characters left inside boxes', () => {
+    const boxes = hitBoxes([item], 'secret', 0);
+    expect(charsInBoxes([item], boxes)).toBe(6);
+    expect(charsInBoxes([{ ...item, str: 'ab          cd' }], boxes)).toBe(0);
   });
 });

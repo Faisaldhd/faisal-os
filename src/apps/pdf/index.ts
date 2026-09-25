@@ -50,12 +50,14 @@ import { ByteHistory } from './history';
 import {
   addRecent, freePdfPath, loadRecent, removeRecent, setThumb, storeRecent, type RecentEntry,
 } from './recent';
-import { buildPageText, findAll, firstHitFrom, snippet, stepHit, type Hit } from './search';
+import {
+  buildPageText, charsInBoxes, findAll, firstHitFrom, hitBoxes, snippet, stepHit, type Hit, type PositionedItem,
+} from './search';
 import { commandFor, shortcutSheet, type CommandId } from './shortcuts';
 import { icon, type IconName } from './icons';
 import { closePopover, dialogButton, el, iconButton, openModal, openPopoverAt } from './ui';
 import {
-  boxToPdf, clampBox, CSS_UNITS, nextZoom, parseZoomInput, quadsFromBoxes, strokesBounds, toPdf,
+  boxToPdf, boxToView, clampBox, CSS_UNITS, nextZoom, parseZoomInput, quadsFromBoxes, strokesBounds, toPdf,
   ZOOM_MAX, ZOOM_MIN, type Box, type Point, type ZoomMode,
 } from './viewport';
 import { KIND_KEYS, TOOL_KEYS } from './labels';
@@ -77,10 +79,10 @@ const NARROW = 700;
 
 type ToolId =
   | 'select' | 'hand' | 'highlight' | 'underline' | 'strikeout' | 'pen' | 'rect' | 'ellipse' | 'line' | 'arrow'
-  | 'note' | 'textbox' | 'stamp' | 'text' | 'cover' | 'image' | 'signature';
+  | 'note' | 'textbox' | 'stamp' | 'text' | 'cover' | 'image' | 'signature' | 'redact';
 
 const MARKUP_TOOLS: ReadonlySet<ToolId> = new Set(['highlight', 'underline', 'strikeout']);
-const DRAW_TOOLS: ReadonlySet<ToolId> = new Set(['pen', 'rect', 'ellipse', 'line', 'arrow', 'note', 'textbox', 'stamp', 'text', 'cover', 'image', 'signature']);
+const DRAW_TOOLS: ReadonlySet<ToolId> = new Set(['pen', 'rect', 'ellipse', 'line', 'arrow', 'note', 'textbox', 'stamp', 'text', 'cover', 'image', 'signature', 'redact']);
 
 interface ToolStyle { color: string; opacity: number; width: number; size: number }
 
@@ -327,6 +329,7 @@ function launch(ctx: AppContext): void {
     stamp: { color: '#E5484D', opacity: 1, width: 2, size: 18 },
     text: { color: '#1A1D26', opacity: 1, width: 1, size: 14 },
     cover: { color: '#FFFFFF', opacity: 1, width: 1, size: 12 },
+    redact: { color: '#000000', opacity: 1, width: 1, size: 12 },
     signature: { color: '#12294F', opacity: 1, width: 2.5, size: 12 },
   };
   const history = new ByteHistory();
@@ -1067,6 +1070,172 @@ function launch(ctx: AppContext): void {
     void applyOp(() => coverRegion(state.bytes, input), t('pdf.coverDone', { n: page + 1 }));
   });
 
+  /* redact — TRUE removal from the file (the cover above only paints over) */
+  const redactCard = card('pdf.redactTitle', 'pdf.redactDesc');
+  const redactNote = el('p', 'faisal-pdf-p is-honest', t('pdf.redactNote'));
+  const redactMarkBtn = button(t('pdf.redactMarkBtn'), 'faisal-pdf-btn is-primary');
+  redactMarkBtn.addEventListener('click', () => setTool('redact'));
+  const redactQuery = el('input', 'faisal-pdf-input');
+  redactQuery.id = 'faisal-pdf-redact-query';
+  redactQuery.type = 'search';
+  redactQuery.dir = 'auto';
+  const redactFind = button(t('pdf.redactSearchBtn'));
+  const redactCount = el('div', 'faisal-pdf-label');
+  const redactList = el('ul', 'faisal-pdf-redactlist');
+  const redactClear = button(t('pdf.redactClear'));
+  const redactApply = button(t('pdf.redactApply'), 'faisal-pdf-btn is-danger');
+  redactCard.body.append(
+    redactNote,
+    actionRow(redactMarkBtn),
+    field('faisal-pdf-redact-query', 'pdf.redactSearchLabel', redactQuery),
+    actionRow(redactFind),
+    redactCount, redactList,
+    actionRow(redactApply, redactClear),
+  );
+  let redactMarks: writer.RedactionArea[] = [];
+  /** The search terms that produced marks: after applying, pdf.js must not find them there. */
+  const redactTerms = new Set<string>();
+
+  function addRedactMarks(marks: writer.RedactionArea[]): void {
+    redactMarks = [...redactMarks, ...marks];
+    refreshRedactMarks();
+  }
+
+  function refreshRedactMarks(): void {
+    redactCount.textContent = redactMarks.length ? t('pdf.redactCount', { n: redactMarks.length }) : t('pdf.redactNone');
+    redactList.textContent = '';
+    redactMarks.forEach((mark, index) => {
+      const row = el('li', 'faisal-pdf-redactrow');
+      const go = button(t('pdf.redactMarkItem', { page: mark.page + 1, n: index + 1 }), 'faisal-pdf-chip');
+      go.addEventListener('click', () => viewer.goToPage(mark.page));
+      const remove = iconButton('close', t('pdf.redactRemoveMark'));
+      remove.addEventListener('click', () => {
+        redactMarks = redactMarks.filter((_, k) => k !== index);
+        refreshRedactMarks();
+      });
+      row.append(go, remove);
+      redactList.append(row);
+    });
+    redactApply.disabled = !redactMarks.length;
+    redactClear.disabled = !redactMarks.length;
+    paintRedactMarks();
+  }
+
+  /** Shows every mark as a red, hatched box on its page (repainted after zoom and redraws). */
+  function paintRedactMarks(): void {
+    for (let page = 0; page < viewer.pageCount; page++) {
+      const overlay = viewer.overlay(page);
+      if (!overlay) continue;
+      for (const old of Array.from(overlay.querySelectorAll('.faisal-pdf-redactmark'))) old.remove();
+      const t6 = viewer.transform(page);
+      for (const mark of redactMarks) {
+        if (mark.page !== page) continue;
+        const b = boxToView(t6, mark);
+        const box = el('div', 'faisal-pdf-redactmark');
+        box.style.left = `${b.x}px`;
+        box.style.top = `${b.y}px`;
+        box.style.width = `${b.width}px`;
+        box.style.height = `${b.height}px`;
+        overlay.append(box);
+      }
+    }
+  }
+
+  redactFind.addEventListener('click', () => { void markSearch(); });
+  redactQuery.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); void markSearch(); } });
+  async function markSearch(): Promise<void> {
+    const query = redactQuery.value.trim();
+    if (!query || !viewer.pageCount) return;
+    const found: writer.RedactionArea[] = [];
+    for (let page = 0; page < viewer.pageCount; page++) {
+      const items = (await viewer.textItems(page).catch(() => [])) as unknown as PositionedItem[];
+      for (const box of hitBoxes(items, query)) found.push({ page, ...box });
+    }
+    if (!found.length) { setStatus(t('pdf.redactSearchNone'), true); return; }
+    redactTerms.add(query);
+    addRedactMarks(found);
+    setStatus(t('pdf.redactSearchAdded', { n: found.length }));
+  }
+
+  redactClear.addEventListener('click', () => { redactMarks = []; redactTerms.clear(); refreshRedactMarks(); });
+  redactApply.addEventListener('click', () => { void applyRedaction(); });
+
+  /** JPEG pixels for the engine (it cannot decode them itself), through the browser's decoder. */
+  async function decodeJpeg(bytes: Uint8Array, filter: string): Promise<writer.DecodedImage | null> {
+    if (filter !== 'DCTDecode' || typeof createImageBitmap !== 'function') return null;
+    const bitmap = await createImageBitmap(new Blob([bytes.slice()], { type: 'image/jpeg' }));
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const g = canvas.getContext('2d');
+    if (!g) return null;
+    g.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    return g.getImageData(0, 0, canvas.width, canvas.height);
+  }
+
+  /**
+   * Re-reads the redacted pages with pdf.js — the reader the owner sees — and checks that no
+   * character is left inside a mark and no marked search term is still found inside a mark.
+   * `null` when pdf.js is not available (the engine's own check still ran).
+   */
+  async function verifyRedaction(bytes: Uint8Array, marks: writer.RedactionArea[], terms: string[]): Promise<boolean | null> {
+    const engine = lib ?? await loadEngine();
+    if (!engine) return null;
+    const doc = await openForRender(engine, bytes);
+    try {
+      for (const page of new Set(marks.map((m) => m.page))) {
+        const content = await (await doc.getPage(page + 1)).getTextContent();
+        const items = (content.items as unknown[]).filter((i): i is PositionedItem => typeof (i as PositionedItem).str === 'string');
+        const onPage = marks.filter((m) => m.page === page);
+        if (charsInBoxes(items, onPage)) return false;
+        for (const term of terms) {
+          const left = hitBoxes(items, term, 0).filter((b) => onPage.some((m) => b.x < m.x + m.width && m.x < b.x + b.width && b.y < m.y + m.height && m.y < b.y + b.height));
+          if (left.length && findAll(buildPageText(items).text, term).length) return false;
+        }
+      }
+      return true;
+    } finally {
+      void doc.loadingTask.destroy();
+    }
+  }
+
+  async function applyRedaction(): Promise<void> {
+    if (!state.info || !redactMarks.length) return;
+    const marks = redactMarks.slice();
+    const yes = await shellConfirm({
+      title: t('pdf.redactConfirmTitle'),
+      message: t('pdf.redactConfirmMessage', { n: marks.length }),
+      okLabel: t('pdf.redactApply'),
+      cancelLabel: t('pdf.cancel'),
+      danger: true,
+    });
+    if (!yes) return;
+    let report: writer.RedactReport | null = null;
+    let verified: boolean | null = null;
+    const ok = await applyOp(async () => {
+      const r = await writer.applyRedactions(state.bytes, marks, { fill: '#000000', decodeImage: decodeJpeg });
+      if (!r.ok) return r;
+      verified = await verifyRedaction(r.bytes, marks, [...redactTerms]).catch(() => false);
+      if (verified === false) return { ok: false, code: 'unknown', detail: t('pdf.redactVerifyFailed') };
+      report = r.report;
+      return r;
+    }, t('pdf.redactTitle'));
+    const rep = report as writer.RedactReport | null;
+    if (!ok || !rep) return;
+    redactMarks = [];
+    redactTerms.clear();
+    refreshRedactMarks();
+    setStatus(`${t('pdf.redactDone', {
+      n: marks.length, glyphs: rep.glyphs, images: rep.images, paths: rep.paths + rep.pathsClipped, annots: rep.annotations,
+    })} ${verified ? t('pdf.redactVerified') : t('pdf.redactUnverified')}`);
+  }
+  // first state (the viewer does not exist yet, so nothing is painted here)
+  redactCount.textContent = t('pdf.redactNone');
+  redactApply.disabled = true;
+  redactClear.disabled = true;
+
+
   /* blank page + duplicate */
   const pageopsCard = card('pdf.pageopsTitle', 'pdf.pageopsDesc');
   const blankAt = numberInput('faisal-pdf-blank-at', 1, 1, 1);
@@ -1797,7 +1966,7 @@ function launch(ctx: AppContext): void {
       thumbs.setSelection(state.selection, page);
       thumbs.reveal(page);
     },
-    onZoomChange: () => refreshZoomBox(),
+    onZoomChange: () => { refreshZoomBox(); paintRedactMarks(); },
     onFirstPaint: (canvas) => rememberThumb(canvas),
     fieldValue: (fieldName, fallback) => state.pendingFields.get(fieldName)?.value ?? fallback,
     onFieldInput: (widget, value) => {
@@ -1863,6 +2032,7 @@ function launch(ctx: AppContext): void {
     void refreshPageLabels(doc);
     void refreshSecurity();
     if (searchInput.value.trim()) void runSearch(searchInput.value, true);
+    paintRedactMarks();
   }
 
   /* ───────────────────────────── sidebar ───────────────────────────── */
@@ -2188,7 +2358,7 @@ function launch(ctx: AppContext): void {
   const limitsBox = limitsCard();
   const allCards: HTMLElement[] = [
     infoCard.box, pagesCard.box,
-    textCard.box, signCard.box, coverCard.box, pageopsCard.box, formCard.box,
+    textCard.box, signCard.box, coverCard.box, redactCard.box, pageopsCard.box, formCard.box,
     deleteCard.box, rotateCard.box, cropCard.box, markCard.box, metaCard.box, splitCard.box,
     mergeCard.box, imageCard.box, saveCard.box, securityCard.box, limitsBox,
   ];
@@ -2202,6 +2372,7 @@ function launch(ctx: AppContext): void {
     text: { title: 'pdf.textTitle', cards: [textCard.box] },
     sign: { title: 'pdf.signTitle', cards: [signCard.box] },
     cover: { title: 'pdf.coverTitle', cards: [coverCard.box] },
+    redact: { title: 'pdf.redactTitle', cards: [redactCard.box] },
     form: { title: 'pdf.formTitle', cards: [formCard.box] },
     watermark: { title: 'pdf.watermarkTitle', cards: [markCard.box] },
     properties: { title: 'pdf.propertiesTitle', cards: [infoCard.box, metaCard.box] },
@@ -2348,7 +2519,7 @@ function launch(ctx: AppContext): void {
     {
       id: 'protect', label: t('pdf.tabProtect'), groups: [
         { label: t('pdf.groupSign'), cmds: [cmd('sign-draw2', 'signature', 'pdf.signDraw', () => { void startSignature(); }, { edits: true }), cmd('sign-card', 'text', 'pdf.signTyped', () => showTask('sign'), { edits: true })] },
-        { label: t('pdf.groupHide'), cmds: [toolCmd('cover', 'cover', 'pdf.toolCover')] },
+        { label: t('pdf.groupHide'), cmds: [cmd('redact', 'redact', 'pdf.toolRedact', () => { if (!state.narrow) setTool('redact'); showTask('redact'); }, { edits: true }), toolCmd('cover', 'cover', 'pdf.toolCover')] },
         { label: t('pdf.groupSecurity'), cmds: [cmd('security', 'lock', 'pdf.securityCmd', () => showTask('security'))] },
       ],
     },
@@ -2625,7 +2796,7 @@ function launch(ctx: AppContext): void {
     hand: 'pdf.hintHand', select: 'pdf.hintSelect', highlight: 'pdf.hintMarkup', underline: 'pdf.hintMarkup',
     strikeout: 'pdf.hintMarkup', pen: 'pdf.hintPen', rect: 'pdf.hintShape', ellipse: 'pdf.hintShape',
     line: 'pdf.hintShape', arrow: 'pdf.hintShape', note: 'pdf.hintNote', textbox: 'pdf.hintTextbox',
-    text: 'pdf.hintText', cover: 'pdf.hintCover', signature: 'pdf.hintPlace', image: 'pdf.hintPlace', stamp: 'pdf.hintPlace',
+    text: 'pdf.hintText', cover: 'pdf.hintCover', redact: 'pdf.hintRedact', signature: 'pdf.hintPlace', image: 'pdf.hintPlace', stamp: 'pdf.hintPlace',
   };
 
   /** A markup button: with text already selected it marks it at once; otherwise it arms the tool. */
@@ -2700,8 +2871,8 @@ function launch(ctx: AppContext): void {
     const s = style(state.tool);
     const tag = state.tool === 'ellipse' ? 'ellipse' : state.tool === 'pen' || state.tool === 'line' || state.tool === 'arrow' ? 'polyline' : 'rect';
     const shape = document.createElementNS(SVG_NS, tag);
-    shape.setAttribute('fill', state.tool === 'cover' ? s.color : 'none');
-    shape.setAttribute('stroke', state.tool === 'cover' ? 'var(--app-blue)' : s.color);
+    shape.setAttribute('fill', state.tool === 'cover' ? s.color : state.tool === 'redact' ? 'rgba(229, 72, 77, .18)' : 'none');
+    shape.setAttribute('stroke', state.tool === 'cover' ? 'var(--app-blue)' : state.tool === 'redact' ? 'var(--app-danger)' : s.color);
     shape.setAttribute('stroke-width', String(Math.max(1, s.width * viewer.zoom * CSS_UNITS)));
     shape.setAttribute('stroke-linecap', 'round');
     shape.setAttribute('stroke-linejoin', 'round');
@@ -2812,6 +2983,13 @@ function launch(ctx: AppContext): void {
       return;
     }
     g.svg.remove();
+    if (tool === 'redact') {
+      if (!g.moved) return;
+      const rect = boxToPdf(t6, g.start, g.last);
+      if (rect.width < 1 || rect.height < 1) return;
+      addRedactMarks([{ page: g.page, ...rect }]);
+      return;
+    }
     if (tool === 'note') {
       const text = await askText(t('pdf.toolNote'), t('pdf.noteLabel'), '', true);
       if (text === null) return;
