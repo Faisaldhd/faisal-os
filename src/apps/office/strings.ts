@@ -58,7 +58,6 @@ defineStrings('office', {
     slide: 'الشريحة {n}',
     emptySlide: 'لا نص في هذه الشريحة.',
     cutNote: 'الملف أطول من حد القارئ: يُقرأ أول {rows} صف و{cols} عمود فقط، وما بعدها لا يظهر ولا يُحفظ.',
-    viewLimit: 'يُعرض أول {rows} صف و{cols} عمود؛ وبقية الملف محفوظ كما هو ويُحفظ مع التغييرات.',
     moreParagraphs: 'يُعرض أول {n} فقرة؛ والباقي محفوظ كما هو ويُحفظ مع التغييرات.',
 
     formatBar: 'تنسيق الفقرة',
@@ -345,7 +344,6 @@ defineStrings('office', {
     slide: 'Slide {n}',
     emptySlide: 'No text on this slide.',
     cutNote: 'The file is past the reader’s limit: only the first {rows} rows and {cols} columns are read, and the rest is neither shown nor saved.',
-    viewLimit: 'Only the first {rows} rows and {cols} columns are shown; the rest of the file is kept and saved with your changes.',
     moreParagraphs: 'Only the first {n} paragraphs are shown; the rest is kept and saved with your changes.',
 
     formatBar: 'Paragraph formatting',

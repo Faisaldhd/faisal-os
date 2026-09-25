@@ -3,10 +3,10 @@
  * undo/redo history, the load/serialize round trip, and the one-backup save rule.
  */
 import { describe, expect, it } from 'vitest';
-import { MAX_COLS, MAX_ROWS } from '../viewer/formats';
+import { MAX_COLS } from '../viewer/formats';
 import { utf8 } from './zip';
 import {
-  COALESCE_MS, HISTORY_LIMIT, History, VERIFIED_FORMATS, addColumnEdit, addRowEdit, canDeleteColumn,
+  COALESCE_MS, HISTORY_LIMIT, History, SHEET_ROWS, VERIFIED_FORMATS, addColumnEdit, addRowEdit, canDeleteColumn,
   canDeleteRow, cellEdit, clearTruncated, deleteColumnEdit, deleteRowEdit, describeModel, emptyModel,
   gridAt, gridWidth, insertColumn, insertRow, isTruncated, paragraphEdit, planFor, removeColumn,
   removeRow, setCellValue, slideTextEdit, textEdit,
@@ -345,12 +345,14 @@ describe('loadOfficeFile', () => {
     if (result.ok && result.model.kind === 'csv') expect(result.model.grids[0].rows).toEqual([['a', 'b'], ['c', 'd']]);
   });
 
-  it('flags a CSV that is longer than the reader limit', async () => {
-    const csv = Array.from({ length: MAX_ROWS + 5 }, (_, i) => `${i},x`).join('\n');
+  it('flags a CSV that is longer than the sheet’s own reading limit', async () => {
+    // The sheet editor reads SHEET_ROWS rows (10 000) rather than the reader's preview-sized
+    // default, so a file past ITS limit is what has to be flagged.
+    const csv = Array.from({ length: SHEET_ROWS + 5 }, (_, i) => `${i},x`).join('\n');
     const result = await loadOfficeFile('/home/user/big.csv', utf8(csv));
     expect(result.ok).toBe(true);
     if (result.ok && result.model.kind === 'csv') {
-      expect(result.model.grids[0].rows.length).toBe(MAX_ROWS);
+      expect(result.model.grids[0].rows.length).toBe(SHEET_ROWS);
       expect(result.model.grids[0].truncated).toBe(true);
       expect(isTruncated(result.model)).toBe(true);
     }

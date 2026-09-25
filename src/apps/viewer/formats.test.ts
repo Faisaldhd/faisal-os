@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   kindOf, mimeOf, extensionOf, looksLikeText, parseCsv, columnIndex,
-  zipEntries, openZip, readXlsx, readDocx, readPptx, ZipError, VIEWER_EXTENSIONS,
+  zipEntries, openZip, readXlsx, readDocx, readPptx, ZipError, VIEWER_EXTENSIONS, MAX_COLS, MAX_ROWS,
 } from './formats';
 
 /* A tiny ZIP writer for the tests: stored (method 0) or deflated (method 8) members. */
@@ -180,5 +180,65 @@ describe('columnIndex', () => {
     expect(columnIndex('Z9')).toBe(25);
     expect(columnIndex('AA10')).toBe(26);
     expect(columnIndex('ab3')).toBe(27);
+  });
+});
+
+/*
+ * The reader's row limit is a parameter, and that is what lets the sheet editor virtualise ten
+ * thousand rows without dragging a huge workbook into the Files app's previews. Both halves of
+ * that promise are pinned here: the default every existing caller gets, and the raised one an app
+ * asks for at its own call site.
+ */
+describe('readXlsx row limits', () => {
+  /** `A`, `Z`, `AA`, … — the fixture needs more than 26 columns for the column-limit check. */
+  const colName = (c: number): string => {
+    let n = c + 1;
+    let out = '';
+    while (n > 0) { const rem = (n - 1) % 26; out = String.fromCharCode(65 + rem) + out; n = Math.floor((n - 1) / 26); }
+    return out;
+  };
+
+  const sheet = (rows: number, cols: number): Record<string, string> => {
+    const S = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
+    const R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+    const body: string[] = [];
+    for (let r = 1; r <= rows; r++) {
+      const cells: string[] = [];
+      for (let c = 0; c < cols; c++) cells.push(`<c r="${colName(c)}${r}"><v>${r}</v></c>`);
+      body.push(`<row r="${r}">${cells.join('')}</row>`);
+    }
+    return {
+      'xl/workbook.xml': `<workbook xmlns="${S}" xmlns:r="${R}"><sheets><sheet name="A" sheetId="1" r:id="rId1"/></sheets></workbook>`,
+      'xl/_rels/workbook.xml.rels': `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${R}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`,
+      'xl/worksheets/sheet1.xml': `<worksheet xmlns="${S}"><sheetData>${body.join('')}</sheetData></worksheet>`,
+    };
+  };
+
+  it('stops at the reader’s own limit when the caller says nothing (previews stay small)', async () => {
+    const bytes = await makeZip(sheet(MAX_ROWS + 50, 2));
+    const sheets = await readXlsx(bytes);
+    expect(sheets[0].rows).toHaveLength(MAX_ROWS);
+    expect(sheets[0].rows[MAX_ROWS - 1][0]).toBe(String(MAX_ROWS));
+    expect(sheets[0].truncated).toBe(true);
+  });
+
+  it('reads further rows when the caller asks, and never past what was asked', async () => {
+    const bytes = await makeZip(sheet(2200, 2));
+    const sheets = await readXlsx(bytes, { maxRows: 3000 });
+    expect(sheets[0].rows).toHaveLength(2200);
+    expect(sheets[0].truncated).toBe(false);
+    const capped = await readXlsx(bytes, { maxRows: 500 });
+    expect(capped[0].rows).toHaveLength(500);
+    expect(capped[0].truncated).toBe(true);
+  });
+
+  it('keeps the column limit for everyone unless a caller asks for more', async () => {
+    const bytes = await makeZip(sheet(3, MAX_COLS + 5));
+    const dflt = await readXlsx(bytes, { maxRows: 100 });
+    expect(dflt[0].rows[0]).toHaveLength(MAX_COLS);
+    expect(dflt[0].truncated).toBe(true);
+    const wide = await readXlsx(bytes, { maxRows: 100, maxCols: MAX_COLS + 5 });
+    expect(wide[0].rows[0]).toHaveLength(MAX_COLS + 5);
+    expect(wide[0].truncated).toBe(false);
   });
 });
