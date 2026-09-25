@@ -272,7 +272,10 @@ describe('commands', () => {
     setTimeout(() => { signal.cancelled = true; }, 50);
     const t0 = Date.now();
     expect(await p).toBe(130);
-    expect(Date.now() - t0).toBeLessThan(1000);
+    // The claim is "cancelling beats the 5 s sleep", not that the event loop is punctual: under a
+    // loaded runner the 50 ms timer and the command's ≤100 ms poke loop can both be delayed, so the
+    // budget is 3 s — still far below the 5 s it would take if cancellation did not work at all.
+    expect(Date.now() - t0).toBeLessThan(3000);
   });
 
   it('keeps Arabic text intact', async () => {
