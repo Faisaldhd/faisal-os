@@ -2349,3 +2349,13 @@
   flex: 1 1 180px;
   min-inline-size: 0;
 }
+
+/* Phone: three large filter previews per row, so neighbouring looks are told apart. */
+.faisal-photo[data-compact='1'] .fp-filter-grid {
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 12px;
+}
+.faisal-photo[data-compact='1'] .fp-filter {
+  min-block-size: 44px;
+  font-size: 13px;
+}

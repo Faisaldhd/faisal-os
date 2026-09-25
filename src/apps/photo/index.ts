@@ -39,6 +39,7 @@ import {
   type FreeTransform, type FtHandle,
 } from './freetransform';
 import { multiply, tidy } from './transform';
+import { downscale, presetThumbnails } from './engine';
 import { addLayerMask, applyLayerMask, invertLayerMask, maskPaintHides } from './masks';
 import { apply as applyMatrix, invert, isTranslationOnly, scaleOf, type Matrix } from './transform';
 import {
@@ -119,6 +120,10 @@ const TOOLS: { id: ToolId; icon: IconName; label: string; hint: string }[] = [
   { id: 'zoom', icon: 'zoom', label: 'toolZoom', hint: 'hintZoom' },
   { id: 'hand', icon: 'hand', label: 'toolHand', hint: 'hintHand' },
 ];
+
+/** Filter thumbnail backing size: 2× the ~96px it is shown at, so looks stay distinct on phones. */
+const THUMB_W = 192;
+const THUMB_H = 144;
 
 const PAINT_TOOLS: ToolId[] = ['brush', 'eraser', 'clone', 'bucket', 'gradient'];
 
@@ -403,8 +408,8 @@ export function launch(ctx: AppContext): void {
     b.type = 'button';
     b.setAttribute('aria-pressed', 'false');
     const c = el('canvas', 'fp-filter-thumb');
-    c.width = 96;
-    c.height = 72;
+    c.width = THUMB_W;
+    c.height = THUMB_H;
     b.append(c, el('span', 'fp-filter-name', filterLabel(id)));
     b.addEventListener('click', () => pickFilter(id));
     filterButtons.set(id, { btn: b, canvas: c });
@@ -1281,18 +1286,22 @@ export function launch(ctx: AppContext): void {
 
   function drawFilterThumbs(): void {
     if (!doc) return;
-    const s = Math.min(1, 144 / Math.max(doc.width, doc.height));
-    const small = readCanvas(renderDoc(doc, cache, s));
+    // The real image, once, at thumbnail size; every look is then the engine's own
+    // `presetThumbnails` (the exact preset maths), and the effects run on the same copy.
+    const s = Math.min(1, (THUMB_W * 1.5) / Math.max(doc.width, doc.height));
+    const small = downscale(readCanvas(renderDoc(doc, cache, s)), THUMB_W);
+    const scale = small.width / doc.width;
+    const looks = presetThumbnails(small, THUMB_W);
     for (const [id, { canvas }] of filterButtons) {
-      const out = applyFilter(small, id, 100, s);
+      const out = looks.get(id) ?? applyFilter(small, id, 100, scale);
       const c = canvas.getContext('2d')!;
-      canvas.width = 96;
-      canvas.height = 72;
-      c.clearRect(0, 0, 96, 72);
+      canvas.width = THUMB_W;
+      canvas.height = THUMB_H;
+      c.clearRect(0, 0, THUMB_W, THUMB_H);
       const src = bufferCanvas(out);
-      const k = Math.max(96 / out.width, 72 / out.height);
+      const k = Math.max(THUMB_W / out.width, THUMB_H / out.height);
       c.imageSmoothingQuality = 'high';
-      c.drawImage(src, (96 - out.width * k) / 2, (72 - out.height * k) / 2, out.width * k, out.height * k);
+      c.drawImage(src, (THUMB_W - out.width * k) / 2, (THUMB_H - out.height * k) / 2, out.width * k, out.height * k);
     }
   }
 
