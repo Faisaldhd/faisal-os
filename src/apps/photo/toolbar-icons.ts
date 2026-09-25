@@ -64,6 +64,7 @@ export const ICONS = {
   adjustLayer: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17M12 8l6-3M12 12.5l8.2-2.2M12 17l6.6-.4"/>'),
   invert: svg('<circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 1 0 17"/><path d="M12 8h4M12 12h5.5M12 16h4"/>'),
   transform: svg('<rect x="6" y="6" width="12" height="12"/><path d="M3.5 3.5h3v3h-3zM17.5 3.5h3v3h-3zM3.5 17.5h3v3h-3zM17.5 17.5h3v3h-3z"/>'),
+  ruler: svg('<path d="M3.5 8.5h17v7h-17z"/><path d="M7 8.5v3M11 8.5v4.5M15 8.5v3M19 8.5v4.5"/>'),
   layers: svg('<path d="M12 3.5l8.5 4.5-8.5 4.5L3.5 8z"/><path d="M3.5 12l8.5 4.5 8.5-4.5M3.5 16l8.5 4.5 8.5-4.5"/>'),
   sparkle: svg('<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z"/>'),
   history: svg('<path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/><path d="M3.5 4v4h4M12 7.5V12l3 2"/>'),
