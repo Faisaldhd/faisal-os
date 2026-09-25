@@ -42,6 +42,8 @@ import { History } from './history';
 import { icon } from './icons';
 import { Inspector, TEXT_PRESETS, type InspectorTab, type TextPreset } from './inspector';
 import { IMAGE_EXTENSIONS, MediaLibrary, measureDuration, mediaTypeFor, type MediaItem } from './media';
+import { perfMark } from './perf';
+import { formatMediaTime } from './time';
 import { PlayerView } from './player-view';
 import { PoolView, type PoolFilter } from './pool-view';
 import {
@@ -62,7 +64,6 @@ import {
   projectDuration,
   removeClip,
   splitAtPlayhead,
-  timecode,
   trackAccepts,
   trackFor,
   trimToPlayhead,
@@ -157,6 +158,8 @@ function launch(ctx: AppContext): void {
   let exportRunning: AbortController | null = null;
   let narrow = false;
   let medium = false;
+  /** Set when a clip is handed to the player, cleared by the first drawn frame (see `perf.ts`). */
+  let awaitingFirstFrame = false;
   const history = new History<Project>(200);
 
   const probe = (): CapabilityProbe => ({
@@ -182,7 +185,7 @@ function launch(ctx: AppContext): void {
     empty: () => s('emptyFile'),
     codec: (ext, size) => s('codecUnsupported', { ext, size: formatBytes(size, sys.locale()) }),
     tooBig: () => s('tooBig'),
-  });
+  }, () => engine.playing);
 
   const engine: StudioEngine = new CanvasStudioEngine({ offline: s('offline') });
   const engineMedia = (id: string): EngineMedia | undefined => {
@@ -361,8 +364,7 @@ function launch(ctx: AppContext): void {
   sidePanel.append(inspector.root);
 
   /* timeline */
-  const timeline = new TimelineView({
-    project: () => project,
+  const timeline = new TimelineView({    project: () => project,
     media: (id) => library.get(id),
     time: () => engine.time,
     playing: () => engine.playing,
@@ -384,9 +386,13 @@ function launch(ctx: AppContext): void {
     },
   });
 
+  // The filmstrip and the waveform now land *after* the clip is already playable (media.ts), so
+  // the timeline has to redraw when they do. The pool and the playlist subscribe for themselves.
+  library.onChange(() => { if (mode === 'editor') timeline.render(); });
+
   /* timeline toolbar */
   const tlBar = el('div', 'fvs-tl-bar');
-  const tcLabel = el('span', 'fvs-timecode', '00:00:00');
+  const tcLabel = el('span', 'fvs-timecode', '0:00.00');
   tcLabel.dir = 'ltr';
   const poolToggle = button(s('mediaPool'), 'fvs-btn is-ghost fvs-pool-toggle', 'folder');
   poolToggle.addEventListener('click', () => openSheet(pool.root, s('mediaPool')));
@@ -457,8 +463,8 @@ function launch(ctx: AppContext): void {
   scrub.addEventListener('input', () => seek((Number(scrub.value) / 1000) * engine.duration));
   const tRow = el('div', 'fvs-transport-row');
   tRow.dir = 'ltr';
-  const timeNow = el('span', 'fvs-tc-now', '00:00:00');
-  const timeTotal = el('span', 'fvs-tc-total', '/ 00:00:00');
+  const timeNow = el('span', 'fvs-tc-now', '0:00.00');
+  const timeTotal = el('span', 'fvs-tc-total', '/ 0:00.00');
   const times = el('span', 'fvs-tc');
   times.append(timeNow, timeTotal);
   const goStart = iconButton(`${s('goStart')} (Home)`, 'prev');
@@ -669,7 +675,7 @@ function launch(ctx: AppContext): void {
     editorModeBtn.setAttribute('aria-pressed', String(mode === 'editor'));
     const frame = mode === 'player' ? playerFrame : frameFor(project);
     const d = engine.duration;
-    statusCtx.textContent = mode === 'start' ? '' : `${frame.width}×${frame.height} · 30 fps · ${timecode(d)}`;
+    statusCtx.textContent = mode === 'start' ? '' : `${frame.width}×${frame.height} · 30 fps · ${formatMediaTime(d)}`;
     stageEmpty.hidden = !isEmptyProject(project);
     if (!stageEmpty.hidden && stageEmpty.childElementCount === 0) {
       const art = el('div', 'fvs-empty-art is-large');
@@ -688,9 +694,10 @@ function launch(ctx: AppContext): void {
   function paintTime(): void {
     const t = engine.time;
     const d = engine.duration;
-    timeNow.textContent = timecode(t);
-    timeTotal.textContent = `/ ${timecode(d)}`;
-    tcLabel.textContent = timecode(t);
+    // The same media clock the player's transport prints (time.ts): one length for one clip.
+    timeNow.textContent = formatMediaTime(t);
+    timeTotal.textContent = `/ ${formatMediaTime(d)}`;
+    tcLabel.textContent = formatMediaTime(t);
     if (document.activeElement !== scrub) scrub.value = String(d > 0 ? Math.round((t / d) * 1000) : 0);
     scrub.style.setProperty('--fill', `${d > 0 ? (t / d) * 100 : 0}%`);
     const playing = engine.playing;
@@ -698,6 +705,11 @@ function launch(ctx: AppContext): void {
   }
 
   engine.onTick(() => {
+    // The end of the readiness chain: the first drawn frame of the clip the user just opened.
+    if (awaitingFirstFrame) {
+      awaitingFirstFrame = false;
+      perfMark('play:first-frame');
+    }
     if (mode === 'editor') {
       paintTime();
       timeline.positionPlayhead();
@@ -1084,6 +1096,7 @@ function launch(ctx: AppContext): void {
     stopReverse();
     if (mode === 'player') player.deactivate();
     mode = next;
+    perfMark(`ui:mode:${next}`);
     work.replaceChildren(next === 'start' ? start : next === 'player' ? player.root : editor);
     if (next === 'player') {
       player.activate();
@@ -1446,7 +1459,7 @@ function launch(ctx: AppContext): void {
         }
         const p = mp4Plan;
         const bytes = estimateExportBytes(len, p.video.bitrate, p.audio?.bitrate ?? 0);
-        estimate.textContent = s('estimate', { w: p.video.width, h: p.video.height, fps: p.fps, len: formatClock(len), size: formatBytes(bytes, sys.locale()) });
+        estimate.textContent = s('estimate', { w: p.video.width, h: p.video.height, fps: p.fps, len: formatMediaTime(len, p.fps), size: formatBytes(bytes, sys.locale()) });
         if (bytes > sys.vfs.quota.file) notes.append(el('li', 'is-warn', s('quotaWarn', { max: formatBytes(sys.vfs.quota.file, sys.locale()) })));
         notes.append(el('li', undefined, s('noteFast')));
         notes.append(el('li', undefined, s('noteMp4')));
@@ -1460,16 +1473,16 @@ function launch(ctx: AppContext): void {
         }
         go.disabled = false;
         const bytes = estimateExportBytes(len, st.videoBitrate, st.audioBitrate);
-        estimate.textContent = s('estimate', { w: st.width, h: st.height, fps: st.fps, len: formatClock(len), size: formatBytes(bytes, sys.locale()) });
+        estimate.textContent = s('estimate', { w: st.width, h: st.height, fps: st.fps, len: formatMediaTime(len, st.fps), size: formatBytes(bytes, sys.locale()) });
         if (bytes > sys.vfs.quota.file) notes.append(el('li', 'is-warn', s('quotaWarn', { max: formatBytes(sys.vfs.quota.file, sys.locale()) })));
-        notes.append(el('li', undefined, s('noteRealtime', { len: formatClock(len) })));
+        notes.append(el('li', undefined, s('noteRealtime', { len: formatMediaTime(len) })));
         notes.append(el('li', undefined, st.extension === '.mp4' ? s('noteMp4') : s('noteWebm')));
         if (container === 'mp4') notes.append(el('li', 'is-warn', s('noteNoWebCodecs')));
         if (st.fellBack) notes.append(el('li', 'is-warn', s('noteFellBack')));
       } else {
         go.disabled = false;
         const bytes = Math.round(len * 48000 * 4);
-        estimate.textContent = s('estimateAudio', { len: formatClock(len), size: formatBytes(bytes, sys.locale()) });
+        estimate.textContent = s('estimateAudio', { len: formatMediaTime(len), size: formatBytes(bytes, sys.locale()) });
         notes.append(el('li', undefined, s('noteWav')));
         if (bytes > sys.vfs.quota.file) notes.append(el('li', 'is-warn', s('quotaWarn', { max: formatBytes(sys.vfs.quota.file, sys.locale()) })));
       }
@@ -1583,7 +1596,7 @@ function launch(ctx: AppContext): void {
   function showExportResult(path: string, size: number, measured: number): void {
     const done = openModal(root, s('exportTitle'));
     const line = el('p', 'fvs-result-line');
-    line.append(icon('check'), el('span', undefined, s('exportSaved', { path, size: formatBytes(size, sys.locale()), len: measured > 0 ? formatClock(measured) : '—' })));
+    line.append(icon('check'), el('span', undefined, s('exportSaved', { path, size: formatBytes(size, sys.locale()), len: measured > 0 ? formatMediaTime(measured) : '—' })));
     line.dir = 'auto';
     const actions = el('div', 'fvs-action-row');
     const play = button(s('playExport'), 'fvs-btn is-primary', 'play');
@@ -2112,12 +2125,15 @@ function launch(ctx: AppContext): void {
     else {
       void (async () => {
         const item = await library.addPath(first);
+        perfMark('ui:media-ready', item.status);
         setMode('player');
         if (item.status === 'error') {
           status(`${item.name}: ${item.error}`, true);
           return;
         }
+        awaitingFirstFrame = true;
         player.add([item.id], true);
+        perfMark('ui:add');
       })();
     }
   }

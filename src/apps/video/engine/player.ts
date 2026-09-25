@@ -7,6 +7,7 @@
  * Both draw every frame through `composeFrame`, so the export is the preview.
  */
 import { projectDuration, type Project } from '../project';
+import { perfSpan } from '../perf';
 import { composeFrame, type ComposeReport, type Scratch } from './compositor';
 import { LiveMixer, type MixerOutput } from './audio-mix';
 import { MediaPool, seekAccurate } from './media-pool';
@@ -149,6 +150,7 @@ export class TimelineRenderer {
   private async prepare(time: number, waitFrame = true): Promise<void> {
     const project = this.project;
     if (!project) return;
+    const done = perfSpan('engine:prepare');
     const needs = clipsNeeded(project, time, 0.5);
     const keep = new Set<string>();
     const waits: Promise<void>[] = [];
@@ -162,6 +164,7 @@ export class TimelineRenderer {
     }
     this.pool.retain(keep);
     await Promise.all(waits);
+    done(`${needs.length}`);
   }
 
   /** Starts playback from `from` (default: where the playhead is). */

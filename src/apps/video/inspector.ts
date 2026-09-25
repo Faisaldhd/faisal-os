@@ -14,7 +14,6 @@ import {
   NEUTRAL_COLOR,
   updateClip,
   updateTrack,
-  timecode,
   type AspectKey,
   type Clip,
   type FontKey,
@@ -26,6 +25,7 @@ import {
 } from './project';
 import { COLOR_PRESETS } from './render-math';
 import type { MediaItem } from './media';
+import { formatMediaTime } from './time';
 import { button, el, s, section, segmented, selectBox, slider, toggle } from './ui';
 import { icon } from './icons';
 
@@ -178,7 +178,7 @@ export class Inspector {
     const name = clip.type === 'text' ? (clip.text.trim() || s('untitledText')) : (this.host.media(clip.mediaId)?.name ?? '');
     const title = el('p', 'fvs-insp-name', name);
     title.dir = 'auto';
-    const meta = el('p', 'fvs-insp-meta', `${s(`type_${clip.type}`)} · ${span ? `${timecode(span.start)} → ${timecode(span.end)}` : ''}`);
+    const meta = el('p', 'fvs-insp-meta', `${s(`type_${clip.type}`)} · ${span ? `${formatMediaTime(span.start)} → ${formatMediaTime(span.end)}` : ''}`);
     head.append(title, meta);
     return head;
   }

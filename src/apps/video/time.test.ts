@@ -3,6 +3,7 @@ import {
   clampTime,
   estimateBytes,
   formatDuration,
+  formatMediaTime,
   formatRulerTime,
   formatTime,
   frameDuration,
@@ -13,6 +14,7 @@ import {
   timestampToken,
   wholeRange,
 } from './time';
+import { timecode } from './project';
 
 /**
  * The ruler label. This is the one place a frame-accurate time is read on the timeline, and its
@@ -63,6 +65,62 @@ describe('formatRulerTime', () => {
     expect(formatRulerTime(-5, 30)).toBe('0:00.00');
     expect(formatRulerTime(Number.NaN, 30)).toBe('0:00.00');
     expect(formatRulerTime(Number.POSITIVE_INFINITY, 30)).toBe('0:00.00');
+  });
+});
+
+/**
+ * The media clock. This is the fix for the readout mismatch the owner could see: the same
+ * 6.47 s clip read `0:06` in the player and `00:06:14` in the editor status. Both surfaces print
+ * this function now, so the checks below pin the frame-accurate value, the shape (frames after a
+ * DOT, which is what stops `00:06:14` reading as six minutes) and the agreement with the colon
+ * timecode the timeline still uses for screen readers.
+ */
+describe('formatMediaTime', () => {
+  it('prints the real length of the sample clip', () => {
+    // 6.471667 s at 30 fps is 6 seconds and 14 frames — not "6 seconds" (0:06) and not "6:14".
+    expect(formatMediaTime(6.471667)).toBe('0:06.14');
+    expect(formatMediaTime(6.471667, 30)).toBe('0:06.14');
+  });
+
+  it('puts the frames after a dot so a frame count can never read as seconds', () => {
+    expect(formatMediaTime(0)).toBe('0:00.00');
+    expect(formatMediaTime(1.5, 30)).toBe('0:01.15');
+    expect(formatMediaTime(62.25, 30)).toBe('1:02.08');
+    expect(formatMediaTime(3600, 30)).toBe('1:00:00.00');
+    expect(formatMediaTime(3661.2, 25)).toBe('1:01:01.05');
+  });
+
+  it('is frame-accurate: two positions a frame apart never print the same', () => {
+    const a = formatMediaTime(4, 30);
+    const b = formatMediaTime(4 + 1 / 30, 30);
+    expect(a).toBe('0:04.00');
+    expect(b).toBe('0:04.01');
+    expect(a).not.toBe(b);
+  });
+
+  it('follows the rate it is given and falls back to 30 rather than NaN', () => {
+    expect(formatMediaTime(2 + 23 / 24, 24)).toBe('0:02.23');
+    expect(formatMediaTime(3, null)).toBe('0:03.00');
+    expect(formatMediaTime(3, 0)).toBe('0:03.00');
+    expect(formatMediaTime(3, Number.NaN)).toBe('0:03.00');
+  });
+
+  it('never shows NaN for an unreadable position', () => {
+    expect(formatMediaTime(-5)).toBe('0:00.00');
+    expect(formatMediaTime(Number.NaN)).toBe('0:00.00');
+    expect(formatMediaTime(Number.POSITIVE_INFINITY)).toBe('0:00.00');
+  });
+
+  it('carries the same seconds and frames as the colon timecode the timeline uses', () => {
+    // One shared frame maths: a screen reader hearing `00:06:14` and a reader seeing `0:06.14`
+    // must be describing the same instant, only spelled differently.
+    for (const seconds of [0, 0.5, 1.5, 6.471667, 61.5, 62.25, 3599.99, 3600, 7325.04]) {
+      for (const fps of [24, 25, 30, 60]) {
+        const media = formatMediaTime(seconds, fps).split('.');
+        const code = timecode(seconds, fps).split(':');
+        expect(code.slice(-2), `${seconds}s @${fps}`).toEqual([media[0].split(':').pop(), media[1]]);
+      }
+    }
   });
 });
 

@@ -27,7 +27,8 @@ import {
   type PlaylistItem,
 } from './playlist';
 import { appendClip, emptyProject, insertClip, makeMediaClip, type Project } from './project';
-import { button, el, formatClock, iconButton, s, setIcon } from './ui';
+import { formatMediaTime } from './time';
+import { button, el, iconButton, s, setIcon } from './ui';
 import { icon } from './icons';
 
 export const PLAYER_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
@@ -337,13 +338,15 @@ export class PlayerView {
   paintTime(): void {
     const d = this.duration();
     const t = this.host.engine.time;
-    this.timeLabel.textContent = `${formatClock(t)} / ${formatClock(d)}`;
+    // The media clock, frame-accurate: the same function the editor status line prints, so the
+    // player can never show a different length for the clip than the editor does.
+    this.timeLabel.textContent = `${formatMediaTime(t)} / ${formatMediaTime(d)}`;
     const pct = d > 0 ? (t / d) * 100 : 0;
     this.fill.style.width = `${pct}%`;
     this.seek.setAttribute('aria-valuemin', '0');
     this.seek.setAttribute('aria-valuemax', String(Math.round(d)));
     this.seek.setAttribute('aria-valuenow', String(Math.round(t)));
-    this.seek.setAttribute('aria-valuetext', `${formatClock(t)} / ${formatClock(d)}`);
+    this.seek.setAttribute('aria-valuetext', `${formatMediaTime(t)} / ${formatMediaTime(d)}`);
     const sel = this.selection();
     const a = d > 0 ? (sel.start / d) * 100 : 0;
     const b = d > 0 ? (sel.end / d) * 100 : 100;
@@ -351,9 +354,9 @@ export class PlayerView {
     this.sel.style.width = `${Math.max(0, b - a)}%`;
     this.inHandle.style.left = `${a}%`;
     this.outHandle.style.left = `${b}%`;
-    this.inHandle.setAttribute('aria-valuetext', formatClock(sel.start));
-    this.outHandle.setAttribute('aria-valuetext', formatClock(sel.end));
-    this.trimInfo.textContent = s('selectionInfo', { from: formatClock(sel.start), to: formatClock(sel.end), len: formatClock(sel.end - sel.start) });
+    this.inHandle.setAttribute('aria-valuetext', formatMediaTime(sel.start));
+    this.outHandle.setAttribute('aria-valuetext', formatMediaTime(sel.end));
+    this.trimInfo.textContent = s('selectionInfo', { from: formatMediaTime(sel.start), to: formatMediaTime(sel.end), len: formatMediaTime(sel.end - sel.start) });
     const media = this.currentMedia();
     this.saveBtn.disabled = !media || media.type === 'image' || isWholeFile(this.item() ?? { in: 0, out: null }, d);
   }
@@ -559,7 +562,7 @@ export class PlayerView {
       const text = el('span', 'fvs-pl-text');
       const name = el('span', 'fvs-pl-name', media?.name ?? '');
       name.dir = 'auto';
-      const meta = el('span', 'fvs-pl-meta', media?.status === 'loading' ? s('loadingMedia') : media?.status === 'error' ? media.error : media && media.duration > 0 ? formatClock(media.duration) : '');
+      const meta = el('span', 'fvs-pl-meta', media?.status === 'loading' ? s('loadingMedia') : media?.status === 'error' ? media.error : media && media.duration > 0 ? formatMediaTime(media.duration) : '');
       text.append(name, meta);
       if (index === this.playlist.current) {
         const now = el('span', 'fvs-pl-now');
