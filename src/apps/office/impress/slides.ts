@@ -50,6 +50,8 @@ export function createSlideEditor(ctx: EditorContext): Editor {
   let editing = false;
   /** Repaints the open text overlay after a formatting command (null while nothing is edited). */
   let repaintEdit: (() => void) | null = null;
+  /** Puts the caret back into the overlay after a picker took focus (null while nothing is edited). */
+  let restoreCaret: (() => void) | null = null;
   let scale = 1;
   let stageWidth = 0;
   let railDragging = false;
@@ -366,13 +368,14 @@ export function createSlideEditor(ctx: EditorContext): Editor {
   /**
    * One formatting command, applied to the whole text box (what PowerPoint does with nothing
    * selected inside it) as a single undoable edit. While the text overlay is open it is repainted
-   * from the model instead of the stage, so the caret and the half-typed line stay where they are.
+   * from the model and the caret is handed straight back, so changing the size or the colour from
+   * the ribbon never interrupts the typing — that was the one rough edge of this feature.
    */
   function formatText(patch: ParaStylePatch): void {
     const d = deck();
     if (!d || selected === null || !canText()) { ctx.setStatus(t('impress.selectTextBox')); return; }
     apply(setParaStyle(d, current, selected, patch));
-    if (editing) repaintEdit?.();
+    if (editing) { repaintEdit?.(); restoreCaret?.(); }
     else drawStage();
     refreshThumb(current);
     ctx.refresh();
@@ -418,13 +421,49 @@ export function createSlideEditor(ctx: EditorContext): Editor {
       if (ev.key === 'Escape') { ev.preventDefault(); area.blur(); }
     });
     area.addEventListener('pointerdown', (ev) => ev.stopPropagation());
-    area.addEventListener('blur', () => {
+
+    /**
+     * While the overlay is open, the ribbon is part of the same gesture: the size list and the
+     * colour picker take focus, and the edit must survive that. A pointer anywhere else — the
+     * stage, another window, another app — closes the overlay exactly as before.
+     */
+    let caret: [number, number] = [area.value.length, area.value.length];
+    let pickerGesture = false;
+    const finishEdit = (): void => {
       if (!editing) return;
       editing = false;
       repaintEdit = null;
+      restoreCaret = null;
+      document.removeEventListener('pointerdown', onPointerDown, true);
       drawStage();
       refreshThumb(current);
       ctx.refresh();
+    };
+    const onPointerDown = (ev: PointerEvent): void => {
+      if (!editing) return;
+      const target = ev.target as HTMLElement | null;
+      if (target && (target === area || area.contains(target))) return; // typing continues
+      pickerGesture = !!target?.closest('.fo-ribbon, .fo-phonebar, .fo-pop, .fo-sheet');
+      if (pickerGesture) { caret = [area.selectionStart, area.selectionEnd]; return; }
+      finishEdit();
+    };
+    restoreCaret = () => {
+      if (!editing || !area.isConnected) return;
+      // The caret never left (a command that did not need focus): leave the selection alone.
+      if (document.activeElement === area) return;
+      area.focus();
+      area.setSelectionRange(caret[0], caret[1]);
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    area.addEventListener('blur', (ev) => {
+      if (!editing) return;
+      const to = ev.relatedTarget as HTMLElement | null;
+      // Focus went to a formatting control: keep the overlay and take the caret back after it.
+      if (pickerGesture || to?.closest('.fo-ribbon, .fo-phonebar, .fo-pop, .fo-sheet')) {
+        caret = [area.selectionStart, area.selectionEnd];
+        return;
+      }
+      finishEdit();
     });
     canvas.append(area);
     area.focus();
