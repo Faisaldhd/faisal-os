@@ -83,6 +83,8 @@ defineStrings('office', {
     formatAlignJustify: 'ضبط',
     formatHint: 'اختر فقرة أولاً، ثم نسّقها.',
     formulaResult: 'ناتج الصيغة: {value}',
+    fillHandle: 'مقبض التعبئة: اسحب لتكملة الخلايا أو السلسلة',
+    filled: 'تم تعبئة {n} خلية في تعديل واحد (يمكن التراجع عنه).',
 
     discardTitle: 'تجاهل التغييرات غير المحفوظة؟',
     discardBody: 'في «{name}» تغييرات لم تُحفظ، وستضيع إذا أُغلقت النافذة.',
@@ -380,6 +382,8 @@ defineStrings('office', {
     formatAlignJustify: 'Justify',
     formatHint: 'Choose a paragraph first, then format it.',
     formulaResult: 'Formula result: {value}',
+    fillHandle: 'Fill handle: drag to continue the cells or the series',
+    filled: 'Filled {n} cells in one edit (it can be undone).',
 
     discardTitle: 'Discard unsaved changes?',
     discardBody: '“{name}” has changes that were not saved and will be lost when the window closes.',
