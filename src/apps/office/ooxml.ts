@@ -10,6 +10,8 @@
 import { formulaKey, type Grid, type ParagraphFormat } from './model';
 import { cellName, isNumericText, paragraphPropertiesMarkup, runPropertiesMarkup, sheetName, xmlText } from './xml';
 import { utf8, writeZip, type ZipInput } from './zip';
+import { addCellStyles, applySheetLook, MINIMAL_STYLES } from './grid/xlsxstyle';
+import type { SheetFormat } from './grid/sheetfmt';
 
 const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
@@ -137,8 +139,12 @@ export function xlsxSheet(grid: Grid, sheet = 0, formulas?: Record<string, strin
   return `${DECL}<worksheet xmlns="${S_NS}"><sheetData>${rows}</sheetData></worksheet>`;
 }
 
-/** A minimal Excel workbook: one worksheet part per grid, inline strings, no styles. */
-export function writeXlsx(grids: readonly Grid[], formulas?: Record<string, string>): Uint8Array {
+/**
+ * A minimal Excel workbook: one worksheet part per grid, inline strings, and a
+ * styles part carrying the owner's formatting (column widths, row heights, cell
+ * formats) when the model has any.
+ */
+export function writeXlsx(grids: readonly Grid[], formulas?: Record<string, string>, formats?: Record<number, SheetFormat>): Uint8Array {
   const sheets: Grid[] = grids.length ? [...grids] : [{ name: 'Sheet1', rows: [], truncated: false }];
   const taken = new Set<string>();
   const names = sheets.map((grid, i) => {
@@ -147,11 +153,27 @@ export function writeXlsx(grids: readonly Grid[], formulas?: Record<string, stri
     return name;
   });
 
+  // Formatting: every styled cell gets an xf built over the default one.
+  let styles = MINIMAL_STYLES;
+  const sheetXml = sheets.map((grid, i) => {
+    const xml = xlsxSheet(grid, i, formulas);
+    const fmt = formats?.[i];
+    if (!fmt) return xml;
+    const keys = Object.keys(fmt.cells ?? {});
+    const added = addCellStyles(styles, keys.map((key) => ({ base: 0, format: (fmt.cells ?? {})[key] })));
+    styles = added.xml;
+    const cells = new Map(keys.map((key, k) => [key, added.ids[k]]));
+    const rows = new Map(Object.entries(fmt.rows ?? {}).map(([k, v]) => [Number(k), v]));
+    const cols = new Map(Object.entries(fmt.cols ?? {}).map(([k, v]) => [Number(k), v]));
+    return applySheetLook(xml, { cells, rows, cols });
+  });
+
   const parts: ZipInput[] = [
     {
       name: '[Content_Types].xml',
       data: utf8(contentTypes([
         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>',
+        '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>',
         ...sheets.map((_, i) =>
           `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`),
       ])),
@@ -173,9 +195,11 @@ export function writeXlsx(grids: readonly Grid[], formulas?: Record<string, stri
       data: utf8(`${DECL}<Relationships xmlns="${RELS_NS}">` +
         names.map((_, i) =>
           `<Relationship Id="rId${i + 1}" Type="${DOC_REL}/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('') +
+        `<Relationship Id="rId${names.length + 1}" Type="${DOC_REL}/styles" Target="styles.xml"/>` +
         '</Relationships>'),
     },
-    ...sheets.map((grid, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: utf8(xlsxSheet(grid, i, formulas)) })),
+    { name: 'xl/styles.xml', data: utf8(styles) },
+    ...sheets.map((_, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: utf8(sheetXml[i]) })),
   ];
   return writeZip(parts);
 }

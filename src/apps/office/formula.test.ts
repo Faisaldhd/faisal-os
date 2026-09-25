@@ -105,10 +105,11 @@ describe('formulas in the sheet model', () => {
       grids: [{ name: 'S', rows: [['1', 'a'], ['2', 'b']], truncated: false }],
       formulas: { '0:1:0': '=A1*2', '0:0:1': '=A1+1' },
     };
-    expect(formulaAt(insertRow(base, 0, 0), 0, 2, 0)).toBe('=A1*2'); // a row above pushes it down
-    expect(formulaAt(removeRow(base, 0, 0), 0, 0, 0)).toBe('=A1*2'); // a row above it is removed
-    expect(formulaAt(insertColumn(base, 0, 0), 0, 0, 2)).toBe('=A1+1');
-    expect(formulaAt(removeColumn(base, 0, 0), 0, 0, 0)).toBe('=A1+1');
+    // The formula moves with its cell, and its references follow their cells (shiftFormula, as in Excel).
+    expect(formulaAt(insertRow(base, 0, 0), 0, 2, 0)).toBe('=A2*2'); // a row above pushes it (and A1) down
+    expect(formulaAt(removeRow(base, 0, 0), 0, 0, 0)).toBe('=#REF!*2'); // the row it pointed at is removed
+    expect(formulaAt(insertColumn(base, 0, 0), 0, 0, 2)).toBe('=B1+1');
+    expect(formulaAt(removeColumn(base, 0, 0), 0, 0, 0)).toBe('=#REF!+1');
     expect(formulaAt(removeRow(base, 0, 1), 0, 1, 0)).toBeUndefined(); // the formula's own line is gone
   });
 });

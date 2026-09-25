@@ -2308,3 +2308,54 @@
     animation: none !important;
   }
 }
+
+/* ── layer masks ─────────────────────────────────────────────── */
+.fp-layer-mask {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 44px;
+  min-block-size: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+.fp-layer-mask .fp-layer-thumb {
+  background: #000;
+}
+.fp-layer-mask[aria-pressed='true'] .fp-layer-thumb {
+  outline: 2px solid var(--app-copper);
+  outline-offset: 1px;
+}
+.fp-layer-mask:focus-visible {
+  outline: 2px solid var(--app-copper-2);
+  outline-offset: 2px;
+}
+.fp-mask-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-block: 8px;
+  border-block-start: 1px solid var(--app-hairline);
+}
+.fp-mask-row[hidden] {
+  display: none;
+}
+.fp-mask-row .fp-seg-fill {
+  flex: 1 1 180px;
+  min-inline-size: 0;
+}
+
+/* Phone: three large filter previews per row, so neighbouring looks are told apart. */
+.faisal-photo[data-compact='1'] .fp-filter-grid {
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 12px;
+}
+.faisal-photo[data-compact='1'] .fp-filter {
+  min-block-size: 44px;
+  font-size: 13px;
+}

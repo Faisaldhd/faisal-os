@@ -27,13 +27,20 @@ import {
 } from './ui';
 import type { PixelBuffer, Point, Rect } from './types';
 import {
-  BLEND_MODES, activeLayer, addLayer, cropDoc, docFromBuffer, duplicateLayer, flipDoc, isBlendMode, layerById,
+  BLEND_MODES, activeLayer, addLayer, adjustLayer, maskSize, setLayerMask, updateAdjust, cropDoc, docFromBuffer, duplicateLayer, flipDoc, isBlendMode, layerById,
   layerBounds, moveLayerTo, newBufferBytes, nextLayerName, pickVectorLayer, rasterLayer, removeLayer, replaceLayer,
   resizeDoc, rotateDocFree, rotateDocQuarter, setActive, setRaster, shapeLayer, solidBuffer, textLayer,
   translateLayer, updateLayer, type BlendMode, type Layer, type PhotoDoc, type RasterLayer, type ShapeKind,
   type ShapeLayer, type TextLayer, type TextSpec,
 } from './layers';
 import { blankTiled, fromBuffer, readRegion, writeRegion } from './tiles';
+import {
+  FT_IDENTITY, corners as ftCorners, dragHandle, ftMatrix, ftReadout, handlePoints, hitHandle, isIdentity as ftIsIdentity,
+  type FreeTransform, type FtHandle,
+} from './freetransform';
+import { multiply, tidy } from './transform';
+import { downscale, presetThumbnails } from './engine';
+import { addLayerMask, applyLayerMask, invertLayerMask, maskPaintHides } from './masks';
 import { apply as applyMatrix, invert, isTranslationOnly, scaleOf, type Matrix } from './transform';
 import {
   combine, cropSelection, ellipseMask, invertSelection, modeFromModifiers, polygonMask, rectMask, selectAll,
@@ -61,7 +68,7 @@ import { SHORTCUTS, describeKeys, matchShortcut, toolKey, type Command, type Too
 import { PICTURES, createGallery, emptyIllustration, isImagePath, pickFile, thumbnail } from './gallery';
 import { History, HISTORY_PRESETS } from './history';
 import {
-  EXPORT_FORMAT_LIST, FORMATS, OPEN_EXTENSIONS, clampQuality, formatForExtension, formatOfTarget,
+  EXPORT_FORMAT_LIST, FORMATS, OPEN_EXTENSIONS, PICKER_ACCEPT, clampQuality, formatForExtension, formatOfTarget,
   type ExportFormat, type SourceFormat,
 } from './formats';
 import { basenameOf, dirnameOf, isWithinHome, stemOf } from './export-file';
@@ -101,6 +108,7 @@ const TOOLS: { id: ToolId; icon: IconName; label: string; hint: string }[] = [
   { id: 'lasso', icon: 'lasso', label: 'toolLasso', hint: 'hintLasso' },
   { id: 'wand', icon: 'wand', label: 'toolWand', hint: 'hintWand' },
   { id: 'crop', icon: 'crop', label: 'toolCrop', hint: 'hintCrop' },
+  { id: 'transform', icon: 'transform', label: 'toolTransform', hint: 'hintTransform' },
   { id: 'brush', icon: 'brush', label: 'toolBrush', hint: 'hintBrush' },
   { id: 'eraser', icon: 'eraser', label: 'toolEraser', hint: 'hintEraser' },
   { id: 'clone', icon: 'clone', label: 'toolClone', hint: 'hintClone' },
@@ -112,6 +120,10 @@ const TOOLS: { id: ToolId; icon: IconName; label: string; hint: string }[] = [
   { id: 'zoom', icon: 'zoom', label: 'toolZoom', hint: 'hintZoom' },
   { id: 'hand', icon: 'hand', label: 'toolHand', hint: 'hintHand' },
 ];
+
+/** Filter thumbnail backing size: 2× the ~96px it is shown at, so looks stay distinct on phones. */
+const THUMB_W = 192;
+const THUMB_H = 144;
 
 const PAINT_TOOLS: ToolId[] = ['brush', 'eraser', 'clone', 'bucket', 'gradient'];
 
@@ -161,6 +173,11 @@ export function launch(ctx: AppContext): void {
   let cropAspect: number | null = null;
   let cloneSource: Point | null = null;
   let settingCloneSource = false;
+  /** True while brush/eraser/fill/delete target the active layer's MASK instead of its pixels. */
+  let maskEdit = false;
+  /** An open free transform: the active layer (live preview in `doc`) or the selection. */
+  let ft: { target: 'layer' | 'selection'; id: string; box: Rect; cur: FreeTransform; base: PhotoDoc } | null = null;
+  const FT_ROTATE_GAP = 28;
 
   /* ───────────────────────────── DOM ───────────────────────────── */
 
@@ -289,7 +306,7 @@ export function launch(ctx: AppContext): void {
 
   const fileInput = el('input');
   fileInput.type = 'file';
-  fileInput.accept = `image/*,${PROJECT_EXT}`;
+  fileInput.accept = PICKER_ACCEPT;
   fileInput.hidden = true;
 
   const galleryHost = el('div', 'fp-gallery-host');
@@ -356,6 +373,17 @@ export function launch(ctx: AppContext): void {
     commit(L('hLayerProps'));
   });
   layerProps.append(field(L('layerBlend'), blendSel), layerOpacity.row);
+  const maskRow = el('div', 'fp-mask-row');
+  const maskTarget = segmented<'layer' | 'mask'>(L('layerMaskTitle'), [
+    { value: 'layer', label: L('layerMaskEditLayer') }, { value: 'mask', label: L('layerMaskEdit') },
+  ], 'layer', (v) => { maskEdit = v === 'mask'; renderLayers(); say(maskEdit ? L('layerMaskHint') : ''); });
+  maskTarget.root.classList.add('fp-seg-fill');
+  const mInvert = iconButton(L('layerMaskInvert'), 'invert');
+  const mApply = iconButton(L('layerMaskApply'), 'check');
+  const mDelete = iconButton(L('layerMaskDelete'), 'trash', 'fp-danger-icon');
+  const maskBtns = el('div', 'fp-icon-row');
+  maskBtns.append(mInvert, mApply, mDelete);
+  maskRow.append(maskTarget.root, maskBtns);
   const layerList = el('ul', 'fp-layer-list');
   layerList.setAttribute('aria-label', L('layersTitle'));
   const layerActions = el('div', 'fp-layer-actions');
@@ -366,8 +394,10 @@ export function launch(ctx: AppContext): void {
   const lMerge = iconButton(L('layerMergeDown'), 'merge');
   const lFlatten = iconButton(L('layerFlatten'), 'flatten');
   const lDel = iconButton(L('layerDelete'), 'trash', 'fp-danger-icon');
-  layerActions.append(lAdd, lDup, lUp, lDown, lMerge, lFlatten, lDel);
-  pLayers.body.append(layerProps, layerList, layerActions);
+  const lMask = iconButton(L('layerMaskAdd'), 'mask');
+  const lAdj = iconButton(L('layerAdjAdd'), 'adjustLayer');
+  layerActions.append(lAdd, lAdj, lMask, lDup, lUp, lDown, lMerge, lFlatten, lDel);
+  pLayers.body.append(layerProps, maskRow, layerList, layerActions);
 
   /* filters */
   const pFilters = panel('filters', L('filtersTitle'), 'sparkle');
@@ -378,8 +408,8 @@ export function launch(ctx: AppContext): void {
     b.type = 'button';
     b.setAttribute('aria-pressed', 'false');
     const c = el('canvas', 'fp-filter-thumb');
-    c.width = 96;
-    c.height = 72;
+    c.width = THUMB_W;
+    c.height = THUMB_H;
     b.append(c, el('span', 'fp-filter-name', filterLabel(id)));
     b.addEventListener('click', () => pickFilter(id));
     filterButtons.set(id, { btn: b, canvas: c });
@@ -425,7 +455,8 @@ export function launch(ctx: AppContext): void {
   const adjActions = el('div', 'fp-row-end');
   const adjCancel = button(L('adjCancel'));
   const adjApply = button(L('adjApply'), 'primary', 'check');
-  adjActions.append(adjCancel, adjApply);
+  const adjAsLayer = button(L('adjAsLayer'), 'ghost', 'adjustLayer');
+  adjActions.append(adjAsLayer, adjCancel, adjApply);
   pAdjust.body.append(adjActions);
 
   /* image (transform, resize) */
@@ -558,6 +589,7 @@ export function launch(ctx: AppContext): void {
   }
 
   function afterChange(): void {
+    if (tool === 'transform' && ft?.target === 'layer' && doc && ft.id !== doc.activeId && !gesture) initTransform();
     if (doc && selection && (selection.width !== doc.width || selection.height !== doc.height)) selection = null;
     requestRender();
     renderLayers();
@@ -595,9 +627,11 @@ export function launch(ctx: AppContext): void {
     if (session) cancelSession();
     abortGesture();
     revertLive();
+    if (ft) { if (ft.target === 'layer') doc = ft.base; ft = null; }
     const next = dir === 'undo' ? history.undo() : history.redo();
-    if (!next) return;
+    if (!next) { if (tool === 'transform') initTransform(); return; }
     doc = next;
+    if (tool === 'transform') initTransform();
     afterChange();
     say(`${dir === 'undo' ? L('undo') : L('redo')}: ${history.current()?.label.split('#')[0] ?? ''}`);
   }
@@ -826,6 +860,49 @@ export function launch(ctx: AppContext): void {
       ctx.strokeRect(a.x - 2, a.y - 2, b.w * view.zoom + 4, b.h * view.zoom + 4);
       ctx.restore();
     }
+    // free transform box and handles
+    if (tool === 'transform' && ft) {
+      const pts = ftCorners(ft.box, ft.cur).map(S);
+      ctx.save();
+      if (ft.target === 'selection' && selection) {
+        const m = ftMatrix(ft.box, ft.cur);
+        const tr = edgesFor(selection);
+        const path = new Path2D();
+        for (let i = 0; i < tr.length; i += 4) {
+          const a = S(applyMatrix(m, { x: tr[i], y: tr[i + 1] }));
+          const b = S(applyMatrix(m, { x: tr[i + 2], y: tr[i + 3] }));
+          path.moveTo(a.x, a.y);
+          path.lineTo(b.x, b.y);
+        }
+        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = '#fff';
+        ctx.stroke(path);
+        ctx.setLineDash([]);
+      }
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = accent;
+      ctx.beginPath();
+      pts.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+      ctx.closePath();
+      ctx.stroke();
+      const hs = handlePoints(ft.box, ft.cur, FT_ROTATE_GAP / view.zoom);
+      const top = S(hs.find((h) => h.id === 'n')!);
+      const rot = S(hs.find((h) => h.id === 'rotate')!);
+      ctx.beginPath();
+      ctx.moveTo(top.x, top.y);
+      ctx.lineTo(rot.x, rot.y);
+      ctx.stroke();
+      for (const h of hs) {
+        const q = S(h);
+        ctx.beginPath();
+        if (h.id === 'rotate') ctx.arc(q.x, q.y, 6, 0, Math.PI * 2);
+        else ctx.rect(q.x - 5, q.y - 5, 10, 10);
+        ctx.fillStyle = '#fff';
+        ctx.fill();
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
     // brush cursor
     if (hover && (tool === 'brush' || tool === 'eraser' || tool === 'clone')) {
       const p = S(hover);
@@ -903,10 +980,39 @@ export function launch(ctx: AppContext): void {
     made.ctx.setTransform(s, 0, 0, s, ox, oy);
     const m = layer.matrix;
     made.ctx.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
-    drawLayerContent(made.ctx, layer, cache);
+    if (layer.kind === 'adjust') {
+      // No pixels of its own: a split light/dark swatch, the usual sign of an adjustment layer.
+      made.ctx.setTransform(1, 0, 0, 1, 0, 0);
+      made.ctx.fillStyle = '#1a1d26';
+      made.ctx.fillRect(0, 0, size, size);
+      made.ctx.fillStyle = '#E8ECF4';
+      made.ctx.beginPath();
+      made.ctx.arc(size / 2, size / 2, size * 0.3, -Math.PI / 2, Math.PI / 2);
+      made.ctx.fill();
+    } else drawLayerContent(made.ctx, layer, cache);
     c = made.canvas;
     c.className = 'fp-layer-thumb';
     thumbs.set(layer, c);
+    return c;
+  }
+
+  const maskThumbs = new WeakMap<object, HTMLCanvasElement>();
+  function maskThumb(layer: Layer): HTMLCanvasElement {
+    const key = layer.mask as object;
+    let c = maskThumbs.get(key);
+    if (c) return c;
+    const size = 80;
+    const made = canvas2d(size, size);
+    made.ctx.fillStyle = '#000';
+    made.ctx.fillRect(0, 0, size, size);
+    const mc = cache.mask(layer);
+    if (mc) {
+      const k = Math.min(size / mc.width, size / mc.height);
+      made.ctx.drawImage(mc, (size - mc.width * k) / 2, (size - mc.height * k) / 2, mc.width * k, mc.height * k);
+    }
+    c = made.canvas;
+    c.className = 'fp-layer-thumb';
+    maskThumbs.set(key, c);
     return c;
   }
 
@@ -916,8 +1022,16 @@ export function launch(ctx: AppContext): void {
     layerList.replaceChildren();
     if (!doc) return;
     const active = activeLayer(doc);
+    if (!active.mask) maskEdit = false;
     blendSel.value = active.blend;
+    blendSel.disabled = active.kind === 'adjust';
     layerOpacity.set(Math.round(active.opacity * 100));
+    maskRow.hidden = !active.mask;
+    maskTarget.set(maskEdit ? 'mask' : 'layer');
+    mApply.disabled = active.kind !== 'raster' || active.locked;
+    mInvert.disabled = active.locked;
+    mDelete.disabled = active.locked;
+    lMask.disabled = !maskSize(active) || !!active.mask || active.locked;
     const count = doc.layers.length;
     for (let i = count - 1; i >= 0; i--) {
       const layer = doc.layers[i];
@@ -940,11 +1054,12 @@ export function launch(ctx: AppContext): void {
       const names = el('span', 'fp-layer-names');
       const name = el('span', 'fp-layer-name', layer.name);
       name.dir = 'auto';
-      const kind = el('span', 'fp-layer-kind', `${L(layer.kind === 'raster' ? 'layerKindRaster' : layer.kind === 'text' ? 'layerKindText' : 'layerKindShape')}${layer.blend !== 'normal' ? ` · ${blendLabel(layer.blend)}` : ''}${layer.opacity < 1 ? ` · ${Math.round(layer.opacity * 100)}%` : ''}`);
+      const kind = el('span', 'fp-layer-kind', `${L(layer.kind === 'raster' ? 'layerKindRaster' : layer.kind === 'text' ? 'layerKindText' : layer.kind === 'adjust' ? 'layerKindAdjust' : 'layerKindShape')}${layer.blend !== 'normal' ? ` · ${blendLabel(layer.blend)}` : ''}${layer.opacity < 1 ? ` · ${Math.round(layer.opacity * 100)}%` : ''}`);
       names.append(name, kind);
       pick.append(names);
       pick.addEventListener('click', () => {
         if (!doc) return;
+        maskEdit = false;
         doc = setActive(doc, layer.id);
         if (history.current()?.payload !== doc) history.push(L('hLayerProps'), doc, 0, 'active');
         afterChange();
@@ -962,7 +1077,25 @@ export function launch(ctx: AppContext): void {
         doc = updateLayer(doc, layer.id, { locked: !layer.locked });
         commit(L('hLayerProps'));
       });
-      li.append(eye, pick, lock);
+      li.append(eye, pick);
+      if (layer.mask) {
+        const mb = el('button', 'fp-layer-mask');
+        mb.type = 'button';
+        mb.setAttribute('aria-label', L('layerMaskThumb', { name: layer.name }));
+        mb.title = `${L('layerMaskThumb', { name: layer.name })} — ${L('layerMaskEdit')}`;
+        mb.setAttribute('aria-pressed', String(layer.id === active.id && maskEdit));
+        mb.append(maskThumb(layer));
+        mb.addEventListener('click', () => {
+          if (!doc) return;
+          maskEdit = true;
+          doc = setActive(doc, layer.id);
+          if (history.current()?.payload !== doc) history.push(L('hLayerProps'), doc, 0, 'active');
+          afterChange();
+          say(L('layerMaskHint'));
+        });
+        li.append(mb);
+      }
+      li.append(lock);
       layerList.append(li);
     }
     const idx = doc.layers.findIndex((l) => l.id === active.id);
@@ -1043,6 +1176,31 @@ export function launch(ctx: AppContext): void {
   lUp.addEventListener('click', () => { if (!doc) return; const i = doc.layers.findIndex((l) => l.id === doc!.activeId); doc = moveLayerTo(doc, doc.activeId, i + 1); commit(L('hLayerOrder')); });
   lDown.addEventListener('click', () => { if (!doc) return; const i = doc.layers.findIndex((l) => l.id === doc!.activeId); doc = moveLayerTo(doc, doc.activeId, i - 1); commit(L('hLayerOrder')); });
   lMerge.addEventListener('click', () => mergeDown());
+  lMask.addEventListener('click', () => {
+    if (!doc) return;
+    const a = activeLayer(doc);
+    if (!maskSize(a)) { say(L('layerMaskNeedsLayer')); return; }
+    const next = addLayerMask(doc, a.id, selection ? selectionForLayer(a) : null);
+    if (next === doc) return;
+    doc = next;
+    maskEdit = true;
+    commit(L('hMaskAdd'));
+    say(L('layerMaskHint'));
+  });
+  mInvert.addEventListener('click', () => { if (!doc) return; doc = invertLayerMask(doc, doc.activeId); commit(L('hMaskInvert')); });
+  mApply.addEventListener('click', () => { if (!doc) return; maskEdit = false; doc = applyLayerMask(doc, doc.activeId); commit(L('hMaskApply')); });
+  mDelete.addEventListener('click', () => { if (!doc) return; maskEdit = false; doc = setLayerMask(doc, doc.activeId, null); commit(L('hMaskDelete')); });
+  lAdj.addEventListener('click', () => addAdjustLayer({ ...NEUTRAL_ADJUST }));
+
+  /** A non-destructive adjustment layer above the active one (masked by the selection). */
+  function addAdjustLayer(params: AdjustParams): void {
+    if (!doc) return;
+    const layer = adjustLayer(params, doc.width, doc.height, nextLayerName(doc, L('layerAdjName')));
+    doc = addLayer(doc, layer);
+    if (selection) doc = addLayerMask(doc, layer.id, selectionForLayer(layer));
+    maskEdit = false;
+    commit(L('hAdjLayerAdd'));
+  }
   lFlatten.addEventListener('click', () => flatten());
 
   /** Composites a set of layers into one full-canvas raster (identity matrix). */
@@ -1128,18 +1286,22 @@ export function launch(ctx: AppContext): void {
 
   function drawFilterThumbs(): void {
     if (!doc) return;
-    const s = Math.min(1, 144 / Math.max(doc.width, doc.height));
-    const small = readCanvas(renderDoc(doc, cache, s));
+    // The real image, once, at thumbnail size; every look is then the engine's own
+    // `presetThumbnails` (the exact preset maths), and the effects run on the same copy.
+    const s = Math.min(1, (THUMB_W * 1.5) / Math.max(doc.width, doc.height));
+    const small = downscale(readCanvas(renderDoc(doc, cache, s)), THUMB_W);
+    const scale = small.width / doc.width;
+    const looks = presetThumbnails(small, THUMB_W);
     for (const [id, { canvas }] of filterButtons) {
-      const out = applyFilter(small, id, 100, s);
+      const out = looks.get(id) ?? applyFilter(small, id, 100, scale);
       const c = canvas.getContext('2d')!;
-      canvas.width = 96;
-      canvas.height = 72;
-      c.clearRect(0, 0, 96, 72);
+      canvas.width = THUMB_W;
+      canvas.height = THUMB_H;
+      c.clearRect(0, 0, THUMB_W, THUMB_H);
       const src = bufferCanvas(out);
-      const k = Math.max(96 / out.width, 72 / out.height);
+      const k = Math.max(THUMB_W / out.width, THUMB_H / out.height);
       c.imageSmoothingQuality = 'high';
-      c.drawImage(src, (96 - out.width * k) / 2, (72 - out.height * k) / 2, out.width * k, out.height * k);
+      c.drawImage(src, (THUMB_W - out.width * k) / 2, (THUMB_H - out.height * k) / 2, out.width * k, out.height * k);
     }
   }
 
@@ -1160,10 +1322,11 @@ export function launch(ctx: AppContext): void {
   let previewQueued = false;
 
   /** The selection mask in a layer's own pixel space (null = the whole layer). */
-  function selectionForLayer(layer: RasterLayer, scale = 1): Uint8Array | null {
-    if (!selection || !doc) return null;
-    const w = Math.max(1, Math.round(layer.tiled.width * scale));
-    const h = Math.max(1, Math.round(layer.tiled.height * scale));
+  function selectionForLayer(layer: Layer, scale = 1): Uint8Array | null {
+    const size = maskSize(layer);
+    if (!selection || !doc || !size) return null;
+    const w = Math.max(1, Math.round(size.width * scale));
+    const h = Math.max(1, Math.round(size.height * scale));
     const m = layer.matrix;
     if (scale === 1 && isTranslationOnly(m) && m[4] === 0 && m[5] === 0 && w === doc.width && h === doc.height) {
       return selection.mask;
@@ -1237,7 +1400,20 @@ export function launch(ctx: AppContext): void {
     });
   }
 
+  let adjCommitTimer = 0;
+  function editAdjustLayer(patch: Partial<AdjustParams>): boolean {
+    const a = doc && activeLayer(doc);
+    if (!a || a.kind !== 'adjust' || !doc) return false;
+    if (a.locked) { say(L('layerLocked', { name: a.name })); renderAdjustTarget(); return true; }
+    doc = updateAdjust(doc, a.id, patch);
+    requestRender();
+    window.clearTimeout(adjCommitTimer);
+    adjCommitTimer = window.setTimeout(() => commit(L('hAdjLayer')), 400);
+    return true;
+  }
+
   function setAdjust(k: AdjustKey, v: number): void {
+    if (editAdjustLayer({ [k]: v })) { adjSliders.get(k)?.set(v); return; }
     const s = ensureSession('adjust');
     if (!s) { adjSliders.get(k)?.set(0); qSliders.get(k)?.set(0); return; }
     s.params = { ...s.params, [k]: v };
@@ -1247,6 +1423,7 @@ export function launch(ctx: AppContext): void {
   }
 
   function setAdjustFlag(k: 'invert' | 'grayscale', v: boolean): void {
+    if (editAdjustLayer({ [k]: v })) return;
     const s = ensureSession('adjust');
     if (!s) { invChk.input.checked = false; grayChk.input.checked = false; return; }
     s.params = { ...s.params, [k]: v };
@@ -1355,10 +1532,29 @@ export function launch(ctx: AppContext): void {
   function renderAdjustTarget(): void {
     if (!doc) { adjTarget.textContent = ''; return; }
     const a = activeLayer(doc);
+    adjCancel.hidden = adjApply.hidden = a.kind === 'adjust';
+    adjAsLayer.hidden = a.kind === 'adjust';
+    if (a.kind === 'adjust') {
+      adjTarget.textContent = L('adjLayerTarget', { layer: a.name });
+      for (const [k, sl] of adjSliders) sl.set(a.adjust[k]);
+      invChk.input.checked = a.adjust.invert;
+      grayChk.input.checked = a.adjust.grayscale;
+      return;
+    }
+    if (!session) {
+      for (const sl of adjSliders.values()) sl.set(0);
+      invChk.input.checked = false;
+      grayChk.input.checked = false;
+    }
     adjTarget.textContent = selection ? L('adjTargetSel', { layer: a.name }) : L('adjTarget', { layer: a.name });
   }
 
   adjApply.addEventListener('click', () => void applySession());
+  adjAsLayer.addEventListener('click', () => {
+    const params = session?.kind === 'adjust' ? { ...session.params } : { ...NEUTRAL_ADJUST };
+    if (session) cancelSession();
+    addAdjustLayer(params);
+  });
   qAdjApply.addEventListener('click', () => void applySession());
   adjCancel.addEventListener('click', cancelSession);
   qAdjCancel.addEventListener('click', cancelSession);
@@ -1368,7 +1564,9 @@ export function launch(ctx: AppContext): void {
   function setTool(id: ToolId): void {
     if (gesture) abortGesture();
     if (tool === 'crop' && id !== 'crop') cropBox = null;
+    if (tool === 'transform' && id !== 'transform') applyTransform();
     tool = id;
+    if (id === 'transform' && !initTransform()) { tool = 'move'; id = 'move'; say(L('transformNothing')); }
     for (const [key, b] of toolButtons) b.setAttribute('aria-pressed', String(key === id));
     if (id === 'crop' && doc) cropBox = centredAspect(doc, cropAspect);
     settingCloneSource = false;
@@ -1580,6 +1778,22 @@ export function launch(ctx: AppContext): void {
       case 'move':
         add(...selectionButtons().slice(0, 1));
         break;
+      case 'transform': {
+        if (ft) {
+          const r = ftReadout(ft.box, ft.cur);
+          add(el('span', 'fp-opt-readout', L('transformSize', { w: r.w, h: r.h, angle: r.angle })));
+        }
+        const fh = iconButton(L('flipH'), 'flipH');
+        fh.addEventListener('click', () => flipTransform('h'));
+        const fv = iconButton(L('flipV'), 'flipV');
+        fv.addEventListener('click', () => flipTransform('v'));
+        const c = button(L('cancel'));
+        c.addEventListener('click', cancelTransform);
+        const a = button(L('transformApply'), 'primary', 'check');
+        a.addEventListener('click', () => { applyTransform(); setTool('move'); });
+        add(fh, fv, el('span', 'fp-spacer'), c, a);
+        break;
+      }
     }
     add(el('span', 'fp-opt-hint', L(def.hint)));
   }
@@ -1642,6 +1856,65 @@ export function launch(ctx: AppContext): void {
   bgBtn.addEventListener('click', () => openColor(L('background'), bg, (v) => { setBg(v); renderOptions(); }));
   swapBtn.addEventListener('click', () => runCommand('swapColors'));
 
+  /* ─────────────────────────── free transform ─────────────────────────── */
+
+  /** Opens a free transform on the selection (when there is one) or the active layer. */
+  function initTransform(): boolean {
+    ft = null;
+    if (!doc) return false;
+    if (selection) {
+      ft = { target: 'selection', id: '', box: { ...selection.bounds }, cur: { ...FT_IDENTITY }, base: doc };
+      return true;
+    }
+    const a = activeLayer(doc);
+    if (a.locked) return false;
+    const box = layerBounds(a, measureText);
+    if (!(box.w >= 1 && box.h >= 1)) return false;
+    ft = { target: 'layer', id: a.id, box, cur: { ...FT_IDENTITY }, base: doc };
+    return true;
+  }
+
+  function previewTransform(): void {
+    if (!ft) return;
+    if (ft.target === 'layer') {
+      const l = layerById(ft.base, ft.id);
+      if (l) doc = updateLayer(ft.base, ft.id, { matrix: tidy(multiply(ftMatrix(ft.box, ft.cur), l.matrix)) });
+      requestRender();
+    } else drawOverlay();
+    if (tool === 'transform') renderOptions();
+  }
+
+  function applyTransform(): void {
+    const t = ft;
+    ft = null;
+    if (!t || !doc || ftIsIdentity(t.cur)) return;
+    if (t.target === 'layer') { commit(L('hTransform')); return; }
+    if (!selection) return;
+    const m = ftMatrix(t.box, t.cur);
+    const { canvas, ctx } = canvas2d(doc.width, doc.height, true);
+    ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
+    ctx.drawImage(maskCanvas(selection), 0, 0);
+    const data = readCanvas(canvas).data;
+    const mask = new Uint8Array(doc.width * doc.height);
+    for (let i = 0; i < mask.length; i++) mask[i] = data[i * 4 + 3];
+    selection = selectionFromMask(doc.width, doc.height, mask);
+    afterSelection();
+    say(L('hTransformSel'));
+  }
+
+  function cancelTransform(): void {
+    if (ft?.target === 'layer') doc = ft.base;
+    ft = null;
+    setTool('move');
+    requestRender();
+  }
+
+  function flipTransform(axis: 'h' | 'v'): void {
+    if (!ft) return;
+    ft.cur = axis === 'h' ? { ...ft.cur, sx: -ft.cur.sx } : { ...ft.cur, sy: -ft.cur.sy };
+    previewTransform();
+  }
+
   /* ─────────────────────────── crop ─────────────────────────── */
 
   function setCropRatio(id: string): void {
@@ -1693,8 +1966,24 @@ export function launch(ctx: AppContext): void {
     fit();
   }
 
+  /** Fill (reveal) or delete (hide) the selection inside the active layer's mask. */
+  function maskSelection(reveal: boolean): boolean {
+    const t = maskEdit ? maskTarget_() : null;
+    if (!t || !t.mask || !doc) return false;
+    const m = selectionForLayer(t);
+    const b = m && maskBounds(m, t.mask.width, t.mask.height);
+    if (!b || !m) return true;
+    const region = readRegion(t.mask, b);
+    const mr = maskRegion(m, t.mask.width, b);
+    const out = reveal ? fillMasked(region, mr, [255, 255, 255], 1) : clearMasked(region, mr);
+    doc = setLayerMask(doc, t.id, writeRegion(t.mask, b.x, b.y, out));
+    commit(L('hMaskPaint'));
+    return true;
+  }
+
   function fillSelection(): void {
     if (!doc || !selection) { say(L('selectionNone')); return; }
+    if (maskSelection(true)) return;
     const layer = editableRaster(false);
     if (!layer) return;
     const mask = selectionForLayer(layer);
@@ -1708,6 +1997,7 @@ export function launch(ctx: AppContext): void {
 
   function deleteSelected(): void {
     if (!doc || !selection) { say(L('selectionNone')); return; }
+    if (maskSelection(false)) return;
     const layer = editableRaster(true);
     if (!layer) return;
     const mask = selectionForLayer(layer);
@@ -1773,7 +2063,8 @@ export function launch(ctx: AppContext): void {
     | { kind: 'crop'; handle: CropHandle; start: Point; box: Rect }
     | { kind: 'stroke'; s: StrokeState }
     | { kind: 'gradient'; from: Point; to: Point | null; layer: RasterLayer; work: HTMLCanvasElement }
-    | { kind: 'shape'; from: Point; base: PhotoDoc; id: string };
+    | { kind: 'shape'; from: Point; base: PhotoDoc; id: string }
+    | { kind: 'ft'; handle: FtHandle; from: Point; start: FreeTransform };
   let gesture: Gesture | null = null;
   const pointers = new Map<number, Point>();
   let pinch: { base: View; a: Point; b: Point } | null = null;
@@ -1788,8 +2079,10 @@ export function launch(ctx: AppContext): void {
     if (!gesture) return;
     const g = gesture;
     gesture = null;
-    if (g.kind === 'stroke' || g.kind === 'gradient') overrides.delete(g.kind === 'stroke' ? g.s.layerId : g.layer.id);
+    if (g.kind === 'stroke') overrides.delete(g.s.target === 'mask' ? `mask:${g.s.layerId}` : g.s.layerId);
+    if (g.kind === 'gradient') overrides.delete(g.layer.id);
     if (g.kind === 'move' || g.kind === 'shape') doc = g.base;
+    if (g.kind === 'ft' && ft) { ft.cur = g.start; previewTransform(); }
     requestRender();
   }
 
@@ -1900,6 +2193,13 @@ export function launch(ctx: AppContext): void {
       case 'zoom':
         setZoom(zoomStop(view.zoom, e.altKey ? -1 : 1), screen);
         return;
+      case 'transform': {
+        if (!ft && !initTransform()) return;
+        const reach = (e.pointerType === 'touch' ? 26 : 12) / view.zoom;
+        const handle = hitHandle(ft!.box, ft!.cur, p, reach, FT_ROTATE_GAP / view.zoom);
+        if (handle) gesture = { kind: 'ft', handle, from: p, start: { ...ft!.cur } };
+        return;
+      }
       case 'marquee':
         gesture = { kind: 'marquee', from: p, to: null, square: e.shiftKey && opts.selMode === 'replace', mode: modeFromModifiers(opts.selMode, e.shiftKey, e.altKey) };
         return;
@@ -2017,6 +2317,11 @@ export function launch(ctx: AppContext): void {
         requestRender();
         return;
       }
+      case 'ft':
+        if (!ft) return;
+        ft.cur = dragHandle(ft.box, g.start, g.handle, g.from, p, e.shiftKey);
+        previewTransform();
+        return;
       case 'marquee':
         g.to = p;
         g.square = e.shiftKey && g.mode === 'replace';
@@ -2137,6 +2442,8 @@ export function launch(ctx: AppContext): void {
 
   interface StrokeState {
     layerId: string;
+    /** 'mask': the stroke edits the layer's mask (white = reveal via source-over, black = hide via erase). */
+    target: 'layer' | 'mask';
     kind: 'brush' | 'eraser' | 'clone';
     base: HTMLCanvasElement;
     work: HTMLCanvasElement;
@@ -2171,14 +2478,26 @@ export function launch(ctx: AppContext): void {
     return canvas;
   }
 
+  /** The active layer when its mask is the paint target (brush, eraser, fill, delete). */
+  function maskTarget_(): Layer | null {
+    const a = doc && activeLayer(doc);
+    if (!a || !maskEdit || !a.mask) return null;
+    if (a.locked) { say(L('layerLocked', { name: a.name })); return null; }
+    return a;
+  }
+
   function beginStroke(p: Point): StrokeState | null {
-    const layer = editableRaster(false);
+    const masked = maskEdit ? maskTarget_() : null;
+    if (maskEdit && !masked) return null;
+    if (masked && tool === 'clone') { say(L('layerMaskNoClone')); return null; }
+    const layer = masked ?? editableRaster(false);
     if (!layer || !doc) return null;
     const inv = invert(layer.matrix);
     if (!inv) return null;
-    const lw = layer.tiled.width;
-    const lh = layer.tiled.height;
-    const base = cache.get(layer);
+    const size = maskSize(layer)!;
+    const lw = size.width;
+    const lh = size.height;
+    const base = masked ? cache.mask(masked)! : cache.get(layer as RasterLayer);
     const work = canvas2d(lw, lh).canvas;
     work.getContext('2d')!.drawImage(base, 0, 0);
     const stroke = canvas2d(lw, lh).canvas;
@@ -2193,15 +2512,17 @@ export function launch(ctx: AppContext): void {
         mask = bufferCanvas({ width: lw, height: lh, data });
       }
     }
-    const kind = tool === 'eraser' ? 'eraser' : tool === 'clone' ? 'clone' : 'brush';
+    const kind = masked
+      ? (maskPaintHides(tool === 'eraser' ? bg : fg) ? 'eraser' : 'brush')
+      : tool === 'eraser' ? 'eraser' : tool === 'clone' ? 'clone' : 'brush';
     const lp = applyMatrix(inv, p);
     const s: StrokeState = {
-      layerId: layer.id, kind, base, work, stroke, inv, last: lp, carry: 0, dirty: null,
-      tip: brushTip(radius * 2, opts.hardness / 100, kind === 'brush' ? fg : '#000000'), radius, mask,
+      layerId: layer.id, target: masked ? 'mask' : 'layer', kind, base, work, stroke, inv, last: lp, carry: 0, dirty: null,
+      tip: brushTip(radius * 2, opts.hardness / 100, masked ? '#ffffff' : kind === 'brush' ? fg : '#000000'), radius, mask,
       cloneOffset: kind === 'clone' && cloneSource ? (() => { const c = applyMatrix(inv, cloneSource); return { x: c.x - lp.x, y: c.y - lp.y }; })() : null,
       opacity: opts.opacity / 100, queued: null,
     };
-    overrides.set(layer.id, { canvas: work, width: lw, height: lh });
+    overrides.set(masked ? `mask:${layer.id}` : layer.id, { canvas: work, width: lw, height: lh });
     dab(s, lp);
     flushStroke(s);
     return s;
@@ -2261,8 +2582,17 @@ export function launch(ctx: AppContext): void {
   }
 
   function finishStroke(s: StrokeState): void {
-    overrides.delete(s.layerId);
+    overrides.delete(s.target === 'mask' ? `mask:${s.layerId}` : s.layerId);
     if (!doc || !s.dirty) { requestRender(); return; }
+    if (s.target === 'mask') {
+      const ml = layerById(doc, s.layerId);
+      if (!ml?.mask) return;
+      const region = readRegion(ml.mask, s.dirty);
+      const out = compositeStroke(region, readCanvas(s.stroke, s.dirty), s.opacity, s.kind === 'eraser');
+      doc = setLayerMask(doc, ml.id, writeRegion(ml.mask, s.dirty.x, s.dirty.y, out));
+      commit(L('hMaskPaint'));
+      return;
+    }
     const layer = layerById(doc, s.layerId);
     if (!layer || layer.kind !== 'raster') return;
     const r = s.dirty;
@@ -2418,10 +2748,12 @@ export function launch(ctx: AppContext): void {
       case 'brushBigger': opts.size = Math.min(400, Math.round(opts.size * 1.2) + 1); renderOptions(); drawOverlay(); return;
       case 'apply':
         if (tool === 'crop') applyCrop();
+        else if (tool === 'transform') { applyTransform(); setTool('move'); }
         else if (session) void applySession();
         return;
       case 'cancel':
         if (gesture) abortGesture();
+        else if (tool === 'transform') cancelTransform();
         else if (session) cancelSession();
         else if (tool === 'crop') setTool('move');
         else if (selection) { selection = null; afterSelection(); }
@@ -2458,7 +2790,7 @@ export function launch(ctx: AppContext): void {
     if (mode === 'gallery' && !(action.kind === 'command' && ['open', 'new', 'help'].includes(action.command))) return;
     if (action.kind === 'command' && (action.command === 'copy' || action.command === 'cut') && !doc) return;
     if (action.kind === 'command' && action.command === 'paste') return; // let the paste event fire
-    if (action.kind === 'command' && action.command === 'cancel' && !gesture && !session && tool !== 'crop' && !selection) return;
+    if (action.kind === 'command' && action.command === 'cancel' && !gesture && !session && tool !== 'crop' && tool !== 'transform' && !selection) return;
     e.preventDefault();
     e.stopPropagation();
     if (action.kind === 'tool') {

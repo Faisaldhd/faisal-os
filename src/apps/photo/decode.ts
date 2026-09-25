@@ -16,6 +16,7 @@ import {
   REFUSAL_MESSAGES, MAX_PIXELS, PROBE_PNG, decideDecode, decodeFailureReason, extensionOf,
   formatForExtension, probeFormats, type ProbeSamples, type RefusalReason, type SourceFormat,
 } from './formats';
+import { HeicError, sniffHeif } from './heic-core';
 
 export interface DecodedImage {
   buffer: PixelBuffer;
@@ -117,6 +118,8 @@ export async function decodeSource(bytes: Uint8Array, path: string): Promise<Dec
   if (!info) throw new DecodeRefusal('not-an-image');
   if (!info.canOpen) throw new DecodeRefusal('cannot-open');
 
+  if (info.id === 'heic') return decodeHeicSource(bytes);
+
   try {
     if (info.id === 'svg' || typeof createImageBitmap !== 'function') {
       return await decodeViaDataUrl(bytes, info.mime);
@@ -127,6 +130,34 @@ export async function decodeSource(bytes: Uint8Array, path: string): Promise<Dec
     // A codec the browser does not have and a broken file look identical from here, so the
     // message names the format and says both possibilities rather than guessing.
     throw new DecodeRefusal(decodeFailureReason(info.id, undefined));
+  }
+}
+
+/**
+ * HEIC/HEIF (iPhone photos). A browser that decodes HEIC itself (Safari) is used first — it
+ * costs nothing; everywhere else the libheif WebAssembly codec is fetched on demand
+ * (heic.ts → heic.worker.ts). A file named .heic that is really a JPEG/PNG (some apps rename
+ * on export) opens through the browser's decoder. Failures are refusals that name the format.
+ */
+async function decodeHeicSource(bytes: Uint8Array): Promise<DecodedImage> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      return await decodeViaBitmap(bytes, sniffHeif(bytes) ? 'image/heic' : '');
+    } catch {
+      if (!sniffHeif(bytes)) throw new DecodeRefusal('decode-failed');
+    }
+  }
+  let mod: typeof import('./heic');
+  try {
+    mod = await import('./heic');
+  } catch {
+    throw new DecodeRefusal('decoder-unavailable');
+  }
+  try {
+    const out = await mod.decodeHeic(bytes, MAX_PIXELS);
+    return { buffer: out.buffer, note: out.note };
+  } catch (error) {
+    throw new DecodeRefusal(error instanceof HeicError && error.reason === 'unavailable' ? 'decoder-unavailable' : 'decode-failed');
   }
 }
 
