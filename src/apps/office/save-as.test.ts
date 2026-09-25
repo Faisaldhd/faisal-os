@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DocModel, SheetsModel, TextModel } from './model';
-import { defaultSaveFormat, isExportOnlyFormat, saveFormatChoices, serializeAs, textOf } from './save-as';
+import { defaultSaveFormat, saveFormatChoices, serializeAs, textOf } from './save-as';
+import { planFor } from './model';
 
 /**
  * Office "Save as" — the format table.
@@ -64,8 +65,9 @@ describe('office save-as — the bytes', () => {
     expect(new TextDecoder().decode(bytes.subarray(30, 30 + nameLength))).toBe('mimetype');
     const content = new TextDecoder().decode(bytes.subarray(30 + nameLength, 30 + nameLength + 39));
     expect(content).toBe('application/vnd.oasis.opendocument.text');
-    expect(isExportOnlyFormat('odt')).toBe(true);
-    expect(isExportOnlyFormat('docx')).toBe(false);
+    // The package it just wrote is one this app can open again (the import landed in the same
+    // release): saving as `.odt` is a real save-as, and the window continues on the new file.
+    expect(planFor('odt-save-check.odt')).toMatchObject({ kind: 'docx', odf: true, refusal: null });
   });
 
   it('writes RFC 4180 CSV, always with a comma, whatever the model delimiter was', () => {

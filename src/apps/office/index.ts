@@ -37,9 +37,10 @@ import { patchPackage, packageKind, snapshotModel, type PatchResult } from './pa
 import { backupPathFor, saveFailure, saveWithBackup, withinHome } from './save';
 import { formatBytes } from '../files/format';
 import {
-  defaultSaveFormat, isExportOnlyFormat, saveFormatChoices, saveFormatLabelKey, serializeAs, type SaveFormatId,
+  defaultSaveFormat, saveFormatChoices, serializeAs, type SaveFormatId,
 } from './save-as';
 import { newDeckPptx } from './pptx';
+import { odtTitleOf, toOdt } from './writer/odt';
 import { deckTexts, readDeck } from './impress/deck';
 import { writeDelimited } from './file';
 import type { Editor, EditorContext } from './editor';
@@ -726,6 +727,9 @@ function launch(ctx: AppContext): void {
     try {
       let data: Uint8Array;
       if (patched) data = patched.bytes;
+      // A document opened from an `.odt` is written back as OpenDocument: OOXML bytes inside a
+      // `.odt` path would be a file no reader opens.
+      else if (plan.odf && model.kind === 'docx') data = toOdt(model, { title: odtTitleOf(model, basename(filePath)), created: new Date().toISOString() });
       else if (model.kind === 'docx' && model.blocks) data = (await rebuildDocxRich(model)) ?? serializeModel(model);
       else data = serializeModel(model);
       attempt = data.length;
@@ -943,13 +947,6 @@ function launch(ctx: AppContext): void {
     busy = false;
     syncBar();
     if (outcome.status !== 'saved') return;
-    // An export-only format (`.odt`) writes the file and keeps THIS document open, with its own
-    // path untouched: the reader cannot open an OpenDocument file back yet, and pretending the
-    // window is now editing the `.odt` would be a lie the very next save would expose.
-    if (written && isExportOnlyFormat(written)) {
-      setStatus(t('office.exportedAs', { name: basename(outcome.path), format: t(saveFormatLabelKey(written)) }));
-      return;
-    }
     filePath = normalize(outcome.path);
     await open();
     setStatus(t('office.saveAsDone', { name: basename(filePath) }));

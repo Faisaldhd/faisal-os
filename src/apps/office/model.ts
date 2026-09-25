@@ -148,6 +148,8 @@ export interface FormatPlan {
   /** `.xlsm` is rendered but never saved: rewriting it as OOXML would drop its macros. */
   readOnly: 'macros' | null;
   delimiter: ',' | '\t';
+  /** The file is OpenDocument (`writer/odtread.ts` reads it, `writer/odt.ts` writes it back). */
+  odf?: boolean;
 }
 
 /** Editing is offered; read-only is rendered but Save/Add/Remove stay hidden. */
@@ -162,6 +164,7 @@ export interface FormatRow { ext: string; level: SupportLevel; note: string }
  */
 export const VERIFIED_FORMATS: readonly FormatRow[] = [
   { ext: '.docx', level: 'edit', note: 'readDocx paragraphs; saved by patching word/document.xml only' },
+  { ext: '.odt', level: 'edit', note: 'readOdt paragraphs/runs/lists/tables; saved as a fresh OpenDocument package' },
   { ext: '.xlsx', level: 'edit', note: 'readXlsx cells; saved by patching the affected worksheet and shared strings' },
   { ext: '.xlsm', level: 'read-only', note: 'readXlsx works, but saving would drop the macros' },
   { ext: '.pptx', level: 'edit', note: 'readPptx slide text; saved by patching the affected slide parts' },
@@ -176,7 +179,7 @@ export const VERIFIED_FORMATS: readonly FormatRow[] = [
 
 /** The extensions the manifest offers, in the order the Store description lists them. */
 export const OFFICE_EXTENSIONS: readonly string[] = [
-  '.docx', '.xlsx', '.xlsm', '.pptx', '.csv', '.tsv', '.txt', '.md',
+  '.docx', '.odt', '.xlsx', '.xlsm', '.pptx', '.csv', '.tsv', '.txt', '.md',
 ];
 
 const LEGACY: Record<string, Refusal> = { '.doc': 'legacy', '.xls': 'legacy', '.ppt': 'legacy' };
@@ -187,6 +190,9 @@ export function planFor(path: string): FormatPlan {
   const base: FormatPlan = { ext, kind: null, refusal: null, readOnly: null, delimiter: ',' };
   switch (ext) {
     case '.docx': return { ...base, kind: 'docx' };
+    // An OpenDocument text file is the Writer's own document in another package: same model, and
+    // the save writes ODF back (see `odf` above) instead of OOXML into a `.odt` path.
+    case '.odt': return { ...base, kind: 'docx', odf: true };
     case '.xlsx': return { ...base, kind: 'xlsx' };
     case '.xlsm': return { ...base, kind: 'xlsx', readOnly: 'macros' };
     case '.pptx': return { ...base, kind: 'pptx' };
