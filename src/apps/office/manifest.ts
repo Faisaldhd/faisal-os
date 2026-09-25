@@ -20,9 +20,9 @@ const ICON_OFFICE = tile(
  * Static app metadata: kept apart from the app code so the desktop can list the app
  * without loading it.
  *
- * Store-only by design: `defaultInstalled: false` means the kernel treats it as
- * installed *after* the Store adds it (see `src/kernel/apps.ts:131`), and `core: false`
- * means the owner can remove it again.
+ * Installed by default (the owner's decision, 2026-09-25): a new user who double-clicks an
+ * .xlsx or .docx gets this editor instead of the read-only File Viewer. `core: false` stays,
+ * so it can still be removed from the Store and that removal is remembered.
  */
 export const manifest: AppManifest = {
   id: 'org.faisal.Office',
@@ -38,5 +38,5 @@ export const manifest: AppManifest = {
   version: '1.0.0',
   releasedAt: '2026-09-24',
   core: false,
-  defaultInstalled: false,
+  defaultInstalled: true,
 };

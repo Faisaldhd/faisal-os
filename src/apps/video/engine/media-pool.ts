@@ -12,6 +12,7 @@
  */
 import type { EngineMedia } from '../engine-port';
 import type { MediaClip } from '../project';
+import { perfMark } from '../perf';
 import type { FrameImage, FrameProvider } from './compositor';
 
 type RvfcElement = HTMLVideoElement & {
@@ -134,6 +135,10 @@ export class MediaPool implements FrameProvider {
     if (el instanceof HTMLVideoElement) el.playsInline = true;
     (el as HTMLMediaElement & { preservesPitch?: boolean }).preservesPitch = true;
     el.src = media.url;
+    // The playback element the engine will actually draw from: this is the "sync" side of
+    // readiness, and it happens after the pool has finished its own probing element.
+    perfMark('engine:element', clip.type);
+    el.addEventListener('canplay', () => perfMark('engine:canplay', `rs=${el.readyState}`), { once: true });
     this.entries.set(clip.id, { el, mediaId: clip.mediaId, url: media.url });
     return el;
   }

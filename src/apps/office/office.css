@@ -141,7 +141,8 @@
 .fo-btn.is-danger { background: var(--app-danger); color: #fff; }
 .fo-btn:disabled { opacity: .4; cursor: default; }
 .fo-btn:focus-visible, .fo-tab:focus-visible, .fo-select:focus-visible, .fo-input:focus-visible, .fo-card:focus-visible, .fo-filerow:focus-visible,
-.fo-menu-item:focus-visible, .fo-thumb:focus-visible, .fo-nav-item:focus-visible, .fo-fxinput:focus-visible, .fo-namebox:focus-visible, .fo-sheettab:focus-visible {
+.fo-menu-item:focus-visible, .fo-thumb:focus-visible, .fo-nav-item:focus-visible, .fo-fxinput:focus-visible, .fo-namebox:focus-visible, .fo-sheettab:focus-visible,
+.fo-swatch:focus-visible, .fo-swatch-none:focus-visible, .fo-swatch-custom:focus-visible {
   outline: 2px solid var(--app-copper-2);
   outline-offset: 2px;
 }
@@ -550,11 +551,40 @@
 .fo-menu-label { flex: 1; }
 .fo-menu-hint { color: var(--app-text-3); font-size: 12px; }
 .fo-menu-sep { height: 1px; background: var(--app-hairline); margin: 4px 0; }
-.fo-colorpop { display: flex; flex-direction: column; gap: 8px; }
-.fo-swatches { display: grid; grid-template-columns: repeat(5, 32px); gap: 4px; }
-.fo-swatch { width: 32px; height: 32px; border-radius: 6px; border: 1px solid var(--app-hairline-strong); cursor: pointer; }
-.fo-swatch-none { appearance: none; min-height: 32px; border: 1px solid var(--app-hairline-strong); border-radius: 6px; background: transparent; color: var(--app-text); font: inherit; cursor: pointer; }
-.fo-swatch-custom { width: 100%; height: 32px; border: 0; background: transparent; }
+/*
+ * The colour chips: on a phone every swatch must be a 44px target (AGENTS.md), while a mouse
+ * still gets the same compact 32px chip it always had. The padding *is* the extra hit area, so
+ * `--fo-chip` is the target and `--fo-chip-pad` the gutter the colour never paints into.
+ * `background-clip: content-box` is what keeps the colour inside that gutter, and it needs
+ * `!important` because the colour control writes the shorthand `background` inline
+ * (`ui/ribbon.ts`), which resets the clip to `border-box`.
+ */
+.fo-colorpop { display: flex; flex-direction: column; gap: 8px; --fo-chip: 34px; --fo-chip-pad: 1px; }
+@media (pointer: coarse) { .fo-colorpop { --fo-chip: 44px; --fo-chip-pad: 6px; } }
+@container office (max-width: 700px) { .fo-colorpop { --fo-chip: 44px; --fo-chip-pad: 6px; } }
+.fo-swatches { display: grid; grid-template-columns: repeat(5, var(--fo-chip)); gap: 4px; }
+.fo-swatch {
+  position: relative;
+  box-sizing: border-box;
+  width: var(--fo-chip);
+  height: var(--fo-chip);
+  padding: var(--fo-chip-pad);
+  border: 0;
+  border-radius: 6px;
+  background-clip: content-box !important;
+  cursor: pointer;
+}
+/* The hairline the chip used to carry as its own border, now drawn around the colour itself. */
+.fo-swatch::after {
+  content: '';
+  position: absolute;
+  inset: var(--fo-chip-pad);
+  border: 1px solid var(--app-hairline-strong);
+  border-radius: 6px;
+  pointer-events: none;
+}
+.fo-swatch-none { appearance: none; min-height: var(--fo-chip); border: 1px solid var(--app-hairline-strong); border-radius: 6px; background: transparent; color: var(--app-text); font: inherit; cursor: pointer; }
+.fo-swatch-custom { width: 100%; height: var(--fo-chip); border: 0; background: transparent; }
 .fo-find { display: flex; flex-direction: column; gap: 8px; min-width: 260px; }
 .fo-find-count { font-size: 12px; color: var(--app-text-3); min-height: 16px; }
 .fo-find-actions { display: flex; gap: 4px; flex-wrap: wrap; }

@@ -161,7 +161,7 @@ Every row is derived from the app manifest in `src/apps/*/manifest.ts`. "multi" 
 | `org.faisal.Store` | المتجر / Store | system | `apps:manage`, `notifications` | single | Browses the catalog and installs/removes built-in apps (core apps cannot be removed) |
 | `org.faisal.Settings` | الإعدادات / Settings | system | `settings` | single | Theme, accent, language, session restore, storage estimate, reset and About |
 
-Notes: `Files`, `Terminal`, `Settings` and `Store` are `core` and cannot be uninstalled. The AI app keeps the id `org.faisal.Claude` from its first version so install state and pins carry over. `org.faisal.Store` is the only manifest that sets `defaultInstalled: true` explicitly; the others rely on the default.
+Notes: `Files`, `Terminal`, `Settings` and `Store` are `core` and cannot be uninstalled. The AI app keeps the id `org.faisal.Claude` from its first version so install state and pins carry over. `org.faisal.Store` and the four suite apps (`Office`, `PDF Documents`, `Photo Editor`, `Video Studio`) set `defaultInstalled: true` explicitly, so a new user gets them from the first run; every other manifest relies on the default.
 
 ## Getting started
 
@@ -227,9 +227,9 @@ Numbers measured on a local `dist/` build (see [docs/audit/build-perf.md](docs/a
 - Hijri dates come from the browser's `Intl` Umm al-Qura data, not from a bundled calendar.
 - There is no dedicated mobile layout; touch works, but the shell is designed for a desktop-sized pointer.
 
-## License and credits
+## Credits
 
-No license file yet — all rights reserved by the author (Faisal Saeed Al Shahrani). `package.json` carries a `"license": "ISC"` field, but no `LICENSE` file exists in the repository.
+Fai$al OS is released under the MIT License — see [LICENSE](LICENSE) and the [License](#license) section below.
 
 Bundled third-party components keep their own licenses: v86 (BSD-2-Clause), SeaBIOS/SeaVGABIOS (LGPL-3.0), the Linux kernel and BusyBox (GPL-2.0) — see [public/v86/README.md](public/v86/README.md) for the exact sources. Runtime libraries used: `@xterm/xterm`, `@xterm/addon-fit`, `v86` and `html-to-image`, with Vite, TypeScript, Vitest, jsdom and `fake-indexeddb` for development.
 
