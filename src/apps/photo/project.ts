@@ -13,11 +13,17 @@ import {
   isBlendMode, newLayerId, type Layer, type PhotoDoc, type ShapeSpec, type TextSpec,
 } from './layers';
 import type { Matrix } from './transform';
+import { NEUTRAL_ADJUST, adjustRange, type AdjustKey, type AdjustParams } from './ops';
 import { fromBuffer, toBuffer } from './tiles';
 
 export const PROJECT_EXT = '.fphoto';
 export const PROJECT_FORMAT = 'faisal-photo';
-export const PROJECT_VERSION = 1;
+/**
+ * Version 2 added layer masks and adjustment layers. A project that uses neither is still
+ * written as version 1, so an older editor keeps opening it; one that uses them says 2, so an
+ * older editor refuses it with "made by a newer version" instead of failing on a layer.
+ */
+export const PROJECT_VERSION = 2;
 
 export interface RasterCodec {
   /** Buffer → base64 payload (PNG in the app). */
@@ -35,11 +41,14 @@ export class ProjectError extends Error {
 
 interface StoredBase {
   name: string; visible: boolean; locked: boolean; opacity: number; blend: string; matrix: number[];
+  /** Layer mask as PNG (alpha = coverage), in the layer's own space. */
+  mask?: { width: number; height: number; png: string };
 }
 type StoredLayer =
   | (StoredBase & { kind: 'raster'; width: number; height: number; png: string })
   | (StoredBase & { kind: 'text'; text: TextSpec })
-  | (StoredBase & { kind: 'shape'; shape: ShapeSpec });
+  | (StoredBase & { kind: 'shape'; shape: ShapeSpec })
+  | (StoredBase & { kind: 'adjust'; adjust: AdjustParams; width: number; height: number });
 
 interface StoredProject {
   format: string; version: number; width: number; height: number; active: number; layers: StoredLayer[];
@@ -55,17 +64,22 @@ export async function serializeProject(doc: PhotoDoc, codec: RasterCodec): Promi
     const base: StoredBase = {
       name: l.name, visible: l.visible, locked: l.locked, opacity: l.opacity, blend: l.blend, matrix: [...l.matrix],
     };
+    if (l.mask) {
+      base.mask = { width: l.mask.width, height: l.mask.height, png: await codec.encode(toBuffer(l.mask)) };
+    }
     if (l.kind === 'raster') {
       layers.push({ ...base, kind: 'raster', width: l.tiled.width, height: l.tiled.height, png: await codec.encode(toBuffer(l.tiled)) });
     } else if (l.kind === 'text') {
       layers.push({ ...base, kind: 'text', text: { ...l.text } });
+    } else if (l.kind === 'adjust') {
+      layers.push({ ...base, kind: 'adjust', adjust: { ...l.adjust }, width: l.width, height: l.height });
     } else {
       layers.push({ ...base, kind: 'shape', shape: { ...l.shape, from: { ...l.shape.from }, to: { ...l.shape.to } } });
     }
   }
   const project: StoredProject = {
     format: PROJECT_FORMAT,
-    version: PROJECT_VERSION,
+    version: doc.layers.some((l) => l.mask || l.kind === 'adjust') ? PROJECT_VERSION : 1,
     width: doc.width,
     height: doc.height,
     active: Math.max(0, doc.layers.findIndex((l) => l.id === doc.activeId)),
@@ -126,6 +140,19 @@ function shapeOf(v: unknown): ShapeSpec {
   };
 }
 
+function adjustOf(v: unknown): AdjustParams {
+  const o = (v ?? {}) as Record<string, unknown>;
+  const out: AdjustParams = { ...NEUTRAL_ADJUST };
+  for (const k of Object.keys(NEUTRAL_ADJUST) as (keyof AdjustParams)[]) {
+    if (k === 'invert' || k === 'grayscale') out[k] = bool(o[k], false);
+    else {
+      const [min, max] = adjustRange(k as AdjustKey);
+      out[k] = num(o[k], 0, min, max);
+    }
+  }
+  return out;
+}
+
 /** The pixel budget a project may claim (same order as the editor's open limit). */
 export const PROJECT_MAX_PIXELS = 24_000_000;
 
@@ -173,8 +200,23 @@ export async function parseProject(json: string, codec: RasterCodec): Promise<Ph
       layers.push({ ...base, kind: 'text', text: textOf(s.text) });
     } else if (s.kind === 'shape') {
       layers.push({ ...base, kind: 'shape', shape: shapeOf(s.shape) });
+    } else if (s.kind === 'adjust') {
+      const w = Math.round(num(s.width, width, 1, 16384));
+      const h = Math.round(num(s.height, height, 1, 16384));
+      layers.push({ ...base, kind: 'adjust', adjust: adjustOf(s.adjust), width: w, height: h });
     } else {
       throw new ProjectError('bad-layer');
+    }
+    const last = layers[layers.length - 1];
+    const m = s.mask as { width?: unknown; height?: unknown; png?: unknown } | undefined;
+    if (m && typeof m === 'object' && (last.kind === 'raster' || last.kind === 'adjust')) {
+      const want = last.kind === 'raster' ? { w: last.tiled.width, h: last.tiled.height } : { w: last.width, h: last.height };
+      if (num(m.width, 0) !== want.w || num(m.height, 0) !== want.h || typeof m.png !== 'string') throw new ProjectError('bad-layer');
+      pixels += want.w * want.h;
+      if (pixels > PROJECT_MAX_PIXELS * 4) throw new ProjectError('too-large');
+      const mb = await codec.decode(m.png, want.w, want.h);
+      if (mb.width !== want.w || mb.height !== want.h) throw new ProjectError('bad-layer');
+      last.mask = fromBuffer(mb);
     }
   }
   const active = Math.round(num(p.active, layers.length - 1, 0, layers.length - 1));
