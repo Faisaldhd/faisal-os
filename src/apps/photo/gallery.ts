@@ -54,7 +54,8 @@ export async function thumbnail(vfs: VFS, st: Pick<Stat, 'path' | 'mtime' | 'siz
       let source: CanvasImageSource;
       let w: number;
       let h: number;
-      if (info && info.id !== 'svg' && typeof createImageBitmap === 'function') {
+      // SVG needs the data: URL path and HEIC the on-demand codec, both inside decodeSource.
+      if (info && info.id !== 'svg' && info.id !== 'heic' && typeof createImageBitmap === 'function') {
         const bmp = await createImageBitmap(new Blob([bytes.slice()], { type: info.mime }));
         source = bmp; w = bmp.width; h = bmp.height;
       } else {

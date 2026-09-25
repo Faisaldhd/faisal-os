@@ -6,97 +6,38 @@
  * selection uses, so the bucket, the wand and the selection share one representation.
  */
 import type { PixelBuffer, Point, Rect } from './types';
+import { combineMasks, magicWand, maskBounds } from './engine/select';
+import { createImg, mixByMask } from './engine/core';
+
+/*
+ * Flood fill, mask bounds, mask intersection and masked mixing are the pixel engine's
+ * (engine/select.ts, engine/core.ts); the helpers below are thin adapters that keep the
+ * editor's call shapes. What remains here is what the engine does not have: region-sized
+ * masked fill/clear, the stroke commit and dab spacing used by the canvas brush.
+ */
+export { maskBounds };
 
 export interface MaskResult {
   mask: Uint8Array;
   bounds: Rect;
 }
 
-/** The bounding box of every non-zero mask byte, or null when the mask is empty. */
-export function maskBounds(mask: Uint8Array, width: number, height: number): Rect | null {
-  let x0 = width;
-  let y0 = height;
-  let x1 = -1;
-  let y1 = -1;
-  for (let y = 0; y < height; y++) {
-    const row = y * width;
-    let first = -1;
-    let last = -1;
-    for (let x = 0; x < width; x++) {
-      if (mask[row + x]) {
-        if (first < 0) first = x;
-        last = x;
-      }
-    }
-    if (first >= 0) {
-      if (first < x0) x0 = first;
-      if (last > x1) x1 = last;
-      if (y < y0) y0 = y;
-      y1 = y;
-    }
-  }
-  return x1 < 0 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
-}
-
 /**
  * Pixels "like" the one at (x, y): every channel (alpha included) within `tolerance`
- * (0..255). `contiguous` keeps only the connected region (4-neighbour scanline fill), which
- * is what a paint bucket and a magic wand normally do; otherwise every similar pixel counts.
+ * (0..255). `contiguous` keeps only the connected region, which is what a paint bucket and a
+ * magic wand normally do; otherwise every similar pixel counts. Null when nothing matched.
  */
 export function floodMask(
   buf: PixelBuffer, x: number, y: number, tolerance: number, contiguous = true,
 ): MaskResult | null {
-  const { width, height, data } = buf;
-  const sx = Math.floor(x);
-  const sy = Math.floor(y);
-  if (sx < 0 || sy < 0 || sx >= width || sy >= height) return null;
-  const tol = Math.max(0, Math.min(255, tolerance));
-  const at = (sy * width + sx) * 4;
-  const r0 = data[at];
-  const g0 = data[at + 1];
-  const b0 = data[at + 2];
-  const a0 = data[at + 3];
-  const similar = (p: number) => {
-    const i = p * 4;
-    return Math.abs(data[i] - r0) <= tol && Math.abs(data[i + 1] - g0) <= tol
-      && Math.abs(data[i + 2] - b0) <= tol && Math.abs(data[i + 3] - a0) <= tol;
-  };
-  const mask = new Uint8Array(width * height);
-  if (!contiguous) {
-    for (let p = 0; p < width * height; p++) if (similar(p)) mask[p] = 255;
-  } else {
-    const stack: number[] = [sx, sy];
-    while (stack.length) {
-      const py = stack.pop()!;
-      const px = stack.pop()!;
-      let lx = px;
-      const row = py * width;
-      if (mask[row + lx] || !similar(row + lx)) continue;
-      while (lx > 0 && !mask[row + lx - 1] && similar(row + lx - 1)) lx--;
-      let rx = px;
-      while (rx < width - 1 && !mask[row + rx + 1] && similar(row + rx + 1)) rx++;
-      for (let i = lx; i <= rx; i++) mask[row + i] = 255;
-      for (const ny of [py - 1, py + 1]) {
-        if (ny < 0 || ny >= height) continue;
-        const nrow = ny * width;
-        let inRun = false;
-        for (let i = lx; i <= rx; i++) {
-          const ok = !mask[nrow + i] && similar(nrow + i);
-          if (ok && !inRun) { stack.push(i, ny); inRun = true; } else if (!ok) inRun = false;
-        }
-      }
-    }
-  }
-  const bounds = maskBounds(mask, width, height);
+  const mask = magicWand(buf, x, y, { tolerance, contiguous });
+  const bounds = maskBounds(mask, buf.width, buf.height);
   return bounds ? { mask, bounds } : null;
 }
 
 /** Multiplies two masks (selection ∩ bucket region). `b` may be null (no selection). */
 export function intersectMasks(a: Uint8Array, b: Uint8Array | null): Uint8Array {
-  if (!b) return a;
-  const out = new Uint8Array(a.length);
-  for (let i = 0; i < a.length; i++) out[i] = (a[i] * b[i] + 127) / 255;
-  return out;
+  return b ? combineMasks(a, b, 'intersect') : a;
 }
 
 /** "Source-over" of a solid colour through a mask, scaled by `opacity` (0..1). */
@@ -131,20 +72,7 @@ export function clearMasked(buf: PixelBuffer, mask: Uint8Array | null): PixelBuf
 /** Blends a processed buffer over the original through a mask (null = everywhere). */
 export function mixMasked(orig: PixelBuffer, processed: PixelBuffer, mask: Uint8Array | null): PixelBuffer {
   if (!mask) return processed;
-  const out = new Uint8ClampedArray(orig.data.length);
-  for (let p = 0, i = 0; i < out.length; p++, i += 4) {
-    const m = mask[p];
-    if (m === 255) {
-      out[i] = processed.data[i]; out[i + 1] = processed.data[i + 1];
-      out[i + 2] = processed.data[i + 2]; out[i + 3] = processed.data[i + 3];
-    } else if (m === 0) {
-      out[i] = orig.data[i]; out[i + 1] = orig.data[i + 1]; out[i + 2] = orig.data[i + 2]; out[i + 3] = orig.data[i + 3];
-    } else {
-      const k = m / 255;
-      for (let c = 0; c < 4; c++) out[i + c] = orig.data[i + c] + (processed.data[i + c] - orig.data[i + c]) * k;
-    }
-  }
-  return { width: orig.width, height: orig.height, data: out };
+  return mixByMask(orig, processed, mask, 1, createImg(orig.width, orig.height));
 }
 
 /** The part of a full-size mask that lies under `rect` (for region-sized operations). */

@@ -7,13 +7,20 @@
  * That is what lets the undo history hold dozens of documents while only paying for the pixel
  * buffers that actually changed (see `newBufferBytes`).
  *
- * Three kinds of layer:
+ * Four kinds of layer:
  *   • raster — a pixel buffer (the opened photo, brush strokes, pasted pixels);
  *   • text   — editable text (font, size, colour, alignment, direction), drawn at render time;
- *   • shape  — an editable rectangle / ellipse / line / arrow with fill and stroke.
+ *   • shape  — an editable rectangle / ellipse / line / arrow with fill and stroke;
+ *   • adjust — a NON-DESTRUCTIVE adjustment (the engine's LUT pipeline) applied at render time
+ *              to everything below it, inside its own box.
  * Each carries a matrix that maps its own space into document pixels (transform.ts).
+ *
+ * Raster and adjustment layers may carry a MASK (masks.ts): a tiled raster in the layer's own
+ * space whose alpha is the coverage (255 = shown, 0 = hidden). It follows the layer through
+ * every move, crop, rotation and resize because it shares the layer's matrix.
  */
 import type { PixelBuffer, Point, Rect, Size } from './types';
+import type { AdjustParams } from './ops';
 import {
   IDENTITY, apply, flipMatrix, freeRotationMatrix, multiply, quarterTurnMatrix, resizeMatrix,
   tidy, transformRect, translation, type Matrix,
@@ -77,12 +84,21 @@ interface LayerBase {
   matrix: Matrix;
   /** A locked layer cannot be painted, moved or deleted. */
   locked: boolean;
+  /** Layer mask in the layer's own space (alpha = coverage); raster and adjust layers only. */
+  mask?: Tiled | null;
 }
 
 export interface RasterLayer extends LayerBase { kind: 'raster'; tiled: Tiled }
 export interface TextLayer extends LayerBase { kind: 'text'; text: TextSpec }
 export interface ShapeLayer extends LayerBase { kind: 'shape'; shape: ShapeSpec }
-export type Layer = RasterLayer | TextLayer | ShapeLayer;
+export interface AdjustLayer extends LayerBase {
+  kind: 'adjust';
+  adjust: AdjustParams;
+  /** The layer's own box (the canvas size when it was added); the matrix maps it to the doc. */
+  width: number;
+  height: number;
+}
+export type Layer = RasterLayer | TextLayer | ShapeLayer | AdjustLayer;
 
 export interface PhotoDoc {
   width: number;
@@ -111,6 +127,38 @@ export function textLayer(text: TextSpec, at: Point, name: string): TextLayer {
 
 export function shapeLayer(shape: ShapeSpec, name: string): ShapeLayer {
   return { id: newLayerId(), kind: 'shape', name, visible: true, opacity: 1, blend: 'normal', matrix: IDENTITY, locked: false, shape };
+}
+
+export function adjustLayer(adjust: AdjustParams, width: number, height: number, name: string): AdjustLayer {
+  return {
+    id: newLayerId(), kind: 'adjust', name, visible: true, opacity: 1, blend: 'normal', matrix: IDENTITY, locked: false,
+    adjust: { ...adjust }, width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)),
+  };
+}
+
+/** The pixel size of a layer's own space where a mask can live (null for text and shapes). */
+export function maskSize(layer: Layer): Size | null {
+  if (layer.kind === 'raster') return { width: layer.tiled.width, height: layer.tiled.height };
+  if (layer.kind === 'adjust') return { width: layer.width, height: layer.height };
+  return null;
+}
+
+/** Sets (or, with null, deletes) a layer's mask. A mask of the wrong size is refused. */
+export function setLayerMask(doc: PhotoDoc, id: string, mask: Tiled | null): PhotoDoc {
+  const layer = layerById(doc, id);
+  if (!layer || layer.locked) return doc;
+  const size = maskSize(layer);
+  if (!size) return doc;
+  if (mask && (mask.width !== size.width || mask.height !== size.height)) return doc;
+  if (!mask && !layer.mask) return doc;
+  return replaceLayer(doc, { ...layer, mask } as Layer);
+}
+
+/** Changes an adjustment layer's settings (live slider edits, undoable once committed). */
+export function updateAdjust(doc: PhotoDoc, id: string, patch: Partial<AdjustParams>): PhotoDoc {
+  const layer = layerById(doc, id);
+  if (!layer || layer.kind !== 'adjust' || layer.locked) return doc;
+  return replaceLayer(doc, { ...layer, adjust: { ...layer.adjust, ...patch } });
 }
 
 /** A one-layer document around an opened image. */
@@ -290,7 +338,9 @@ export function shapeLocalRect(spec: ShapeSpec): Rect {
 export function layerBounds(layer: Layer, measure: TextMeasure): Rect {
   const local: Rect = layer.kind === 'raster'
     ? { x: 0, y: 0, w: layer.tiled.width, h: layer.tiled.height }
-    : layer.kind === 'text'
+    : layer.kind === 'adjust'
+      ? { x: 0, y: 0, w: layer.width, h: layer.height }
+      : layer.kind === 'text'
       ? measure(layer.text)
       : shapeLocalRect(layer.shape);
   return transformRect(layer.matrix, local);
@@ -308,7 +358,7 @@ export function rectContains(r: Rect, p: Point): boolean {
 export function pickVectorLayer(doc: PhotoDoc, p: Point, measure: TextMeasure): Layer | null {
   for (let i = doc.layers.length - 1; i >= 0; i--) {
     const l = doc.layers[i];
-    if (!l.visible || l.kind === 'raster') continue;
+    if (!l.visible || l.kind === 'raster' || l.kind === 'adjust') continue;
     if (rectContains(layerBounds(l, measure), p)) return l;
   }
   return null;
@@ -324,7 +374,12 @@ export function toLayerSpace(layer: Layer, p: Point, inverse: (m: Matrix) => Mat
 
 function buffersOf(doc: PhotoDoc | null | undefined): Set<PixelBuffer> {
   const set = new Set<PixelBuffer>();
-  if (doc) for (const l of doc.layers) if (l.kind === 'raster') for (const t of l.tiled.tiles) set.add(t);
+  if (doc) {
+    for (const l of doc.layers) {
+      if (l.kind === 'raster') for (const t of l.tiled.tiles) set.add(t);
+      if (l.mask) for (const t of l.mask.tiles) set.add(t);
+    }
+  }
   return set;
 }
 

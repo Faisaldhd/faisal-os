@@ -11,8 +11,10 @@
  */
 import type { PixelBuffer, Rect } from './types';
 import {
-  compositeOperation, type Layer, type PhotoDoc, type RasterLayer, type ShapeSpec, type TextSpec,
+  compositeOperation, type AdjustLayer, type Layer, type PhotoDoc, type RasterLayer, type ShapeSpec, type TextSpec,
 } from './layers';
+import { adjust as runAdjust, isNeutralAdjust } from './ops';
+import { blendAdjusted } from './masks';
 import { changedTiles, tileRect, type Tiled } from './tiles';
 import { detectDirection, lineOffset, LINE_HEIGHT } from './view';
 import type { RasterCodec } from './project';
@@ -60,30 +62,40 @@ export class LayerCanvases {
   private map = new Map<string, { tiled: Tiled; canvas: HTMLCanvasElement }>();
 
   get(layer: RasterLayer): HTMLCanvasElement {
-    const entry = this.map.get(layer.id);
-    if (entry && entry.tiled === layer.tiled) return entry.canvas;
-    const diff = entry ? changedTiles(entry.tiled, layer.tiled) : null;
+    return this.tiled(layer.id, layer.tiled);
+  }
+
+  /** The canvas of a layer's mask (white pixels, alpha = coverage). */
+  mask(layer: Layer): HTMLCanvasElement | null {
+    return layer.mask ? this.tiled(`${layer.id}#mask`, layer.mask) : null;
+  }
+
+  private tiled(key: string, tiled: Tiled): HTMLCanvasElement {
+    const entry = this.map.get(key);
+    if (entry && entry.tiled === tiled) return entry.canvas;
+    const diff = entry && entry.tiled.width === tiled.width && entry.tiled.height === tiled.height ? changedTiles(entry.tiled, tiled) : null;
     if (entry && diff) {
       const ctx = entry.canvas.getContext('2d')!;
       for (const i of diff) {
-        const r = tileRect(layer.tiled, i);
-        putBuffer(ctx, layer.tiled.tiles[i], r.x, r.y);
+        const r = tileRect(tiled, i);
+        ctx.clearRect(r.x, r.y, r.w, r.h);
+        putBuffer(ctx, tiled.tiles[i], r.x, r.y);
       }
-      entry.tiled = layer.tiled;
+      entry.tiled = tiled;
       return entry.canvas;
     }
-    const { canvas, ctx } = canvas2d(layer.tiled.width, layer.tiled.height);
-    layer.tiled.tiles.forEach((tile, i) => {
-      const r = tileRect(layer.tiled, i);
+    const { canvas, ctx } = canvas2d(tiled.width, tiled.height);
+    tiled.tiles.forEach((tile, i) => {
+      const r = tileRect(tiled, i);
       putBuffer(ctx, tile, r.x, r.y);
     });
-    this.map.set(layer.id, { tiled: layer.tiled, canvas });
+    this.map.set(key, { tiled, canvas });
     return canvas;
   }
 
   /** Drops canvases of layers that no longer exist anywhere (called after history trims). */
   prune(keep: Set<string>): void {
-    for (const id of this.map.keys()) if (!keep.has(id)) this.map.delete(id);
+    for (const id of this.map.keys()) if (!keep.has(id.replace(/#mask$/, ''))) this.map.delete(id);
   }
 
   clear(): void {
@@ -211,6 +223,7 @@ export interface Override {
 }
 
 export interface DrawOptions {
+  /** Live content previews by layer id; a live MASK preview uses the key `mask:<id>`. */
   overrides?: Map<string, Override>;
   /** Draw only these layer ids (merge down); default all visible. */
   only?: Set<string>;
@@ -228,7 +241,75 @@ export function drawLayerContent(ctx: CanvasRenderingContext2D, layer: Layer, ca
   }
   if (layer.kind === 'raster') ctx.drawImage(cache.get(layer), 0, 0);
   else if (layer.kind === 'text') drawText(ctx, layer.text);
-  else drawShape(ctx, layer.shape);
+  else if (layer.kind === 'shape') drawShape(ctx, layer.shape);
+  // An adjustment layer has no content of its own: drawDoc applies it to what is below.
+}
+
+/* Scratch canvases the size of the target, reused between frames (0: layer, 1: coverage). */
+const scratchPool: HTMLCanvasElement[] = [];
+function scratch(slot: number, w: number, h: number): CanvasRenderingContext2D {
+  let c = scratchPool[slot];
+  if (!c) { c = document.createElement('canvas'); scratchPool[slot] = c; }
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  const ctx = c.getContext('2d', { willReadFrequently: slot === 1 })!;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.clearRect(0, 0, w, h);
+  return ctx;
+}
+
+function maskSource(layer: Layer, cache: LayerCanvases, opts: DrawOptions): { canvas: CanvasImageSource; w: number; h: number } | null {
+  const o = opts.overrides?.get(`mask:${layer.id}`);
+  if (o) return { canvas: o.canvas, w: o.width, h: o.height };
+  const c = cache.mask(layer);
+  return c ? { canvas: c, w: c.width, h: c.height } : null;
+}
+
+/** A masked layer: drawn alone on a scratch canvas, cut by its mask, then composited. */
+function drawMasked(ctx: CanvasRenderingContext2D, base: DOMMatrix, layer: Layer, cache: LayerCanvases, opts: DrawOptions): void {
+  const m = layer.matrix;
+  const t = scratch(0, ctx.canvas.width, ctx.canvas.height);
+  t.imageSmoothingEnabled = ctx.imageSmoothingEnabled;
+  t.setTransform(base);
+  t.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+  drawLayerContent(t, layer, cache, opts.overrides?.get(layer.id));
+  const mask = maskSource(layer, cache, opts);
+  if (mask) {
+    t.globalCompositeOperation = 'destination-in';
+    t.drawImage(mask.canvas, 0, 0, mask.w, mask.h);
+  }
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = layer.opacity;
+  ctx.globalCompositeOperation = compositeOperation(layer.blend);
+  ctx.drawImage(t.canvas, 0, 0);
+  ctx.restore();
+}
+
+/**
+ * An adjustment layer: reads back what is composited so far, runs the engine pipeline and
+ * mixes it in by coverage (its mask, or its box) × opacity. Alpha never changes, so the
+ * result is written straight back.
+ */
+function drawAdjust(ctx: CanvasRenderingContext2D, base: DOMMatrix, layer: AdjustLayer, cache: LayerCanvases, opts: DrawOptions): void {
+  if (isNeutralAdjust(layer.adjust)) return;
+  const W = ctx.canvas.width;
+  const H = ctx.canvas.height;
+  const m = layer.matrix;
+  const cov = scratch(1, W, H);
+  cov.setTransform(base);
+  cov.transform(m[0], m[1], m[2], m[3], m[4], m[5]);
+  const mask = maskSource(layer, cache, opts);
+  if (mask) cov.drawImage(mask.canvas, 0, 0, mask.w, mask.h);
+  else { cov.fillStyle = '#fff'; cov.fillRect(0, 0, layer.width, layer.height); }
+  const cd = cov.getImageData(0, 0, W, H).data;
+  const coverage = new Uint8Array(W * H);
+  for (let p = 0; p < coverage.length; p++) coverage[p] = cd[p * 4 + 3];
+  const img = ctx.getImageData(0, 0, W, H);
+  const below = { width: W, height: H, data: img.data };
+  blendAdjusted(below, runAdjust(below, layer.adjust), coverage, layer.opacity);
+  ctx.putImageData(img, 0, 0);
 }
 
 /**
@@ -243,6 +324,8 @@ export function drawDoc(ctx: CanvasRenderingContext2D, doc: PhotoDoc, cache: Lay
     if (opts.only && !opts.only.has(layer.id)) continue;
     if (!layer.visible && !opts.includeHidden) continue;
     if (layer.opacity <= 0) continue;
+    if (layer.kind === 'adjust') { drawAdjust(ctx, base, layer, cache, opts); continue; }
+    if (layer.mask || opts.overrides?.has(`mask:${layer.id}`)) { drawMasked(ctx, base, layer, cache, opts); continue; }
     ctx.save();
     ctx.globalAlpha = layer.opacity;
     ctx.globalCompositeOperation = compositeOperation(layer.blend);

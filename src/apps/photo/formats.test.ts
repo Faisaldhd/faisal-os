@@ -12,8 +12,8 @@ const fullSupport: Partial<Record<SourceFormat, boolean>> = {
 };
 
 describe('formats — the capability table', () => {
-  it('opens exactly the seven formats the task lists, and writes the three it promises', () => {
-    expect(SOURCE_FORMAT_LIST).toEqual(['png', 'jpeg', 'webp', 'gif', 'bmp', 'avif', 'svg']);
+  it('opens exactly the seven formats the task lists plus HEIC (phase 2), and writes the three it promises', () => {
+    expect(SOURCE_FORMAT_LIST).toEqual(['png', 'jpeg', 'webp', 'gif', 'bmp', 'avif', 'svg', 'heic']);
     expect(EXPORT_FORMAT_LIST).toEqual(['png', 'jpeg', 'webp']);
     for (const id of EXPORT_FORMAT_LIST) expect(FORMATS[id].canExport).toBe(true);
     // A format the editor cannot write must not advertise an export mime.
@@ -21,6 +21,7 @@ describe('formats — the capability table', () => {
     expect(FORMATS.bmp.exportMime).toBeUndefined();
     expect(FORMATS.svg.exportMime).toBeUndefined();
     expect(FORMATS.avif.exportMime).toBeUndefined();
+    expect(FORMATS.heic.exportMime).toBeUndefined();
   });
 
   it('marks exactly the animation-capable formats as animated', () => {
@@ -50,7 +51,7 @@ describe('formats — the capability table', () => {
   });
 
   it('advertises the extensions the manifest and the open dialog name', () => {
-    expect(OPEN_EXTENSIONS).toEqual(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif', '.svg']);
+    expect(OPEN_EXTENSIONS).toEqual(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif', '.svg', '.heic', '.heif']);
     for (const ext of OPEN_EXTENSIONS) expect(formatForExtension(ext)).not.toBeNull();
     expect(canonicalExtension('jpeg')).toBe('.jpg');
     expect(canonicalExtension('png')).toBe('.png');
@@ -99,7 +100,7 @@ describe('formats — the refusal mapping', () => {
   it('has one sentence for every refusal reason, in both languages, naming the form at issue', () => {
     const reasons = Object.keys(REFUSAL_MESSAGES) as (keyof typeof REFUSAL_MESSAGES)[];
     expect(reasons.sort()).toEqual([
-      'cannot-export', 'cannot-open', 'decode-failed', 'no-extension', 'no-path',
+      'cannot-export', 'cannot-open', 'decode-failed', 'decoder-unavailable', 'no-extension', 'no-path',
       'not-an-image', 'out-of-home', 'runtime-decode', 'too-large',
     ].sort());
     for (const reason of reasons) {
