@@ -4,10 +4,23 @@ import { join, relative, sep } from 'node:path';
 import type { Plugin } from 'vite';
 
 /**
- * Too big to download on first visit; cached when first used (the Linux VM, and
- * ffmpeg.wasm for the Video Studio's "Convert").
+ * Too big to download on first visit; cached when first used (the Linux VM, ffmpeg.wasm for
+ * the Video Studio's "Convert", and the PDF stack below).
+ *
+ * The PDF stack is ~4.0 MiB — pdf.js and its worker, the embedded fontkit, the Arabic and
+ * Liberation faces it embeds, and the standard PDF fonts — and it is only needed by a visitor
+ * who actually opens a PDF, so it stays out of the precache (apps-suite acceptance item 1).
+ * The service worker caches every one of these the first time it is fetched, exactly like the
+ * v86 files: the shell still boots offline, the PDF app needs one online visit first.
  */
-const RUNTIME_ONLY = [/^v86\//, /^ffmpeg\//, /\.wasm$/, /^assets\/libv86-/, /\.map$/, /\/README\.md$/, /^sw\.js$/];
+const RUNTIME_ONLY = [
+  /^v86\//, /^ffmpeg\//, /\.wasm$/, /^assets\/libv86-/, /\.map$/, /\/README\.md$/, /^sw\.js$/,
+  /^assets\/pdf[.-]/,               // pdf.js chunks + their stylesheet + pdf.worker.min
+  /^assets\/fontkit\.es-/,          // @pdf-lib/fontkit, imported only by the PDF writer
+  /^assets\/NotoNaskhArabic-/,      // the Arabic face embedded into PDFs
+  /^assets\/LiberationSans-/,       // the four Liberation faces embedded into PDFs
+  /^assets\/Foxit.*\.pfb$/,         // pdf.js standard fonts (Symbol/Serif/Fixed/Dingbats)
+];
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
