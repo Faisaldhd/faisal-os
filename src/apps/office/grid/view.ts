@@ -12,7 +12,7 @@
  * it has one); a formatted value is drawn over it until the field is focused, so the
  * grid shows "30" while the formula bar and the field hold "=SUM(B1:B2)".
  */
-import { t } from '../../../kernel/i18n';
+import { t, getLocale } from '../../../kernel/i18n';
 import type { Editor, EditorContext, StatusInfo } from '../editor';
 import {
   addColumnEdit, addRowEdit, canDeleteColumn, canDeleteRow, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit,
@@ -27,6 +27,15 @@ import type { RibbonTab } from '../ui/ribbon';
 import type { BookLook, CellStyle } from './xlsxlook';
 import { hasArabic, startsRtl } from '../writer/docops';
 import { isCoarsePointer } from '../../../shell/device';
+import {
+  MAX_SORT_LEVELS, addChart, addCondRule, addSortLevel, chartNumber, chartTypeChoices, clearCondRules,
+  clearFilter, clearFilters, clearSort, colorScaleRule, conditionalStyles, dataBarRule, displayText,
+  dragPosition, emptySheetView, filteredColumns, formatChoices, formatForCell, isFiltered, looksLikeHeader,
+  rangeToChartSpec, removeChart, removeSortLevel, setFilter, setSortOrder, topRule, visibleRowMap,
+  type ChartObject, type SheetRange, type SheetView,
+} from './sheetview';
+import { distinctValues, sortRows, type CellStyle as CondCellStyle, type SortKey } from '../calc/index';
+import { buildChart, renderSvg } from '../charts/index';
 import {
   DEFAULT_ROW_HEIGHT, OVERSCAN_ROWS, TOUCH_ROW_HEIGHT, rowOffsets, rowWindow, type RowWindow,
 } from './virtual';
@@ -151,7 +160,12 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   tabsBar.setAttribute('role', 'tablist');
   tabsBar.setAttribute('aria-label', t('office.sheets'));
   const note = el('div', 'faisal-office-more fo-gridnote');
-  root.append(fxbar, scroll, tabsBar, note);
+  // Charts float over the sheet; the panels (sort, filter, chart) open inside the sheet area.
+  const canvas = el('div', 'fo-sheetcanvas');
+  const chartsLayer = el('div', 'fo-chartlayer');
+  const panels = el('div', 'fo-sheetpanels');
+  canvas.append(scroll, chartsLayer, panels);
+  root.append(fxbar, canvas, tabsBar, note);
 
   const lookOf = (): BookLook['sheets'][number] | undefined => book?.sheets[sheets()?.active ?? 0];
   const styleAt = (r: number, c: number): CellStyle | undefined => {
@@ -212,8 +226,8 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   function showResult(): void {
     const m = sheets();
     if (!m || m.kind !== 'xlsx') return;
-    const formula = formulaAt(m, m.active, active.row, active.col);
-    if (formula) ctx.setStatus(t('office.formulaResult', { value: cellState(active.row, active.col).value }));
+    const formula = formulaAt(m, m.active, modelRowOf(active.row), active.col);
+    if (formula) ctx.setStatus(t('office.formulaResult', { value: cellState(modelRowOf(active.row), active.col).value }));
   }
 
   /* ─────────────────────────── drawing ─────────────────────────── */
@@ -250,6 +264,39 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   let covered = new Set<string>();
   let mergeAt = new Map<string, { r1: number; c1: number }>();
   let sizes: { disconnect(): void } | null = null;
+
+  /* ───────────────────── the sheet's view-level state ───────────────────── */
+  // Sort is applied to the model (undoable, saved); filters, number formats, conditional
+  // formatting and charts change only what the screen shows — see grid/sheetview.ts.
+  let sheetView: SheetView = emptySheetView();
+  /** The model rows to draw, when a filter is on: `null` means drawn row i is model row i. */
+  let rowMap: number[] | null = null;
+  /** Conditional styles in DRAWN order, computed once per render (never per cell). */
+  let condCache: Array<Array<CondCellStyle | null>> = [];
+  /** 1 when the top row reads as a header, so sort and filter leave it alone. */
+  let headerRows = 0;
+  /** The model row a drawn row shows. Every read or write of cell data goes through this. */
+  const modelRowOf = (r: number): number => {
+    if (!rowMap) return r;
+    // Past the end of the filtered rows are the sheet's own blank rows: they hold no data at all,
+    // so they are marked with -1 rather than silently aliasing onto a row the filter hid.
+    return r < rowMap.length ? rowMap[r] : -1;
+  };
+  /** The first blank row drawn below the sheet's data (only meaningful while a filter is on). */
+  const blankFrom = (): number => (rowMap ? rowMap.length : Number.POSITIVE_INFINITY);
+  /** The model row a blank drawn row would append to. */
+  function appendRowOf(r: number): number {
+    return rowMap ? dataRows + (r - rowMap.length) : r;
+  }
+  /** The drawn row for a model row; a hidden row lands on the nearest visible one. */
+  function drawnRowOf(modelRow: number): number {
+    if (!rowMap) return Math.max(0, modelRow);
+    const at = rowMap.indexOf(modelRow);
+    if (at >= 0) return at;
+    let best = 0;
+    for (let i = 0; i < rowMap.length; i++) if (Math.abs(rowMap[i] - modelRow) < Math.abs(rowMap[best] - modelRow)) best = i;
+    return best;
+  }
 
   function styleCell(td: HTMLTableCellElement, input: HTMLInputElement, view: HTMLElement, s: CellStyle | undefined, value: string): void {
     const numeric = /^-?\d+(\.\d+)?(E[+-]?\d+)?$/i.test(value.trim()) && value.trim() !== '';
@@ -300,7 +347,13 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     // and the row count only decides how far the scrollbar goes.
     dataRows = grid ? grid.rows.length : 0;
     dataCols = grid ? Math.max(1, gridWidth(grid)) : 1;
-    rowCount = Math.max(dataRows + (ctx.editable() ? PAD_ROWS : 0), PAD_ROWS);
+    // A header row stays put under sort and filter, so both need to know whether there is one.
+    headerRows = grid && looksLikeHeader(grid.rows) ? 1 : 0;
+    // The filter decides WHICH model rows are drawn; the windowing maths is untouched by it.
+    const map = visibleRowMap(grid?.rows ?? [], sheetView, headerRows);
+    rowMap = map.filtered ? map.rows : null;
+    const viewRows = rowMap ? rowMap.length : dataRows;
+    rowCount = Math.max(viewRows + (ctx.editable() ? PAD_ROWS : 0), PAD_ROWS);
     cols = Math.min(Math.max(dataCols + (ctx.editable() ? 3 : 0), PAD_COLS), MAX_COLS);
     rowHeight = baseRowHeight(look);
     offsets = rowOffsets(rowCount, rowHeightOf);
@@ -309,6 +362,10 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     sheetRtl = sheetIsRtl(grid?.rows ?? [], look?.rtl);
     scroll.dir = sheetRtl ? 'rtl' : 'ltr';
     root.classList.toggle('is-rtl-sheet', sheetRtl);
+    // Conditional formatting runs once per render over the rows in the order they are drawn.
+    condCache = sheetView.condRules.length
+      ? conditionalStyles(Array.from({ length: viewRows }, (_, r) => grid?.rows[modelRowOf(r)] ?? []), sheetView.condRules)
+      : [];
     covered = new Set();
     mergeAt = new Map();
     for (const mg of look?.merges ?? []) {
@@ -330,10 +387,13 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const thead = el('thead');
     const hr = el('tr');
     hr.append(el('th', 'faisal-office-corner fo-corner', ''));
+    const filtered = new Set(filteredColumns(sheetView));
     for (let c = 0; c < cols; c++) {
       const th = el('th', 'faisal-office-colhead fo-colhead', columnName(c));
       th.dataset.c = String(c);
-      th.addEventListener('click', () => { anchor = { row: 0, col: c }; active = { row: Math.max(0, dataRows - 1), col: c }; select(false); });
+      // A filtered column says so in its own header: the state must never be invisible.
+      if (filtered.has(c)) { th.classList.add('is-filtered'); th.title = t('office.filterTitle', { name: columnName(c) }); }
+      th.addEventListener('click', () => { anchor = { row: 0, col: c }; active = { row: Math.max(0, viewRows - 1), col: c }; select(false); });
       hr.append(th);
     }
     thead.append(hr);
@@ -353,6 +413,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     scroll.replaceChildren(tbl);
     updateWindow(true);
     renderTabs();
+    renderCharts();
     note.textContent = grid?.truncated
       ? t('office.cutNote', { rows: SHEET_ROWS, cols: MAX_COLS })
       : '';
@@ -441,6 +502,10 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   function buildRow(r: number): RowRecord {
     const grid = sheets() ? gridAt(sheets() as SheetsModel, (sheets() as SheetsModel).active) : null;
     const look = lookOf();
+    // `r` is the DRAWN row; `mr` is the row the file holds. A filter can make them differ, and a
+    // drawn row past the filtered ones is a blank row that holds nothing (-1).
+    const mr = modelRowOf(r);
+    const blank = mr < 0;
     const tr = el('tr');
     // The height the offsets were computed from, so a drawn row is exactly as tall as the window
     // maths believes it is (a touch row is 44px, the touch target G8 asks for). It is set on the
@@ -448,37 +513,44 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     // and the cells' own CSS height is what the browser ends up honouring.
     const height = rowHeightOf(r);
     tr.style.height = `${height}px`;
-    const rh = el('th', 'faisal-office-rowhead fo-rowhead', String(r + 1));
-    rh.addEventListener('click', () => { anchor = { row: r, col: 0 }; active = { row: r, col: Math.max(0, dataCols - 1) }; select(false); });
+    // The row number is the SHEET's own number, so hiding rows leaves the others where they were.
+    const rh = el('th', 'faisal-office-rowhead fo-rowhead', String((blank ? appendRowOf(r) : mr) + 1));
+    if (!blank) rh.addEventListener('click', () => { anchor = { row: r, col: 0 }; active = { row: r, col: Math.max(0, dataCols - 1) }; select(false); });
     tr.append(rh);
     if (r < frozenRows) {
       tr.classList.add('is-frozen');
       tr.style.top = `${HEADER_HEIGHT + (offsets?.[r] ?? 0)}px`;
     }
     const rec: RowRecord = { tr, inputs: [], tds: [], cols: [] };
+    const rules = condCache[r];
     for (let c = 0; c < cols; c++) {
-      if (covered.has(`${r}:${c}`)) continue;
+      if (!blank && covered.has(`${mr}:${c}`)) continue;
       const td = el('td', 'faisal-office-celld fo-td');
       td.style.height = `${height}px`;
-      const merge = mergeAt.get(`${r}:${c}`);
-      if (merge) { td.rowSpan = merge.r1 - r + 1; td.colSpan = merge.c1 - c + 1; }
-      const inData = r < dataRows && c < dataCols;
+      const merge = blank ? undefined : mergeAt.get(`${mr}:${c}`);
+      if (merge) { td.rowSpan = merge.r1 - mr + 1; td.colSpan = merge.c1 - c + 1; }
+      const inData = !blank && mr < dataRows && c < dataCols;
       const input = el('input', inData ? 'faisal-office-cell' : 'fo-cell-empty');
       input.type = 'text';
       input.dir = 'auto';
       input.spellcheck = false;
       input.autocomplete = 'off';
-      input.readOnly = !ctx.editable();
-      input.dataset.r = String(r);
+      // With a filter on, the blank rows below the visible data take no typing: a row the filter
+      // hid must never be edited through a row that merely looks empty (clear the filter first).
+      input.readOnly = !ctx.editable() || (blank && !!rowMap);
+      input.dataset.r = blank ? '' : String(mr);
       input.dataset.c = String(c);
-      input.setAttribute('aria-label', `${columnName(c)}${r + 1}`);
-      input.value = rawOf(r, c);
+      input.setAttribute('aria-label', blank ? '' : `${columnName(c)}${mr + 1}`);
+      input.value = blank ? '' : rawOf(mr, c);
       const view = el('span', 'fo-cellview');
       view.setAttribute('aria-hidden', 'true');
-      const value = grid?.rows[r]?.[c] ?? '';
-      const s = styleAt(r, c);
-      view.textContent = displayValue(value, s?.numFmt);
+      const value = blank ? '' : grid?.rows[mr]?.[c] ?? '';
+      const s = blank ? undefined : styleAt(mr, c);
+      // A chosen number format wins over the file's own: the owner asked for it just now.
+      const chosen = blank ? '' : formatForCell(sheetView.formats, mr, c);
+      view.textContent = chosen ? displayText(value, chosen, getLocale() === 'ar' ? 'ar' : 'en') : displayValue(value, s?.numFmt);
       styleCell(td, input, view, s, value);
+      styleConditional(td, view, blank ? null : rules?.[c] ?? null);
       input.addEventListener('focus', () => {
         if (keepCaret) { keepCaret = false; active = { row: r, col: c }; anchor = active; paintSelection(); return; }
         active = { row: r, col: c };
@@ -489,7 +561,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
         select(true);
         showResult();
       });
-      input.addEventListener('input', () => { editing = true; commitCell(r, c, input.value); fx.value = input.value; });
+      input.addEventListener('input', () => { if (mr < 0) return; editing = true; commitCell(mr, c, input.value); fx.value = input.value; });
       input.addEventListener('dblclick', () => { editing = true; input.setSelectionRange(input.value.length, input.value.length); });
       td.addEventListener('pointerdown', (ev) => {
         if (ev.button !== 0) return;
@@ -551,9 +623,17 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const grid = m.grids[m.active];
     for (const [key, input] of inputs) {
       const [r, c] = key.split(':').map(Number);
-      if (document.activeElement !== input) input.value = rawOf(r, c);
+      // `key` holds drawn rows; the data lives at the model row a filter maps them to.
+      const mr = modelRowOf(r);
+      if (document.activeElement !== input) input.value = rawOf(mr, c);
       const view = input.previousElementSibling as HTMLElement | null;
-      if (view) view.textContent = displayValue(grid?.rows[r]?.[c] ?? '', styleAt(r, c)?.numFmt);
+      if (view) {
+        const chosen = formatForCell(sheetView.formats, mr, c);
+        const raw = grid?.rows[mr]?.[c] ?? '';
+        view.textContent = chosen ? displayText(raw, chosen, getLocale() === 'ar' ? 'ar' : 'en') : displayValue(raw, styleAt(mr, c)?.numFmt);
+      }
+      const td = input.parentElement as HTMLTableCellElement | null;
+      if (td) styleConditional(td, view, condCache[r]?.[c] ?? null);
     }
     syncBars();
     ctx.refresh();
@@ -590,8 +670,13 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
 
   function refName(): string {
     const g = range();
-    const a = `${columnName(g.c0)}${g.r0 + 1}`;
-    return g.r0 === g.r1 && g.c0 === g.c1 ? a : `${a}:${columnName(g.c1)}${g.r1 + 1}`;
+    // The name box names the SHEET's own cells, so a filter never renumbers the rows.
+    const nameOf = (drawn: number): number => {
+      const mr = modelRowOf(drawn);
+      return mr < 0 ? appendRowOf(drawn) : mr;
+    };
+    const a = `${columnName(g.c0)}${nameOf(g.r0) + 1}`;
+    return g.r0 === g.r1 && g.c0 === g.c1 ? a : `${a}:${columnName(g.c1)}${nameOf(g.r1) + 1}`;
   }
 
   function paintSelection(): void {
@@ -607,7 +692,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
 
   function syncBars(): void {
     if (document.activeElement !== nameBox) nameBox.value = refName();
-    if (document.activeElement !== fx) fx.value = rawOf(active.row, active.col);
+    if (document.activeElement !== fx) fx.value = rawOf(modelRowOf(active.row), active.col);
     fx.readOnly = !ctx.editable();
   }
 
@@ -622,7 +707,12 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   }
 
   function move(dr: number, dc: number, extend: boolean): void {
-    active = { row: Math.max(0, active.row + dr), col: Math.max(0, Math.min(cols - 1, active.col + dc)) };
+    // While a filter is on, the caret stays inside the rows the filter left visible.
+    const lastRow = rowMap ? Math.max(0, rowMap.length - 1) : Number.POSITIVE_INFINITY;
+    active = {
+      row: Math.max(0, Math.min(lastRow, active.row + dr)),
+      col: Math.max(0, Math.min(cols - 1, active.col + dc)),
+    };
     if (!extend) anchor = active;
     shiftFocus = extend;
     // The target may be outside the drawn window: this scrolls to it, draws it, then focuses it.
@@ -637,7 +727,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     if (k === 'Enter') { ev.preventDefault(); editing = false; move(ev.shiftKey ? -1 : 1, 0, false); return; }
     if (k === 'Tab') { ev.preventDefault(); editing = false; move(0, ev.shiftKey ? -1 : 1, false); return; }
     if (k === 'F2') { editing = true; target.setSelectionRange(target.value.length, target.value.length); ev.preventDefault(); return; }
-    if (k === 'Escape' && editing) { editing = false; target.value = rawOf(active.row, active.col); target.select(); return; }
+    if (k === 'Escape' && editing) { editing = false; target.value = rawOf(modelRowOf(active.row), active.col); target.select(); return; }
     if ((k === 'Delete' || (k === 'Backspace' && !editing)) && ctx.editable()) {
       ev.preventDefault();
       clearRange();
@@ -657,8 +747,10 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const g = range();
     const edits: Edit[] = [];
     for (let r = g.r0; r <= g.r1; r++) for (let c = g.c0; c <= g.c1; c++) {
-      const before = cellState(r, c);
-      if (before.value !== '' || before.formula) edits.push(formulaCellEdit(m.active, r, c, before, { value: '' }));
+      const mr = modelRowOf(r);
+      if (mr < 0) continue;                      // a blank row below a filtered sheet holds nothing
+      const before = cellState(mr, c);
+      if (before.value !== '' || before.formula) edits.push(formulaCellEdit(m.active, mr, c, before, { value: '' }));
     }
     if (edits.length) { ctx.commit(compositeEdit(edits)); refreshValues(); }
   }
@@ -671,7 +763,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const m = sheets();
     const grid = m ? gridAt(m, m.active) : null;
     const rows: string[][] = [];
-    for (let r = g.r0; r <= g.r1; r++) { const row: string[] = []; for (let c = g.c0; c <= g.c1; c++) row.push(grid?.rows[r]?.[c] ?? ''); rows.push(row); }
+    for (let r = g.r0; r <= g.r1; r++) { const mr = modelRowOf(r); const row: string[] = []; for (let c = g.c0; c <= g.c1; c++) row.push(mr < 0 ? '' : grid?.rows[mr]?.[c] ?? ''); rows.push(row); }
     ev.clipboardData?.setData('text/plain', toTsv(rows));
     ev.preventDefault();
   });
@@ -684,8 +776,10 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     if (!m) return;
     const rows = parseTsv(text);
     const edits: Edit[] = [];
+    const base = modelRowOf(active.row);
+    if (base < 0) return;                        // a blank row below a filtered sheet takes nothing
     rows.forEach((row, dr) => row.forEach((value, dc) => {
-      const r = active.row + dr;
+      const r = base + dr;
       const c = active.col + dc;
       edits.push(formulaCellEdit(m.active, r, c, cellState(r, c), { value }));
     }));
@@ -693,10 +787,10 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     renderGrid();
   });
 
-  fx.addEventListener('input', () => { if (ctx.editable()) commitCell(active.row, active.col, fx.value); });
+  fx.addEventListener('input', () => { if (ctx.editable()) commitCell(modelRowOf(active.row), active.col, fx.value); });
   fx.addEventListener('keydown', (ev) => {
     if (ev.key === 'Enter') { ev.preventDefault(); move(1, 0, false); }
-    if (ev.key === 'Escape') { fx.value = rawOf(active.row, active.col); inputs.get(`${active.row}:${active.col}`)?.focus(); }
+    if (ev.key === 'Escape') { fx.value = rawOf(modelRowOf(active.row), active.col); inputs.get(`${active.row}:${active.col}`)?.focus(); }
   });
   nameBox.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter') return;
@@ -704,8 +798,11 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const m = /^([A-Za-z]{1,3})(\d+)(?::([A-Za-z]{1,3})(\d+))?$/.exec(nameBox.value.trim());
     if (!m) { nameBox.value = refName(); return; }
     const toCell = (col: string, row: string): Cell => ({ row: Math.max(0, Number(row) - 1), col: [...col.toUpperCase()].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1 });
-    anchor = toCell(m[1], m[2]);
-    active = m[3] ? toCell(m[3], m[4]) : anchor;
+    // A name box reference is a SHEET address, so a filter maps it onto the row that is drawn.
+    const from = toCell(m[1], m[2]);
+    const to = m[3] ? toCell(m[3], m[4]) : from;
+    anchor = { row: drawnRowOf(from.row), col: from.col };
+    active = { row: drawnRowOf(to.row), col: to.col };
     select(false);
   });
 
@@ -728,8 +825,9 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   function deleteRow(): void {
     const m = sheets();
     const grid = m ? gridAt(m, m.active) : null;
-    if (!m || !grid || !grid.rows[active.row]) return;
-    ctx.commit(deleteRowEdit(m.active, active.row, grid.rows[active.row]));
+    const mr = modelRowOf(active.row);
+    if (!m || !grid || !grid.rows[mr]) return;
+    ctx.commit(deleteRowEdit(m.active, mr, grid.rows[mr]));
     const last = grid.rows.length - 2;
     if (active.row > last) active = { ...active, row: Math.max(0, last) };
     anchor = active;
@@ -752,23 +850,330 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     let target: Cell;
     let ref: string;
     if (g.r0 !== g.r1 || g.c0 !== g.c1) {
-      target = { row: g.r1 + 1, col: g.c0 };
-      ref = `${columnName(g.c0)}${g.r0 + 1}:${columnName(g.c1)}${g.r1 + 1}`;
+      const r0 = modelRowOf(g.r0);
+      const r1 = modelRowOf(g.r1);
+      target = { row: r1 + 1, col: g.c0 };
+      ref = `${columnName(g.c0)}${r0 + 1}:${columnName(g.c1)}${r1 + 1}`;
     } else {
       const grid = gridAt(m, m.active);
-      let top = active.row - 1;
+      // Walk up the SHEET's own rows: the number the formula sums is a file address, not a drawn one.
+      const here = modelRowOf(active.row);
+      let top = here - 1;
       while (top >= 0 && /^-?\d/.test((grid?.rows[top]?.[active.col] ?? '').trim())) top--;
-      target = active;
-      ref = `${columnName(active.col)}${top + 2}:${columnName(active.col)}${Math.max(active.row, top + 2)}`;
+      target = { row: here, col: active.col };
+      ref = `${columnName(active.col)}${top + 2}:${columnName(active.col)}${Math.max(here, top + 2)}`;
     }
     commitCell(target.row, target.col, `=${fn}(${ref})`);
-    active = target;
-    anchor = target;
+    active = { row: drawnRowOf(target.row), col: target.col };
+    anchor = active;
     renderGrid();
     select(false);
   }
 
   const enabledSheet = (): boolean => !!sheets() && ctx.editable();
+
+  /* ─────────────── conditional formatting, formats, charts, panels ─────────────── */
+
+  /** Paints a conditional style onto a cell: a fill, a font colour, and the data bar itself. */
+  function styleConditional(td: HTMLTableCellElement, view: HTMLElement | null, style: CondCellStyle | null): void {
+    td.classList.toggle('has-cond', !!style);
+    td.style.backgroundImage = '';
+    if (view) {
+      view.style.boxShadow = '';
+      if (style?.bar) {
+        // The bar is drawn behind the value from the cell's start edge to `end` of its width.
+        td.style.backgroundImage = `linear-gradient(90deg, ${style.bar.color} ${Math.round(style.bar.end * 100)}%, transparent ${Math.round(style.bar.end * 100)}%)`;
+      }
+      if (style?.fill && !style.bar) td.style.backgroundColor = style.fill;
+      if (style?.color) view.style.color = style.color;
+      if (style?.bold) view.style.fontWeight = '700';
+      if (style?.hideValue) view.style.visibility = 'hidden';
+    }
+  }
+
+  /** Applies a chosen number format to every cell of the selection (view-level). */
+  function applyNumberFormat(pattern: string): void {
+    const g = range();
+    const next = { ...sheetView.formats };
+    for (let r = g.r0; r <= g.r1; r++) for (let c = g.c0; c <= g.c1; c++) {
+      const key = `${modelRowOf(r)}:${c}`;
+      if (!pattern || pattern === 'General') delete next[key];
+      else next[key] = pattern;
+    }
+    sheetView = { ...sheetView, formats: next };
+    renderGrid();
+    select(true);
+    ctx.refresh();
+  }
+
+  /** The sheet's own rows, in the order they are drawn — what the engines read. */
+  function drawnMatrix(): string[][] {
+    const grid = sheets() ? gridAt(sheets() as SheetsModel, (sheets() as SheetsModel).active) : null;
+    if (!grid) return [];
+    const count = rowMap ? rowMap.length : grid.rows.length;
+    return Array.from({ length: count }, (_, r) => grid.rows[modelRowOf(r)] ?? []);
+  }
+
+  /* ──────────────────────────────── charts ──────────────────────────────── */
+
+  /** Draws every floating chart over the sheet, from the engine's scene. */
+  function renderCharts(): void {
+    if (!chartsLayer) return;
+    chartsLayer.replaceChildren(...sheetView.charts.map((c) => chartElement(c)));
+  }
+
+  function chartElement(chart: ChartObject): HTMLElement {
+    const box = el('div', 'fo-chart');
+    box.dataset.chart = chart.id;
+    box.style.left = `${chart.x}px`;
+    box.style.top = `${chart.y}px`;
+    box.style.width = `${chart.w}px`;
+    box.style.height = `${chart.h}px`;
+    const bar = el('div', 'fo-chart-bar');
+    bar.append(el('span', 'fo-chart-title', chart.title || t(`office.${chartTypeChoices().find((c) => c.value === chart.type)?.labelKey.split('.')[1] ?? 'chartBar'}`)));
+    const close = el('button', 'fo-chart-close', '✕');
+    close.type = 'button';
+    close.setAttribute('aria-label', t('office.chartRemove'));
+    close.addEventListener('click', () => { sheetView = removeChart(sheetView, chart.id); renderCharts(); ctx.refresh(); });
+    bar.append(close);
+    box.append(bar);
+    const body = el('div', 'fo-chart-body');
+    try {
+      // The engine draws the scene; parsing its SVG keeps user text out of innerHTML entirely.
+      const spec = rangeToChartSpec(drawnMatrix(), chart.range, {
+        type: chart.type, title: chart.title, theme: 'light', rtl: sheetRtl,
+        width: Math.max(120, chart.w - 12), height: Math.max(80, chart.h - 40),
+      });
+      const svgText = renderSvg(buildChart(spec), chart.title ? { title: chart.title } : {});
+      const parsed = new DOMParser().parseFromString(svgText, 'image/svg+xml');
+      body.append(document.importNode(parsed.documentElement, true));
+    } catch {
+      body.append(el('div', 'fo-chart-empty', t('office.chartEmpty')));
+    }
+    box.append(body);
+    // Dragging the bar moves the chart; the pointer events work for a finger as well as a mouse.
+    bar.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      const start = { x: chart.x, y: chart.y };
+      const from = { x: ev.clientX, y: ev.clientY };
+      const bounds = { w: canvas.clientWidth, h: canvas.clientHeight };
+      const move = (e: PointerEvent): void => {
+        const at = dragPosition(start, e.clientX - from.x, e.clientY - from.y, bounds, { w: chart.w, h: chart.h });
+        box.style.left = `${at.x}px`;
+        box.style.top = `${at.y}px`;
+        chart.x = at.x;
+        chart.y = at.y;
+      };
+      const up = (): void => {
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', up);
+        ctx.refresh();
+      };
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', up);
+    });
+    return box;
+  }
+
+  /* ──────────────────────────────── panels ──────────────────────────────── */
+
+  let openPanel: HTMLElement | null = null;
+
+  function closePanel(): void {
+    openPanel?.remove();
+    openPanel = null;
+  }
+
+  /** A panel in the sheet area: a title, a body, and a close button that a finger can hit. */
+  function showPanel(title: string, body: HTMLElement): void {
+    closePanel();
+    const panel = el('div', 'fo-sheetpanel');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', title);
+    const head = el('div', 'fo-sheetpanel-head');
+    head.append(el('span', 'fo-sheetpanel-title', title));
+    const close = el('button', 'fo-sheetpanel-close', '✕');
+    close.type = 'button';
+    close.setAttribute('aria-label', t('office.cancel'));
+    close.addEventListener('click', closePanel);
+    head.append(close);
+    panel.append(head, body);
+    panel.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); closePanel(); } });
+    panels.replaceChildren(panel);
+    openPanel = panel;
+    panel.querySelector<HTMLElement>('select, input, button:not(.fo-sheetpanel-close)')?.focus();
+  }
+
+  /** The label of a column: its header cell when there is one, else the letter. */
+  function columnLabel(c: number): string {
+    const grid = sheets() ? gridAt(sheets() as SheetsModel, (sheets() as SheetsModel).active) : null;
+    const head = headerRows ? String(grid?.rows[0]?.[c] ?? '').trim() : '';
+    return head ? `${columnName(c)} — ${head}` : columnName(c);
+  }
+
+  function panelButton(label: string, run: () => void, primary = false): HTMLButtonElement {
+    const b = el('button', `fo-sheetpanel-btn${primary ? ' is-primary' : ''}`, label);
+    b.type = 'button';
+    b.addEventListener('click', run);
+    return b;
+  }
+
+  function openSortPanel(): void {
+    const body = el('div', 'fo-sheetpanel-body');
+    const columns = Math.max(1, Math.min(dataCols, cols));
+    const levels = el('div', 'fo-sheetpanel-note', t('office.sortBody', {
+      columns: sheetView.sort.length
+        ? sheetView.sort.map((k) => `${columnLabel(k.col)} ${k.order === 'desc' ? '↓' : '↑'}`).join('، ')
+        : t('office.filterAllShown'),
+    }));
+    body.append(levels);
+    // One row per sort column: pick the column, then its direction.
+    const grid2 = el('div', 'fo-sheetpanel-rows');
+    for (let i = 0; i < MAX_SORT_LEVELS; i++) {
+      const row = el('div', 'fo-sheetpanel-row');
+      const pick = el('select', 'fo-sheetpanel-select');
+      pick.setAttribute('aria-label', t('office.sortColumns'));
+      const none = el('option', undefined, t('office.filterAllShown'));
+      none.value = '';
+      pick.append(none);
+      for (let c = 0; c < columns; c++) {
+        const opt = el('option', undefined, columnLabel(c));
+        opt.value = String(c);
+        pick.append(opt);
+      }
+      const current = sheetView.sort[i];
+      pick.value = current ? String(current.col) : '';
+      const dir = el('select', 'fo-sheetpanel-select');
+      dir.setAttribute('aria-label', t('office.sortAsc'));
+      for (const [value, label] of [['asc', t('office.sortAsc')], ['desc', t('office.sortDesc')]]) {
+        const opt = el('option', undefined, label);
+        opt.value = value;
+        dir.append(opt);
+      }
+      dir.value = current?.order ?? 'asc';
+      pick.addEventListener('change', () => {
+        const col = Number(pick.value);
+        const next = Number.isFinite(col) && pick.value !== ''
+          ? addSortLevel(sheetView, col, dir.value === 'desc' ? 'desc' : 'asc')
+          : { ...sheetView, sort: sheetView.sort.filter((k) => k.col !== (current?.col ?? -1)) };
+        sheetView = next;
+        openSortPanel();
+        applySort();
+      });
+      dir.addEventListener('change', () => {
+        if (!current) return;
+        sheetView = setSortOrder(sheetView, current.col, dir.value === 'desc' ? 'desc' : 'asc');
+        applySort();
+        openSortPanel();
+      });
+      row.append(el('span', 'fo-sheetpanel-level', `${i + 1}`), pick, dir);
+      grid2.append(row);
+    }
+    body.append(grid2);
+    const actions = el('div', 'fo-sheetpanel-actions');
+    actions.append(
+      panelButton(t('office.sortApply'), () => { applySort(); closePanel(); }, true),
+      panelButton(t('office.sortClear'), () => { sheetView = clearSort(sheetView); renderGrid(); closePanel(); ctx.refresh(); }),
+    );
+    body.append(actions, el('div', 'fo-sheetpanel-note', t('office.sortHeaderOn')));
+    showPanel(t('office.sortTitle'), body);
+  }
+
+  /** Applies the sort keys to the MODEL: it is an ordinary edit, so it is undoable and it saves. */
+  function applySort(): void {
+    const m = sheets();
+    const grid = m ? gridAt(m, m.active) : null;
+    if (!m || !grid || !sheetView.sort.length) { renderGrid(); return; }
+    const before = grid.rows.map((row) => [...row]);
+    const after = sortRows(before, sheetView.sort as SortKey[], { header: headerRows });
+    const swap = (model: OfficeModel, rows: string[][]): OfficeModel =>
+      model.kind === 'xlsx' || model.kind === 'csv'
+        ? { ...model, moved: 1, grids: model.grids.map((g, i) => (i === m.active ? { ...g, rows } : g)) }
+        : model;
+    ctx.commit({ key: `sort:${m.active}`, apply: (model) => swap(model, after), revert: (model) => swap(model, before) });
+    active = { row: 0, col: active.col };
+    anchor = active;
+    renderGrid();
+  }
+
+  function openFilterPanel(col: number): void {
+    const grid = sheets() ? gridAt(sheets() as SheetsModel, (sheets() as SheetsModel).active) : null;
+    if (!grid) return;
+    const body = el('div', 'fo-sheetpanel-body');
+    const values = distinctValues(grid.rows, col, { header: headerRows }).slice(0, 300);
+    if (!values.length) body.append(el('div', 'fo-sheetpanel-note', t('office.filterEmpty')));
+    const chosen = new Set<string>();
+    const existing = sheetView.filters[col];
+    if (existing?.kind === 'values') for (const key of existing.keys) chosen.add(key);
+    const all = existing === undefined;
+    const list = el('div', 'fo-sheetpanel-list');
+    for (const value of values) {
+      const row = el('label', 'fo-sheetpanel-check');
+      const box = el('input');
+      box.type = 'checkbox';
+      box.checked = all || chosen.has(value.key);
+      box.addEventListener('change', () => { if (box.checked) chosen.add(value.key); else chosen.delete(value.key); });
+      const text = el('span', undefined, `${value.label === '' ? '∅' : value.label} (${value.count})`);
+      row.append(box, text);
+      list.append(row);
+    }
+    body.append(list);
+    const actions = el('div', 'fo-sheetpanel-actions');
+    actions.append(
+      panelButton(t('office.filterApply'), () => {
+        const keys = values.filter((v) => chosen.has(v.key)).map((v) => v.key);
+        // Unticking nothing at all is the same as clearing the column.
+        sheetView = keys.length === values.length ? clearFilter(sheetView, col) : setFilter(sheetView, col, { kind: 'values', keys });
+        closePanel();
+        renderGrid();
+        ctx.refresh();
+      }, true),
+      panelButton(t('office.filterClearColumn'), () => { sheetView = clearFilter(sheetView, col); closePanel(); renderGrid(); ctx.refresh(); }),
+      panelButton(t('office.filterClearAll'), () => { sheetView = clearFilters(sheetView); closePanel(); renderGrid(); ctx.refresh(); }),
+    );
+    body.append(actions, el('div', 'fo-sheetpanel-note', t('office.filterViewOnly')));
+    showPanel(t('office.filterTitle', { name: columnLabel(col) }), body);
+  }
+
+  function openChartPanel(): void {
+    const g = range();
+    const body = el('div', 'fo-sheetpanel-body');
+    const kinds = chartTypeChoices();
+    const kind = el('select', 'fo-sheetpanel-select');
+    kind.setAttribute('aria-label', t('office.chartKind'));
+    for (const choice of kinds) {
+      const opt = el('option', undefined, t(choice.labelKey));
+      opt.value = choice.value;
+      kind.append(opt);
+    }
+    const title = el('input', 'fo-sheetpanel-input');
+    title.type = 'text';
+    title.placeholder = t('office.chartName');
+    title.setAttribute('aria-label', t('office.chartName'));
+    const rows = el('div', 'fo-sheetpanel-rows');
+    const kindRow = el('div', 'fo-sheetpanel-row');
+    kindRow.append(el('span', 'fo-sheetpanel-level', t('office.chartKind')), kind);
+    const titleRow = el('div', 'fo-sheetpanel-row');
+    titleRow.append(el('span', 'fo-sheetpanel-level', t('office.chartName')), title);
+    rows.append(kindRow, titleRow);
+    body.append(rows, el('div', 'fo-sheetpanel-note', t('office.chartSeries', { range: refName() })));
+    const actions = el('div', 'fo-sheetpanel-actions');
+    actions.append(panelButton(t('office.chartAdd'), () => {
+      const range2: SheetRange = { r0: modelRowOf(g.r0), c0: g.c0, r1: modelRowOf(g.r1), c1: g.c1 };
+      const size = { w: Math.min(420, Math.max(260, canvas.clientWidth - 40)), h: 280 };
+      sheetView = addChart(sheetView, {
+        type: kind.value as ChartObject['type'],
+        range: range2,
+        title: title.value.trim() || t('office.chartInsert'),
+        x: 16, y: 16, w: size.w, h: size.h,
+      });
+      closePanel();
+      renderCharts();
+      ctx.refresh();
+    }, true));
+    body.append(actions, el('div', 'fo-sheetpanel-note', t('office.chartViewOnly')));
+    showPanel(t('office.chartTitle'), body);
+  }
 
   function tabs(): RibbonTab[] {
     return [
@@ -787,6 +1192,42 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
             label: t('office.groupFormulas'), controls: [
               { type: 'button', id: 'autosum', icon: 'sum', label: t('office.autoSum'), showLabel: true, phone: true, enabled: () => enabledSheet() && sheets()?.kind === 'xlsx', run: () => autoSum('SUM') },
               { type: 'button', id: 'average', icon: 'fx', label: t('office.autoAverage'), showLabel: true, enabled: () => enabledSheet() && sheets()?.kind === 'xlsx', run: () => autoSum('AVERAGE') },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'data', label: t('office.tabData'), groups: [
+          {
+            label: t('office.groupSortFilter'), controls: [
+              { type: 'button', id: 'sort', icon: 'sortAsc', label: t('office.sortTitle'), showLabel: true, phone: true, enabled: enabledSheet, run: openSortPanel },
+              { type: 'button', id: 'filter', icon: 'filter', label: t('office.filterTitle', { name: columnName(active.col) }), showLabel: true, phone: true, pressed: () => isFiltered(sheetView), enabled: enabledSheet, run: () => openFilterPanel(active.col) },
+              { type: 'button', id: 'unfilter', icon: 'close', label: t('office.filterClearAll'), showLabel: true, enabled: () => isFiltered(sheetView), run: () => { sheetView = clearFilters(sheetView); renderGrid(); ctx.refresh(); } },
+            ],
+          },
+          {
+            label: t('office.groupCondFmt'), controls: [
+              { type: 'button', id: 'colorscale', icon: 'fill', label: t('office.condScale'), showLabel: true, enabled: enabledSheet, run: () => { sheetView = addCondRule(sheetView, colorScaleRule()); renderGrid(); ctx.refresh(); } },
+              { type: 'button', id: 'databars', icon: 'chart', label: t('office.condBars'), showLabel: true, enabled: enabledSheet, run: () => { sheetView = addCondRule(sheetView, dataBarRule()); renderGrid(); ctx.refresh(); } },
+              { type: 'button', id: 'condtop', icon: 'check', label: t('office.condTop'), showLabel: true, enabled: enabledSheet, run: () => { sheetView = addCondRule(sheetView, topRule(10)); renderGrid(); ctx.refresh(); } },
+              { type: 'button', id: 'condclear', icon: 'close', label: t('office.condClear'), showLabel: true, enabled: () => sheetView.condRules.length > 0, run: () => { sheetView = clearCondRules(sheetView); renderGrid(); ctx.refresh(); } },
+            ],
+          },
+          {
+            label: t('office.groupNumFmt'), controls: [
+              {
+                type: 'select', id: 'numfmt', label: t('office.numFormat'), width: 170,
+                options: () => formatChoices().map((c) => ({ value: c.value, label: t(c.labelKey) })),
+                value: () => formatForCell(sheetView.formats, modelRowOf(active.row), active.col) || 'General',
+                onChange: (value) => applyNumberFormat(value),
+              },
+              { type: 'button', id: 'numclear', icon: 'close', label: t('office.numGeneral'), showLabel: true, run: () => applyNumberFormat('General') },
+            ],
+          },
+          {
+            label: t('office.groupCharts'), controls: [
+              { type: 'button', id: 'chart', icon: 'chart', label: t('office.chartInsert'), showLabel: true, phone: true, enabled: enabledSheet, run: openChartPanel },
+              { type: 'button', id: 'chartclear', icon: 'close', label: t('office.chartRemove'), showLabel: true, enabled: () => sheetView.charts.length > 0, run: () => { for (const c of [...sheetView.charts]) sheetView = removeChart(sheetView, c.id); renderCharts(); ctx.refresh(); } },
             ],
           },
         ],
@@ -811,12 +1252,26 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     let sum = 0;
     let count = 0;
     for (let r = g.r0; r <= g.r1; r++) for (let c = g.c0; c <= g.c1; c++) {
-      const v = (grid.rows[r]?.[c] ?? '').trim();
+      const mr = modelRowOf(r);
+      if (mr < 0) continue;
+      const v = (grid.rows[mr]?.[c] ?? '').trim();
       if (v !== '' && Number.isFinite(Number(v))) { sum += Number(v); count++; }
     }
     if (!count) return [];
     const fmt = (n: number): string => String(Number(n.toPrecision(12)));
     return [t('office.statSum', { n: fmt(sum) }), t('office.statAverage', { n: fmt(sum / count) }), t('office.statCount', { n: count })];
+  }
+
+  /** The sheet's own honest state line: what is filtered, sorted, formatted or charted. */
+  function viewParts(): string[] {
+    const parts: string[] = [];
+    if (isFiltered(sheetView)) {
+      const shown = rowMap ? rowMap.length : dataRows;
+      parts.push(t('office.filterShown', { n: shown, total: dataRows }));
+    }
+    if (sheetView.sort.length) parts.push(t('office.sortedBy', { columns: sheetView.sort.map((k) => `${columnName(k.col)}${k.order === 'desc' ? '↓' : '↑'}`).join(' ') }));
+    if (sheetView.condRules.length) parts.push(t('office.condActive', { n: sheetView.condRules.length }));
+    return parts;
   }
 
   // Redraw the window on every scroll (passive: the wheel is never blocked) and whenever the
@@ -834,12 +1289,13 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       syncBars();
     },
     status(): StatusInfo {
-      return { parts: [refName(), ...selectionStats()] };
+      return { parts: [refName(), ...viewParts(), ...selectionStats()] };
     },
     dispose(): void {
       document.removeEventListener('pointerup', onPointerUp);
       sizes?.disconnect();
       sizes = null;
+      closePanel();
     },
     ...{ activeCell: () => active },
   } as Editor;

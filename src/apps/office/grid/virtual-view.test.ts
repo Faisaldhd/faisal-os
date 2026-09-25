@@ -9,6 +9,7 @@
  * cell 9 000 rows down works through the ordinary input elements.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
+import '../strings';                    // the sheet's own sentences, so the status line can be read
 import type { Editor, EditorContext } from '../editor';
 import type { Edit, OfficeModel, SheetsModel } from '../model';
 import { SHEET_ROWS, formulaCellEdit } from '../model';
@@ -121,8 +122,9 @@ describe('the virtual sheet', () => {
     withViewport(h.wrap);
     h.editor.render();
 
-    // The name box jumps there the way a person does it (row 9001, column A).
-    const nameBox = h.wrap.parentElement?.querySelector<HTMLInputElement>('.fo-namebox');
+    // The name box jumps there the way a person does it (row 9001, column A). It lives in the
+    // sheet's own frame, above the scroll area (the charts and panels now sit between them).
+    const nameBox = h.editor.element.querySelector<HTMLInputElement>('.fo-namebox');
     expect(nameBox).toBeTruthy();
     nameBox!.value = 'A9001';
     nameBox!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
@@ -177,5 +179,107 @@ describe('the virtual sheet', () => {
     editor.render();
     expect(drawnRows(wrap).length).toBeGreaterThan(5);
     expect(wrap.querySelectorAll('.faisal-office-cell[readonly]').length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Slice 2 drives the virtual grid through the SAME row mapping: a filtered sheet draws a subset of
+ * the model rows, so the row numbers, the data behind each drawn cell and every write must all go
+ * through that map. Getting this wrong would silently write into the wrong row, which is the worst
+ * thing a spreadsheet can do — so it is tested here, through the real ribbon and the real panel.
+ */
+describe('AutoFilter on the virtual sheet', () => {
+  const sheet = (): SheetsModel => {
+    const rows = [['Cat', 'Qty']];
+    for (let r = 1; r <= 60; r++) rows.push([r % 2 === 0 ? 'Even' : 'Odd', String(r)]);
+    return { kind: 'xlsx', active: 0, delimiter: ',', grids: [{ name: 'A', rows, truncated: false }] };
+  };
+
+  const ribbonControl = (editor: Editor, tabId: string, controlId: string) => {
+    const tab = editor.tabs().find((tb) => tb.id === tabId);
+    const control = tab?.groups.flatMap((g) => g.controls).find((c) => c.id === controlId);
+    if (!control) throw new Error(`no control ${tabId}/${controlId}`);
+    return control as unknown as { run: () => void; pressed?: () => boolean; enabled?: () => boolean };
+  };
+
+  it('draws only the matching rows, keeps the sheet’s own row numbers, and writes to the right row', () => {
+    const h = harness(sheet());
+    withViewport(h.wrap);
+    h.editor.render();
+    const allRows = drawnRows(h.wrap);
+    expect(allRows.length).toBeGreaterThan(8);
+
+    // Filter the Qty column (B) down to the odd numbers, through the Data tab's own panel.
+    h.wrap.querySelector<HTMLTableCellElement>('.fo-colhead[data-c="1"]')!.click();
+    // Clicking a column header selects its last row (and scrolls to it): come back to the top so
+    // the drawn window is the one this test reasons about.
+    h.wrap.scrollTop = 0;
+    h.wrap.dispatchEvent(new Event('scroll'));
+    ribbonControl(h.editor, 'data', 'filter').run();
+    const panel = h.editor.element.querySelector<HTMLElement>('.fo-sheetpanel');
+    expect(panel).toBeTruthy();
+    const boxes = [...panel!.querySelectorAll<HTMLInputElement>('.fo-sheetpanel-check input')];
+    expect(boxes.length).toBeGreaterThan(2);
+    // Keep only the value "2": one data row in the whole sheet has Qty = 2, and it is model row 2.
+    for (const box of boxes) box.checked = false;
+    boxes[1].checked = true;
+    boxes[1].dispatchEvent(new Event('change', { bubbles: true }));
+    [...panel!.querySelectorAll<HTMLButtonElement>('.fo-sheetpanel-btn')].find((b) => b.classList.contains('is-primary'))!.click();
+
+    // The drawn rows are now the header and the one row the filter kept: no other model row is
+    // drawn at all, and the blank rows below take no typing (a hidden row must not be reachable).
+    const dataDrawn = [...h.wrap.querySelectorAll<HTMLInputElement>('.faisal-office-cell[data-r]')]
+      .map((i) => Number(i.dataset.r)).filter((n) => Number.isFinite(n));
+    expect(new Set(dataDrawn)).toEqual(new Set([0, 2]));   // the header row, and the kept row only
+    const drawn = drawnRows(h.wrap);
+    expect(drawn[0]).toBe(0);                       // the header row is always drawn
+    expect(drawn).not.toContain(1);                 // the hidden rows are not drawn
+    expect(drawn).not.toContain(3);
+    expect(h.wrap.querySelectorAll('.fo-cell-empty[readonly]').length).toBeGreaterThan(0);
+    // The header of the filtered column says so, and the status line reports it honestly.
+    expect(h.editor.element.querySelector('.fo-colhead.is-filtered')).toBeTruthy();
+    expect(h.editor.status().parts.join(' ')).toMatch(/مُصفّى|Filtered/);
+
+    // The drawn row for model row 2 is the only data row: type there and the value must land in
+    // model row 2, never in a row the filter hid.
+    const input = h.wrap.querySelector<HTMLInputElement>('.faisal-office-cell[data-r="2"][data-c="0"]');
+    expect(input?.value).toBe('Even');
+    input!.value = 'typed';
+    input!.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(h.model().grids[0].rows[2][0]).toBe('typed');
+    expect(h.model().grids[0].rows[1][0]).toBe('Odd');   // the hidden row is untouched
+    expect(h.model().grids[0].rows[3][0]).toBe('Odd');   // and so is the one after it
+
+    // Clearing every filter brings the whole sheet back.
+    ribbonControl(h.editor, 'data', 'unfilter').run();
+    expect(drawnRows(h.wrap).length).toBe(allRows.length);
+    expect(h.editor.element.querySelector('.fo-colhead.is-filtered')).toBeNull();
+  });
+
+  it('sorts the model through the Data tab, and the sort is a committable edit', () => {
+    const h = harness(sheet());
+    withViewport(h.wrap);
+    h.editor.render();
+    const before = h.model().grids[0].rows.map((r) => r[1]);
+    h.wrap.querySelector<HTMLTableCellElement>('.fo-colhead[data-c="1"]')!.click();
+    h.wrap.scrollTop = 0;
+    h.wrap.dispatchEvent(new Event('scroll'));
+    ribbonControl(h.editor, 'data', 'sort').run();
+    const opts = h.editor.element.querySelectorAll<HTMLElement>('.fo-colhead');
+    expect(opts.length).toBeGreaterThan(1);
+    // The panel's second row is the (empty) second level: pick the Qty column, descending.
+    const panel = h.editor.element.querySelector<HTMLElement>('.fo-sheetpanel');
+    const selects = [...panel!.querySelectorAll<HTMLSelectElement>('.fo-sheetpanel-select')];
+    selects[0].value = '1';
+    selects[0].dispatchEvent(new Event('change', { bubbles: true }));
+    const dir = [...h.editor.element.querySelectorAll<HTMLSelectElement>('.fo-sheetpanel-select')][1];
+    dir.value = 'desc';
+    dir.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(h.commits.length).toBeGreaterThan(0);            // one undoable edit per apply, not a silent mutation
+    const rows = h.model().grids[0].rows;
+    expect(rows[0]).toEqual(['Cat', 'Qty']);                // the header stayed put
+    const sorted = rows.slice(1).map((r) => Number(r[1]));
+    expect(sorted).not.toEqual(before.slice(1).map(Number));  // the data really moved
+    expect([...sorted].sort((a, b) => b - a)).toEqual(sorted); // and it is in descending order
   });
 });
