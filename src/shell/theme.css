@@ -1922,11 +1922,20 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--sa-gap);
+  /* The only part that scrolls: head, status and footer keep their size (flex: none below), so
+   * the footer is always visible and never drawn over the folder list or the fields. */
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-inline-end: 4px;
+  overscroll-behavior: contain;
+  /* Room for the 2px + 2px focus ring, which the scroll box would otherwise clip. */
+  padding: 4px;
 }
+.faisal-saveas-body > * { flex: none; }
+.faisal-saveas-head,
+.faisal-saveas-status,
+.faisal-saveas-actions { flex: none; }
 
 /* ── folder bar ── */
 .faisal-saveas-place {
@@ -1962,7 +1971,7 @@ body {
 .faisal-saveas-crumb:hover { background: var(--sa-blue-soft); }
 .faisal-saveas-crumb.is-current { color: var(--sa-text); border-block-end-color: var(--sa-copper); }
 .faisal-saveas-crumb-sep { color: var(--sa-text-2); flex: none; }
-.faisal-saveas-crumb .faisal-saveas-icon { width: 16px; height: 16px; }
+.faisal-saveas-crumb svg.faisal-saveas-icon { width: 16px; height: 16px; }
 
 /* ── folder list ── */
 .faisal-saveas-folders {
@@ -2144,6 +2153,8 @@ body {
 .faisal-saveas-iconbtn:hover:not(:disabled) { background: var(--sa-blue-soft); }
 .faisal-saveas-iconbtn:disabled { opacity: .5; cursor: default; }
 .faisal-saveas-icon { width: 20px; height: 20px; flex: none; }
+/* Safety net: no icon inside the dialog may ever fall back to the SVG default size. */
+.faisal-saveas svg { width: 20px; height: 20px; flex: none; }
 
 /* Keyboard focus is always visible, in copper, on every control of this dialog. */
 .faisal-saveas :is(button, input, select, [tabindex]):focus-visible {
@@ -2170,9 +2181,12 @@ body {
     --sa-font: 15px;
     --sa-fields-dir: column;
   }
-  .faisal-saveas-actions { flex-direction: column-reverse; align-items: stretch; }
-  .faisal-saveas-btn { width: 100%; }
-  .faisal-saveas-folders { max-height: 176px; }
+  /* Footer: the primary action spans the row on top; cancel and download share the row below,
+   * so the sticky footer stays two rows (100px) and leaves the body room on a 320×640 screen. */
+  .faisal-saveas-actions { flex-direction: row; align-items: stretch; }
+  .faisal-saveas-btn { flex: 1 1 0; min-width: 0; padding-inline: 8px; }
+  .faisal-saveas-btn.is-primary { flex-basis: 100%; order: -1; }
+  .faisal-saveas-folders { min-height: 96px; max-height: 176px; }
 }
 @media (max-width: 700px) {
   .faisal-saveas-overlay {
@@ -2185,8 +2199,10 @@ body {
     --sa-font: 15px;
     --sa-fields-dir: column;
   }
-  .faisal-saveas-actions { flex-direction: column-reverse; align-items: stretch; }
-  .faisal-saveas-btn { width: 100%; }
+  .faisal-saveas-actions { flex-direction: row; align-items: stretch; }
+  .faisal-saveas-btn { flex: 1 1 0; min-width: 0; padding-inline: 8px; }
+  .faisal-saveas-btn.is-primary { flex-basis: 100%; order: -1; }
+  .faisal-saveas-folders { min-height: 96px; max-height: 176px; }
 }
 
 /* Glass needs a backdrop: without one (or when the owner asks for less transparency) the same

@@ -134,11 +134,13 @@ describe('PDF window', () => {
     ]) {
       expect(text, label).toContain(label);
     }
-    for (const limit of ['لا OCR', 'لا توقيع رقمي', 'لا إنشاء نماذج', 'لا تعديل لنص موجود', 'لا حجب حقيقي', 'قفل PDF بكلمة مرور غير مدعوم محلياً']) {
+    for (const limit of ['لا OCR', 'لا توقيع رقمي', 'لا إنشاء نماذج', 'لا تعديل لنص موجود', 'الحجب يحذف محتوى الصفحات داخل المناطق فقط','قفل PDF بكلمة مرور غير مدعوم محلياً']) {
       expect(text, limit).toContain(limit);
     }
     // Covering is labelled as hiding, never as redaction — in the UI itself, not only in code.
     expect(text).toContain('هذه تغطية/إخفاء وليست حجباً');
+    // True redaction is its own, separate panel that says it removes the content.
+    expect(text).toContain('هذا حجب حقيقي: المحتوى داخل المناطق يُحذف من الملف');
     // The document has no form, and the window says so plainly instead of drawing an empty panel.
     expect(text).toContain('لا يحتوي على نموذج تفاعلي');
   });
