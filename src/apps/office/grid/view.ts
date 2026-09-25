@@ -18,7 +18,7 @@ import {
   addColumnEdit, addRowEdit, canDeleteColumn, canDeleteRow, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit,
   gridAt, gridWidth, SHEET_ROWS, type CellState, type Edit, type OfficeModel, type SheetsModel,
 } from '../model';
-import { evaluateInModel, formatFormula, parseFormula } from '../formula/index';
+import { evaluateInModel, formatFormula, parseFormula, translateFormula } from '../formula/index';
 import { formatValue } from '../calc/index';
 import { columnName } from '../xml';
 import { MAX_COLS } from '../../viewer/formats';
@@ -39,6 +39,7 @@ import { buildChart, renderSvg } from '../charts/index';
 import {
   DEFAULT_ROW_HEIGHT, OVERSCAN_ROWS, TOUCH_ROW_HEIGHT, rowOffsets, rowWindow, type RowWindow,
 } from './virtual';
+import { copyIndex, fillCells, fillPlan, seriesFrom, type FillPlan, type FillRect } from './fill';
 
 /** Columns drawn past the data on an editable sheet, so a sheet still looks like one. */
 const PAD_ROWS = 30;
@@ -195,15 +196,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     if (!grid) return;
     if (active.row !== r || active.col !== c) { active = { row: r, col: c }; anchor = active; } // the cell typed in is the active one
     const before = cellState(r, c);
-    let after: CellState;
-    if (m.kind === 'xlsx' && typed.trimStart().startsWith('=')) {
-      const outcome = evaluateInModel(typed.trim(), m, sheet, { row: r, col: c });
-      const parsed = outcome.ok ? parseFormula(typed.trim()) : null;
-      const canonical = parsed && parsed.ok ? formatFormula(parsed.ast) : outcome.canonical;
-      after = outcome.ok && canonical ? { value: outcome.value, formula: `=${canonical}` } : { value: typed };
-    } else {
-      after = { value: typed };
-    }
+    const after = cellStateFor(typed, r, c, sheet);
     if (after.value === before.value && (after.formula ?? null) === (before.formula ?? null)) return;
     const growsGrid = r >= grid.rows.length || c >= gridWidth(grid);
     ctx.commit(formulaCellEdit(sheet, r, c, before, after));
@@ -221,6 +214,21 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
         editing = true;
       }
     } else refreshValues();
+  }
+
+  /**
+   * The state a typed text produces for one cell: a formula is evaluated and canonicalised, so
+   * the file keeps `=SUM(A1:A2)` and the cell shows its value. Shared by typing and by the fill
+   * handle, which must not invent a second way to write a cell.
+   */
+  function cellStateFor(typed: string, r: number, c: number, sheet: number): CellState {
+    const m = sheets();
+    if (!m) return { value: typed };
+    if (m.kind !== 'xlsx' || !typed.trimStart().startsWith('=')) return { value: typed };
+    const outcome = evaluateInModel(typed.trim(), m, sheet, { row: r, col: c });
+    const parsed = outcome.ok ? parseFormula(typed.trim()) : null;
+    const canonical = parsed && parsed.ok ? formatFormula(parsed.ast) : outcome.canonical;
+    return outcome.ok && canonical ? { value: outcome.value, formula: `=${canonical}` } : { value: typed };
   }
 
   function showResult(): void {
@@ -527,6 +535,10 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       if (!blank && covered.has(`${mr}:${c}`)) continue;
       const td = el('td', 'faisal-office-celld fo-td');
       td.style.height = `${height}px`;
+      // DRAWN coordinates on the cell itself (the input's `data-r`/`data-c` are the model row and
+      // the column, which is what typing needs; the fill handle and its preview walk drawn cells).
+      td.dataset.drawn = String(r);
+      td.dataset.c = String(c);
       const merge = blank ? undefined : mergeAt.get(`${mr}:${c}`);
       if (merge) { td.rowSpan = merge.r1 - mr + 1; td.colSpan = merge.c1 - c + 1; }
       const inData = !blank && mr < dataRows && c < dataCols;
@@ -571,6 +583,14 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
         active = anchor;
       });
       td.addEventListener('pointerenter', () => {
+        if (filling) {
+          // The live preview: which cells the release would write, marked while the pointer is
+          // over them. Nothing is written until the pointer goes up.
+          fillTarget = fillSource ? fillPlan(fillSource, { row: r, col: c }) : null;
+          fillPreview = fillSource && fillTarget ? fillCells(fillSource, fillTarget) : [];
+          paintFillPreview();
+          return;
+        }
         if (!dragging) return;
         active = { row: r, col: c };
         paintSelection();
@@ -611,6 +631,8 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   let keepCaret = false;
   document.addEventListener('pointerup', onPointerUp);
   function onPointerUp(): void {
+    // A fill drag ends here: the preview becomes one edit (or nothing, if it never left the source).
+    if (filling) { applyFill(); return; }
     if (!dragging) return;
     dragging = false;
     paintSelection();
@@ -668,6 +690,107 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     };
   }
 
+  /* ─────────────────────────── the fill handle ─────────────────────────── */
+  // A small square on the corner of the selection: drag it to copy the source cells or continue
+  // their series. The maths lives in `fill.ts`; this is only the dragging, the live preview and
+  // the single edit it commits. Every target row is mapped through `modelRowOf`, so a drag can
+  // never write into a row an active filter hid (the rule slice #108 rests on).
+  const fillHandle = el('span', 'fo-fillhandle');
+  fillHandle.setAttribute('role', 'button');
+  fillHandle.setAttribute('aria-label', t('office.fillHandle'));
+  fillHandle.title = t('office.fillHandle');
+  fillHandle.hidden = true;
+  let filling = false;
+  let fillSource: FillRect | null = null;
+  let fillTarget: FillPlan | null = null;
+  let fillPreview: Array<{ row: number; col: number }> = [];
+
+  fillHandle.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0 || !ctx.editable()) return;
+    ev.preventDefault();
+    ev.stopPropagation();                       // never start a selection drag from the handle
+    filling = true;
+    fillSource = range();
+    fillTarget = null;
+    fillPreview = [];
+    try { fillHandle.setPointerCapture(ev.pointerId); } catch { /* no capture outside a browser */ }
+  });
+
+  /** Marks the cells the release would write. Preview only — the model is untouched. */
+  function paintFillPreview(): void {
+    for (const [, td] of tds) td.classList.remove('is-fillpreview');
+    if (!filling) return;
+    for (const at of fillPreview) tds.get(`${at.row}:${at.col}`)?.classList.add('is-fillpreview');
+  }
+
+  /** Writes the previewed fill as ONE undoable edit (a rejected cell leaves the edit empty). */
+  function applyFill(): void {
+    const m = sheets();
+    const source = fillSource;
+    const plan = fillTarget;
+    const cells = fillPreview;
+    filling = false;
+    fillSource = null;
+    fillTarget = null;
+    fillPreview = [];
+    for (const [, td] of tds) td.classList.remove('is-fillpreview');
+    const grid = m ? gridAt(m, m.active) : null;
+    if (!m || !grid || !source || !plan || !cells.length || !ctx.editable()) { paintSelection(); return; }
+
+    // One series per line of the source: each column for a vertical drag, each row for a
+    // horizontal one — exactly how a spreadsheet fills a block.
+    const vertical = plan.direction === 'down' || plan.direction === 'up';
+    const lines: Array<{ values: string[]; row: number; col: number }> = [];
+    if (vertical) {
+      for (let c = source.c0; c <= source.c1; c++) {
+        const values: string[] = [];
+        for (let r = source.r0; r <= source.r1; r++) { const mr = modelRowOf(r); values.push(mr < 0 ? '' : rawOf(mr, c)); }
+        lines.push({ values, row: source.r0, col: c });
+      }
+    } else {
+      for (let r = source.r0; r <= source.r1; r++) {
+        const mr = modelRowOf(r);
+        const values: string[] = [];
+        for (let c = source.c0; c <= source.c1; c++) values.push(mr < 0 ? '' : rawOf(mr, c));
+        lines.push({ values, row: r, col: source.c0 });
+      }
+    }
+    const series = lines.map((line) => seriesFrom(line.values, plan.direction, plan.count));
+    const backwards = plan.direction === 'up' || plan.direction === 'left';
+    /** Which value of a line's series a cell at `step` (1-based, from the source edge) takes. */
+    const at = (step: number): number => (backwards ? plan.count - step : step - 1);
+
+    const edits: Edit[] = [];
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li];
+      for (let step = 1; step <= plan.count; step++) {
+        const row = vertical ? (plan.direction === 'down' ? source.r1 + step : source.r0 - step) : line.row;
+        const col = vertical ? line.col : (plan.direction === 'right' ? source.c1 + step : source.c0 - step);
+        const mr = modelRowOf(row);
+        if (mr < 0) continue;                    // a hidden row or a blank row below the data
+        let text = series[li][at(step)] ?? '';
+        if (text.trimStart().startsWith('=')) {
+          // A formula copies the way Excel copies it: its relative references move with the cell.
+          const index = copyIndex(backwards ? -step : step, line.values.length);
+          const fromRow = vertical ? source.r0 + index : line.row;
+          const fromCol = vertical ? line.col : source.c0 + index;
+          const fromMr = modelRowOf(fromRow);
+          text = translateFormula(text, fromMr < 0 ? 0 : mr - fromMr, col - fromCol);
+        }
+        const before = cellState(mr, col);
+        const after = cellStateFor(text, mr, col, m.active);
+        if (after.value === before.value && (after.formula ?? null) === (before.formula ?? null)) continue;
+        edits.push(formulaCellEdit(m.active, mr, col, before, after));
+      }
+    }
+    if (edits.length) {
+      ctx.commit(compositeEdit(edits));          // one edit: one undo puts the whole fill back
+      refreshValues();
+      ctx.setStatus(t('office.filled', { n: edits.length }));
+    }
+    paintSelection();
+  }
+
   function refName(): string {
     const g = range();
     // The name box names the SHEET's own cells, so a filter never renumbers the rows.
@@ -687,6 +810,18 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       td.classList.toggle('is-active', r === active.row && c === active.col);
     }
     table?.querySelectorAll('.fo-colhead').forEach((th) => { const c = Number((th as HTMLElement).dataset.c); th.classList.toggle('is-sel', c >= g.c0 && c <= g.c1); });
+    // The handle rides on the corner of the selection — the cell the fill would continue from.
+    // While a drag is running it stays there, so the pointer can leave the source and come back.
+    const corner = (filling && fillSource ? fillSource : g);
+    fillHandle.remove();
+    const host = tds.get(`${corner.r1}:${corner.c1}`);
+    const showHandle = ctx.editable() && !!host;
+    if (host) {
+      host.append(fillHandle);
+      host.classList.add('has-fillhandle');
+    }
+    fillHandle.hidden = !showHandle;
+    for (const [key, td] of tds) if (key !== `${corner.r1}:${corner.c1}`) td.classList.remove('has-fillhandle');
     syncBars();
   }
 

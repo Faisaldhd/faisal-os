@@ -517,6 +517,39 @@
 .fo-gridnote { padding: 4px 12px; font-size: 12px; color: var(--app-text-3); }
 .fo-gridnote[hidden] { display: none; }
 
+/* The fill handle: a small square on the corner of the selection whose GRAB AREA is 44px (G8) —
+   the dot stays 9px so the grid still reads like a spreadsheet, the box around it does not.
+   `touch-action: none` keeps a drag on a phone from scrolling the sheet underneath it. */
+.fo-td.has-fillhandle { overflow: visible; z-index: 2; }
+.fo-fillhandle {
+  position: absolute;
+  inset-block-end: 0;
+  inset-inline-end: 0;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: end;
+  padding-block-end: 5px;
+  padding-inline-end: 5px;
+  box-sizing: border-box;
+  cursor: crosshair;
+  touch-action: none;
+  z-index: 3;
+}
+.fo-fillhandle[hidden] { display: none; }
+.fo-fillhandle::after {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border: 1px solid #fff;
+  background: #2f67e6;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .3);
+}
+.fo-fillhandle:focus-visible { outline: 2px solid var(--faisal-accent, #2f67e6); outline-offset: 2px; }
+.fo-fillhandle:focus-visible::after { width: 13px; height: 13px; }
+/* The cells a release would write: a preview, never a model change. */
+.fo-td.is-fillpreview { background-image: linear-gradient(rgba(47, 103, 230, .22), rgba(47, 103, 230, .22)); }
+
 /* ───────────────────────────── slides ───────────────────────────── */
 
 .fo-impress { flex: 1; min-height: 0; display: flex; }
