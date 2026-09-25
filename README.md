@@ -227,9 +227,9 @@ Numbers measured on a local `dist/` build (see [docs/audit/build-perf.md](docs/a
 - Hijri dates come from the browser's `Intl` Umm al-Qura data, not from a bundled calendar.
 - There is no dedicated mobile layout; touch works, but the shell is designed for a desktop-sized pointer.
 
-## License and credits
+## Credits
 
-No license file yet — all rights reserved by the author (Faisal Saeed Al Shahrani). `package.json` carries a `"license": "ISC"` field, but no `LICENSE` file exists in the repository.
+Fai$al OS is released under the MIT License — see [LICENSE](LICENSE) and the [License](#license) section below.
 
 Bundled third-party components keep their own licenses: v86 (BSD-2-Clause), SeaBIOS/SeaVGABIOS (LGPL-3.0), the Linux kernel and BusyBox (GPL-2.0) — see [public/v86/README.md](public/v86/README.md) for the exact sources. Runtime libraries used: `@xterm/xterm`, `@xterm/addon-fit`, `v86` and `html-to-image`, with Vite, TypeScript, Vitest, jsdom and `fake-indexeddb` for development.
 
