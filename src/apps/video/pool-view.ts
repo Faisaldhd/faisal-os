@@ -7,7 +7,8 @@
 import type { MediaItem, MediaLibrary } from './media';
 import type { MediaType } from './project';
 import { MEDIA_DRAG_TYPE } from './timeline-view';
-import { button, el, formatClock, iconButton, s } from './ui';
+import { button, el, iconButton, s } from './ui';
+import { formatMediaTime } from './time';
 import { icon } from './icons';
 
 export type PoolFilter = 'all' | MediaType;
@@ -113,7 +114,7 @@ export class PoolView {
     const kind = el('span', 'fvs-card-kind');
     kind.append(icon(item.type === 'audio' ? 'music' : item.type === 'image' ? 'image' : 'film'));
     thumb.append(kind);
-    if (item.type !== 'image' && item.duration > 0) thumb.append(el('span', 'fvs-card-duration', formatClock(item.duration)));
+    if (item.type !== 'image' && item.duration > 0) thumb.append(el('span', 'fvs-card-duration', formatMediaTime(item.duration)));
     const name = el('span', 'fvs-card-name', item.name);
     name.dir = 'auto';
     name.title = item.path ?? item.name;

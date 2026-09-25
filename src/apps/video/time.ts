@@ -116,6 +116,24 @@ export function formatRulerTime(
     : `${minutes}:${pad(secs)}${framePart}`;
 }
 
+/**
+ * The media clock: how long a clip is and where the playhead is, frame-accurate, in the same
+ * `m:ss.ff` shape the timeline ruler draws. Hours appear only when there are any.
+ *
+ * This is the one readout for anything that measures *media* — the player's transport, the
+ * playlist rows, the pool card badge, the editor's status line and timecode, the length of an
+ * export. Before it, the same 6.47 s clip read `0:06` in the player (seconds, truncated: a
+ * length the owner could see was wrong) and `00:06:14` in the editor status (right to the frame,
+ * but three colon-separated numbers read as six minutes and fourteen seconds). One function, one
+ * shape, and the two surfaces can no longer disagree about the length of the same file.
+ *
+ * `formatClock` (ui.ts) is the other half of the rule: it is for how long an *operation* takes
+ * (export elapsed, ETA), where frames are noise.
+ */
+export function formatMediaTime(seconds: number, fps: number | null | undefined = DEFAULT_FPS): string {
+  return formatRulerTime(seconds, fps, { frames: true });
+}
+
 /** A frame duration for stepping: the measured fps when known, else 30. */
 export function frameDuration(fps: number | null | undefined): number {
   const value = typeof fps === 'number' && Number.isFinite(fps) && fps > 0 ? fps : DEFAULT_FPS;
