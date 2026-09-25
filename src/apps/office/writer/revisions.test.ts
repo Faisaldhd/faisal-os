@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_AUTHOR, MERGE_MS, applyChangeToText, authorStamp, counts, decide, decideAll, emptyLog,
-  pending, planPieces, record, revisionsOf, type RevisionLog,
+  pending, planPieces, record, revisionsOf, shiftAfter, type RevisionLog,
 } from './revisions';
 
 const at = (ms: number): number => 1_700_000_000_000 + ms;
@@ -132,6 +132,37 @@ describe('what changed between two versions of a paragraph', () => {
 
   it('reports nothing when nothing changed', () => {
     expect(revisionsOf('same', 'same')).toEqual([]);
+  });
+});
+
+describe('keeping marks anchored when the text moves', () => {
+  it('moves the pending revisions that sit after an edit, and leaves the settled ones alone', () => {
+    let log = record(emptyLog(), { kind: 'insert', block: 1, at: 10, text: 'X', time: at(0) });
+    log = record(log, { kind: 'insert', block: 1, at: 30, text: 'Y', time: at(10) });
+    log = decide(log, 2, 'accept').log;
+    const moved = shiftAfter(log, 1, 4, 5);
+    expect(moved.items[0].at).toBe(15);
+    expect(moved.items[1].at).toBe(30);
+  });
+
+  it('moves a mark backwards when text before it is deleted, never below zero', () => {
+    const log = record(emptyLog(), { kind: 'insert', block: 1, at: 3, text: 'X', time: at(0) });
+    expect(shiftAfter(log, 1, 0, -2).items[0].at).toBe(1);
+    expect(shiftAfter(log, 1, 0, -10).items[0].at).toBe(0);
+  });
+
+  it('touches nothing for another paragraph, an edit after the mark, or no change at all', () => {
+    const log = record(emptyLog(), { kind: 'insert', block: 1, at: 10, text: 'X', time: at(0) });
+    expect(shiftAfter(log, 2, 0, 5)).toBe(log);
+    expect(shiftAfter(log, 1, 20, 5)).toBe(log);
+    expect(shiftAfter(log, 1, 0, 0)).toBe(log);
+  });
+
+  it('keeps a mark drawable after an earlier edit moved the paragraph', () => {
+    // The paragraph is "abcdef"; a change marked at 4 ("ef") must survive "ab" being deleted.
+    const log = shiftAfter(record(emptyLog(), { kind: 'insert', block: 7, at: 4, text: 'ef', time: at(0) }), 7, 0, -2);
+    const pieces = planPieces('cdef', log.items, 7);
+    expect(pieces.filter((p) => p.mark === 'insert').map((p) => p.text)).toEqual(['ef']);
   });
 });
 

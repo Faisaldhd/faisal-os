@@ -33,7 +33,7 @@ import { toHtml, toMarkdown } from './export';
 import { findAll, type Match } from './find';
 import { paginate, PX } from './paginate';
 import {
-  applyChangeToText, authorStamp, counts as revisionCounts, decide, decideAll, emptyLog, pending as pendingRevisions,
+  applyChangeToText, authorStamp, counts as revisionCounts, decide, decideAll, emptyLog, pending as pendingRevisions, shiftAfter,
   planPieces, record, revisionsOf, type Change, type Revision, type RevisionLog,
 } from './revisions';
 import { shellConfirm } from '../../../shell/dialog';
@@ -941,6 +941,8 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     // paragraph's own coordinates. A burst of typing merges into one revision inside the log.
     if (tracking) {
       const deleted = removedInside + (sel.from.b === sel.to.b ? '' : blockText(last).slice(0, sel.to.o));
+      // Older marks first: this edit moves the text they point at by the net length change.
+      revLog = shiftAfter(revLog, first.id, sel.from.o, text.length - deleted.length);
       if (deleted) revLog = record(revLog, { kind: 'delete', block: first.id, at: sel.from.o, text: deleted });
       if (text) revLog = record(revLog, { kind: 'insert', block: first.id, at: sel.from.o, text });
       renderReview();
@@ -1049,7 +1051,13 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     // Tracked: this path removes characters without going through `insertText`, so the deletion
     // is recorded here, at the offset the paragraph keeps after the removal.
     const removed = text.slice(start, end);
-    if (tracking && removed) { revLog = record(revLog, { kind: 'delete', block: block.id, at: start, text: removed }); renderReview(); }
+    if (tracking && removed) {
+      // The paragraph shrinks: older marks after the cut move back with their text, then the
+      // deletion itself is recorded at the offset the paragraph keeps.
+      revLog = shiftAfter(revLog, block.id, start, -removed.length);
+      revLog = record(revLog, { kind: 'delete', block: block.id, at: start, text: removed });
+      renderReview();
+    }
     const runs = replaceText(block.runs, start, end, '');
     commitSplice(sel.from.b, 1, [{ ...block, runs }], [formatAt(sel.from.b)], { b: sel.from.b, o: start }, `del:${block.id}`);
   }

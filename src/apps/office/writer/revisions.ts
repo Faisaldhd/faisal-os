@@ -211,3 +211,23 @@ export function authorStamp(rev: Revision): string {
   const mm = String(at.getMinutes()).padStart(2, '0');
   return `${rev.author} · ${hh}:${mm}`;
 }
+
+/**
+ * Moves the pending revisions of a paragraph that sit at or after `from` by `delta`.
+ *
+ * A revision remembers where its text is, and a later edit BEFORE it moves that text: without this
+ * the older mark would stop matching the paragraph and quietly stop being drawn (the change itself
+ * would survive and could still be decided, but the owner could not see what it referred to any
+ * more). Every edit that changes a paragraph's length calls this with its own offset and size —
+ * `delta` is positive for an insertion, negative for a deletion.
+ */
+export function shiftAfter(log: RevisionLog, block: number, from: number, delta: number): RevisionLog {
+  if (!delta) return log;
+  let changed = false;
+  const items = log.items.map((rev) => {
+    if (rev.status !== 'pending' || rev.block !== block || rev.at < from) return rev;
+    changed = true;
+    return { ...rev, at: Math.max(0, rev.at + delta) };
+  });
+  return changed ? { ...log, items } : log;
+}
