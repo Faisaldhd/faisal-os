@@ -5,7 +5,8 @@
  * annotations, watermarks, headers/footers and typed signatures.
  *
  * How a line is drawn:
- *   logical text → `shapeArabic` → `reorderClusters` (visual order, marks kept after their base)
+ *   logical text → `allahLigature` (the font's one «الله» glyph, when it has one)
+ *   → `shapeArabic` → `reorderClusters` (visual order, marks kept after their base)
  *   → each cluster is given a font: the embedded Unicode font when it has the glyph, else the
  *   standard Latin font (Helvetica by default) when WinAnsi can encode it, else a refusal
  *   → glyphs are encoded ONE BY ONE, so fontkit's own layout never re-orders them (it reverses
@@ -22,7 +23,7 @@ import {
 } from 'pdf-lib';
 import type { Rgb } from '../ops';
 import { unsupportedWatermarkChars } from '../ops';
-import { baseDirection, bidiClass, isTransparentMark, reorderClusters, shapeArabic, type Direction } from './arabic';
+import { allahLigature, baseDirection, bidiClass, isTransparentMark, reorderClusters, shapeArabic, type Direction } from './arabic';
 import { EngineRefusal } from './common';
 
 /* ───────────────────────────── fonts ───────────────────────────── */
@@ -106,10 +107,13 @@ const hexOf = (h: PDFHexString): string => h.toString().replace(/^<|>$/g, '');
  */
 export function layoutLine(fonts: TextFonts, line: string, size: number, direction: Direction = 'auto'): LineLayout {
   const dir = direction === 'auto' ? baseDirection(line, 'ltr') : direction;
-  const clusters = reorderClusters(shapeArabic(line), dir);
+  const u = fonts.unicode;
+  // «الله» becomes the font's one ligature glyph when it has one; the letters keep their own
+  // forms when it does not (and the logical text stays what it was — see `layout.logical`).
+  const ligated = u ? allahLigature(line, (cp) => u.fk.hasGlyphForCodePoint(cp)) : line;
+  const clusters = reorderClusters(shapeArabic(ligated), dir);
   const pieces: Piece[] = [];
   const missing: string[] = [];
-  const u = fonts.unicode;
   const scale = u ? size / u.upem : 0;
   let width = 0;
   for (const cluster of clusters) {

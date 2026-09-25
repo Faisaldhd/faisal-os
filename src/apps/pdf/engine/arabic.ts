@@ -5,10 +5,12 @@
  * So before Arabic reaches a page it must already be
  *   1. shaped: every letter replaced by its isolated / initial / medial / final form from the
  *      Unicode Presentation Forms (FE70–FEFF, plus FB50–FBFF for the Persian letters), with
- *      lam + alef merged into their ligature and the tashkeel kept on its letter; and
+ *      lam + alef merged into their ligature, «الله» merged into the font's one glyph when it
+ *      has one (`allahLigature`), and the tashkeel kept on its letter; and
  *   2. put in visual order: a compact subset of the Unicode Bidirectional Algorithm (UAX #9)
  *      for ONE line with no explicit embeddings, so "مرحبا 2026 PDF" keeps its digits and its
- *      Latin word left-to-right inside the right-to-left line.
+ *      Latin word left-to-right inside the right-to-left line, and a bracketed aside stays
+ *      together (N0).
  *
  * Both steps are pure and tested on code points. The glyphs themselves come from an embedded
  * font (Noto Naskh Arabic, SIL OFL 1.1, in `./fonts/`), loaded lazily by `loadArabicFont()`
@@ -50,12 +52,17 @@ const FORMS: ReadonlyMap<number, Forms> = (() => {
 
 /** Lam + (alef variant) → [isolated, final] ligature. */
 const LAM = 0x0644;
+const ALEF = 0x0627;
+const HEH = 0x0647;
 const LAM_ALEF: ReadonlyMap<number, readonly [number, number]> = new Map([
   [0x0622, [0xfef5, 0xfef6]],
   [0x0623, [0xfef7, 0xfef8]],
   [0x0625, [0xfef9, 0xfefa]],
   [0x0627, [0xfefb, 0xfefc]],
 ]);
+
+/** ARABIC LIGATURE ALLAH ISOLATED FORM — one glyph for the whole word below. */
+export const ALLAH_LIGATURE = 0xfdf2;
 
 function joiningOf(cp: number): Joining {
   if (cp === 0x0640 || cp === 0x200d) return 'C';
@@ -66,8 +73,70 @@ function joiningOf(cp: number): Joining {
   return 'U';
 }
 
+/** Does the letter before `at` join forward (so `at`'s letter is connected on its right)? */
+function joinsFromBefore(cps: readonly number[], at: number): boolean {
+  for (let i = at - 1; i >= 0; i--) {
+    if (isTransparentMark(cps[i])) continue;
+    const joining = joiningOf(cps[i]);
+    return joining === 'D' || joining === 'C';
+  }
+  return false;
+}
+
+/** Does the letter after `at` connect back to it (so `at`'s letter cannot be final)? */
+function joinsForward(cps: readonly number[], at: number): boolean {
+  for (let i = at + 1; i < cps.length; i++) {
+    if (isTransparentMark(cps[i])) continue;
+    const joining = joiningOf(cps[i]);
+    return joining === 'D' || joining === 'R' || joining === 'C';
+  }
+  return false;
+}
+
 export function isArabicLetter(cp: number): boolean {
   return FORMS.has(cp);
+}
+
+/**
+ * «الله» as the font's one glyph, when the font has it.
+ *
+ * Letter-by-letter shaping gives the right forms for the word (isolated alef, initial lam,
+ * medial lam, final heh), but a font that draws Arabic properly carries one glyph for the whole
+ * word (U+FDF2) and that glyph is what a reader expects on the page. The substitution is refused
+ * in exactly the cases where it would be wrong:
+ *
+ *  · any other sequence — the connected «لله» inside «بالله» has no isolated alef;
+ *  · an alef joined to the letter before it — the same «بالله», where an isolated-word ligature
+ *    would swallow the ب;
+ *  · a heh that is not final, i.e. followed by a letter that joins on to it — the ligature ends
+ *    in the final heh shape, so «اللهم» (heh medial, joined to the م) must keep its letters;
+ *  · a mark between the four letters — the ligature's own shape already carries the shadda of
+ *    «اللّه», and drawing another one on top of it doubles it.
+ *
+ * The font question is the caller's (`hasGlyph`): the shaping itself stays a pure function of
+ * the text it is given, and the drawing code asks fontkit. `String.fromCodePoint` keeps the text
+ * untouched — marks after the word, spaces, digits and Latin all survive.
+ */
+export function allahLigature(text: string, hasGlyph: (cp: number) => boolean): string {
+  if (!hasGlyph(ALLAH_LIGATURE)) return text;
+  const cps = [...text].map((ch) => ch.codePointAt(0) ?? 0);
+  const out: number[] = [];
+  let changed = false;
+  for (let i = 0; i < cps.length; i++) {
+    const cp = cps[i];
+    const word = cp === ALEF && cps[i + 1] === LAM && cps[i + 2] === LAM && cps[i + 3] === HEH;
+    // The heh is final when nothing after it connects back to it (marks between the four letters
+    // have already broken the match, so the four code points here are adjacent).
+    const hehFinal = !joinsForward(cps, i + 3);
+    if (word && hehFinal && !joinsFromBefore(cps, i)) {
+      out.push(ALLAH_LIGATURE);
+      i += 3;
+      changed = true;
+      continue;
+    }
+    out.push(cp);
+  }
+  return changed ? String.fromCodePoint(...out) : text;
 }
 
 /* ───────────────────────────── shaping ───────────────────────────── */
@@ -165,6 +234,83 @@ const MIRROR: Record<string, string> = {
   '‹': '›', '›': '‹',
 };
 
+/**
+ * Bidi_Paired_Bracket (UAX #9 BD16) for the brackets a stamped line can carry: open → close.
+ * `«`/`»` are paired brackets in Unicode too, and they are already in `MIRROR` above.
+ */
+const BRACKET_PAIRS: ReadonlyMap<number, number> = new Map([
+  [0x28, 0x29], [0x5b, 0x5d], [0x7b, 0x7d], [0xab, 0xbb], [0x2039, 0x203a],
+  [0x2045, 0x2046], [0x207d, 0x207e], [0x208d, 0x208e], [0x2329, 0x232a], [0x2768, 0x2769],
+  [0x276a, 0x276b], [0x276c, 0x276d], [0x276e, 0x276f], [0x2770, 0x2771], [0x2772, 0x2773],
+  [0x2774, 0x2775], [0x27e6, 0x27e7], [0x27e8, 0x27e9], [0x27ea, 0x27eb], [0x2983, 0x2984],
+  [0x2985, 0x2986], [0x3008, 0x3009], [0x300a, 0x300b], [0x300c, 0x300d], [0x300e, 0x300f],
+  [0x3010, 0x3011], [0x3014, 0x3015], [0x3016, 0x3017], [0x3018, 0x3019], [0x301a, 0x301b],
+]);
+const BRACKET_CLOSES: ReadonlySet<number> = new Set(BRACKET_PAIRS.values());
+
+/** The direction a resolved class stands for in N0's scan: EN and AN count as R there. */
+function strongDirection(t: BidiClass): 'L' | 'R' | null {
+  if (t === 'L') return 'L';
+  return t === 'R' || t === 'EN' || t === 'AN' ? 'R' : null;
+}
+
+/**
+ * N0 (bracket pairs), the rule the engine used to skip.
+ *
+ * Without it a bracketed aside inside a line reads wrong: «PDF: التقرير النهائي (نسخة 2)» put
+ * the closing bracket after the last Arabic word instead of around the aside, while the same
+ * text in a browser (ICU) keeps the pair together. The pair takes the embedding direction when
+ * the text inside it holds a strong type in that direction; otherwise, when the inside is only
+ * the opposite direction, it depends on the context *before* the opening bracket — the same
+ * opposite direction there establishes it, and otherwise the pair falls back to the embedding
+ * direction. Pairs with no strong type inside are left to N1/N2.
+ *
+ * Deliberately not the whole of N0: it takes the innermost matching pair for each opening
+ * bracket (BD16) and does not model isolates, which a single stamped line never carries.
+ */
+function resolveBrackets(cps: readonly number[], types: BidiClass[], base: 'ltr' | 'rtl'): void {
+  const embedding: 'L' | 'R' = base === 'rtl' ? 'R' : 'L';
+  const opposite: 'L' | 'R' = embedding === 'R' ? 'L' : 'R';
+  const open: number[] = [];
+  const pairs: Array<[number, number]> = [];
+  for (let i = 0; i < cps.length; i++) {
+    const cp = cps[i];
+    if (BRACKET_PAIRS.has(cp)) {
+      open.push(i);
+      continue;
+    }
+    if (!BRACKET_CLOSES.has(cp)) continue;
+    for (let s = open.length - 1; s >= 0; s--) {
+      if (BRACKET_PAIRS.get(cps[open[s]]) === cp) {
+        pairs.push([open[s], i]);
+        open.length = s; // everything inside this pair is already paired or unpaired
+        break;
+      }
+    }
+  }
+  // Logical order of the opening brackets, as the rule reads it.
+  pairs.sort((a, b) => a[0] - b[0]);
+  for (const [from, to] of pairs) {
+    let insideEmbedding = false;
+    let insideOpposite = false;
+    for (let i = from + 1; i < to; i++) {
+      const dir = strongDirection(types[i]);
+      if (dir === embedding) insideEmbedding = true;
+      else if (dir === opposite) insideOpposite = true;
+    }
+    let resolved: 'L' | 'R' | null = null;
+    if (insideEmbedding) resolved = embedding;
+    else if (insideOpposite) {
+      let before: 'L' | 'R' | null = null;
+      for (let i = from - 1; i >= 0 && before === null; i--) before = strongDirection(types[i]);
+      resolved = (before ?? embedding) === opposite ? opposite : embedding;
+    }
+    if (resolved === null) continue; // no strong type inside: N1/N2 decides
+    types[from] = resolved;
+    types[to] = resolved;
+  }
+}
+
 /** A base character plus the marks that ride on it: reordering never separates them. */
 export interface Cluster { text: string; level: number }
 
@@ -173,9 +319,9 @@ export interface Cluster { text: string; level: number }
  * cluster the marks stay AFTER their base, which is what the drawing code wants. Paired
  * brackets are mirrored in right-to-left runs.
  *
- * Implemented rules: W1–W7, N1–N2, I1–I2, L1 (trailing spaces), L2, L4 (mirroring). Not
- * implemented, because a stamped line never carries them: explicit embeddings/isolates
- * (X1–X10) and bracket pairing N0.
+ * Implemented rules: W1–W7, N0 (bracket pairs), N1–N2, I1–I2, L1 (trailing spaces), L2,
+ * L4 (mirroring). Not implemented, because a stamped line never carries them: explicit
+ * embeddings/isolates (X1–X10) and the isolating run sequences they create.
  */
 export function reorderClusters(text: string, direction: Direction = 'auto'): Cluster[] {
   const clusters: string[] = [];
@@ -226,14 +372,15 @@ export function reorderClusters(text: string, direction: Direction = 'auto'): Cl
     if (t === 'L' || t === 'R') strong = t;
     else if (t === 'EN' && strong === 'L') types[i] = 'L';
   }
-  // N1/N2: runs of neutrals take the surrounding direction, else the paragraph's.
-  const strongOf = (t: BidiClass): 'L' | 'R' | null => (t === 'L' ? 'L' : t === 'R' || t === 'EN' || t === 'AN' ? 'R' : null);
+  // N0/N1/N2: bracket pairs first (they read the classes the W rules produced), then the runs of
+  // neutrals take the surrounding direction, else the paragraph's.
+  resolveBrackets(clusters.map((c) => c.codePointAt(0) ?? 0), types, para);
   for (let i = 0; i < n; i++) {
     if (types[i] !== 'ON' && types[i] !== 'WS') continue;
     let j = i;
     while (j < n && (types[j] === 'ON' || types[j] === 'WS')) j++;
-    const before = i > 0 ? strongOf(types[i - 1]) : sos === 'L' ? 'L' : 'R';
-    const after = j < n ? strongOf(types[j]) : sos === 'L' ? 'L' : 'R';
+    const before = i > 0 ? strongDirection(types[i - 1]) : sos === 'L' ? 'L' : 'R';
+    const after = j < n ? strongDirection(types[j]) : sos === 'L' ? 'L' : 'R';
     const resolved: BidiClass = before === after && before ? before : base ? 'R' : 'L';
     for (let k = i; k < j; k++) types[k] = resolved;
     i = j - 1;
@@ -273,10 +420,15 @@ export function reorderLine(text: string, direction: Direction = 'auto'): string
   return reorderClusters(text, direction).map((c) => c.text).join('');
 }
 
-/** Shape, then reorder: what a page shows, left to right, for one line of logical text. */
-export function visualLine(text: string, direction: Direction = 'auto'): string {
+/**
+ * Shape, then reorder: what a page shows, left to right, for one line of logical text.
+ * `hasGlyph` is the font question the Allah ligature needs (see `allahLigature`); without it the
+ * word keeps its letter forms, which is what a font without the ligature draws anyway.
+ */
+export function visualLine(text: string, direction: Direction = 'auto', hasGlyph?: (cp: number) => boolean): string {
   const dir = direction === 'auto' ? baseDirection(text, 'ltr') : direction;
-  return reorderLine(shapeArabic(text), dir);
+  const ligated = hasGlyph ? allahLigature(text, hasGlyph) : text;
+  return reorderLine(shapeArabic(ligated), dir);
 }
 
 /**
