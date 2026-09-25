@@ -161,7 +161,7 @@ Every row is derived from the app manifest in `src/apps/*/manifest.ts`. "multi" 
 | `org.faisal.Store` | المتجر / Store | system | `apps:manage`, `notifications` | single | Browses the catalog and installs/removes built-in apps (core apps cannot be removed) |
 | `org.faisal.Settings` | الإعدادات / Settings | system | `settings` | single | Theme, accent, language, session restore, storage estimate, reset and About |
 
-Notes: `Files`, `Terminal`, `Settings` and `Store` are `core` and cannot be uninstalled. The AI app keeps the id `org.faisal.Claude` from its first version so install state and pins carry over. `org.faisal.Store` is the only manifest that sets `defaultInstalled: true` explicitly; the others rely on the default.
+Notes: `Files`, `Terminal`, `Settings` and `Store` are `core` and cannot be uninstalled. The AI app keeps the id `org.faisal.Claude` from its first version so install state and pins carry over. `org.faisal.Store` and the four suite apps (`Office`, `PDF Documents`, `Photo Editor`, `Video Studio`) set `defaultInstalled: true` explicitly, so a new user gets them from the first run; every other manifest relies on the default.
 
 ## Getting started
 
