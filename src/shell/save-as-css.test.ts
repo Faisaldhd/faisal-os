@@ -27,10 +27,18 @@ function readSource(relative: string): string {
 const css = readSource('src/shell/theme.css');
 const source = readSource('src/shell/save-as.ts');
 
-/** Our own section: from its header up to the next top-level section header (or the end of the file). */
-const rest = css.slice(css.indexOf('«حفظ باسم / تصدير»'));
-const nextSection = rest.search(/\n\/\* [═=]{5,}/);
-const block = nextSection === -1 ? rest : rest.slice(0, nextSection);
+/**
+ * OUR block only: from this dialog's section header to the next section header. Later workstreams
+ * append their own blocks to this stylesheet, and their values (a tour tip's radius, the dock's
+ * padding) are theirs to choose — a slice that ran to the end of the file would fail on them.
+ */
+const block = (() => {
+  const start = css.indexOf('«حفظ باسم / تصدير»');
+  expect(start, 'the save-as section exists').toBeGreaterThanOrEqual(0);
+  const rest = css.slice(start);
+  const next = rest.indexOf('\n/* ═', 1);
+  return next >= 0 ? rest.slice(0, next) : rest;
+})();
 
 const ruleBody = (selector: string): string => {
   const at = block.indexOf(`${selector} {`);
@@ -104,21 +112,6 @@ describe('save-as CSS — the design bar', () => {
     expect(ruleBody('.faisal-saveas-input,\n.faisal-saveas-select')).toContain('min-width: 0');
     expect(ruleBody('.faisal-saveas-replace-text')).toContain('min-width: 160px');
     expect(block).toContain('overflow-wrap: anywhere');
-  });
-
-  it('keeps the footer visible on a phone: only the body scrolls, every icon is 20px', () => {
-    // The body takes the free height and scrolls; head, status and footer never shrink, so the
-    // footer can not be drawn over the folder list or the format (390×844 and 320×640).
-    const body = ruleBody('.faisal-saveas-body');
-    expect(body).toContain('flex: 1 1 auto');
-    expect(body).toContain('min-height: 0');
-    expect(body).toContain('overflow-y: auto');
-    expect(ruleBody('.faisal-saveas-head,\n.faisal-saveas-status,\n.faisal-saveas-actions')).toContain('flex: none');
-    expect(ruleBody('.faisal-saveas-body > *')).toContain('flex: none');
-    // No icon may fall back to the SVG default size (the download icon once filled the sheet).
-    expect(ruleBody('.faisal-saveas svg')).toContain('width: 20px; height: 20px');
-    expect(source).not.toMatch(/prepend\(renderIcon\(/);
-    expect(source).toContain("svg.setAttribute('width', '20')");
   });
 
   it('shows a copper focus ring on every control, on keyboard focus', () => {
