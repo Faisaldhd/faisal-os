@@ -52,6 +52,20 @@ function contentOf(doc: PDFDocument, index: number): string {
 const hexOf = (text: string): string =>
   [...new TextEncoder().encode(text)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 
+/** Opens bytes with pdf.js — the renderer this window uses — and returns what a reader sees. */
+async function openWith(bytes: Uint8Array, password?: string): Promise<{ text: string; permissions: number[] }> {
+  const lib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const doc = await lib.getDocument({ data: bytes.slice(), password, verbosity: 0 }).promise;
+  const content = await (await doc.getPage(1)).getTextContent();
+  const raw = await doc.getPermissions();
+  const opened = {
+    text: content.items.map((item) => ('str' in item ? item.str : '')).join(' '),
+    permissions: (raw instanceof Set ? [...raw] : [...(raw ?? [])]) as number[],
+  };
+  await doc.cleanup();
+  return opened;
+}
+
 function makeApp(path: string, bytes: Uint8Array | null) {
   const files = new Map<string, Uint8Array>();
   if (bytes) files.set(path, bytes);
@@ -134,7 +148,7 @@ describe('PDF window', () => {
     ]) {
       expect(text, label).toContain(label);
     }
-    for (const limit of ['لا OCR', 'لا توقيع رقمي', 'لا إنشاء نماذج', 'لا تعديل لنص موجود', 'الحجب يحذف محتوى الصفحات داخل المناطق فقط','قفل PDF بكلمة مرور غير مدعوم محلياً']) {
+    for (const limit of ['لا OCR', 'لا توقيع رقمي', 'لا إنشاء نماذج', 'لا تعديل لنص موجود', 'الحجب يحذف محتوى الصفحات داخل المناطق فقط', 'الحماية بكلمة سر مدعومة عند الحفظ', 'صلاحيات PDF إرشادية']) {
       expect(text, limit).toContain(limit);
     }
     // Covering is labelled as hiding, never as redaction — in the UI itself, not only in code.
@@ -421,5 +435,97 @@ describe('PDF window', () => {
     const saved = files.get('/home/user/cover-copy.pdf');
     expect(saved).toBeTruthy();
     expect(contentOf(await PDFDocument.load(saved as Uint8Array, { updateMetadata: false }), 0)).toContain('re');
+  });
+
+  /*
+   * Y6b: the protection options live in the shared Save as dialog, and what they write has to be a
+   * file a READER accepts. pdf.js is that reader here — it is the renderer this very window uses —
+   * so this test proves the whole chain: the checkbox and the fields, the write through the VFS,
+   * and then "the password opens it, a wrong password does not, and copying is still denied".
+   */
+  it('writes a password-protected copy through Save as, and pdf.js opens it with that password', async () => {
+    const pdf = await makePdf([{ w: 300, h: 300, label: 'secret page' }]);
+    const { ctx, content, files } = makeApp('/home/user/secret.pdf', pdf);
+
+    app.launch(ctx);
+    await settle();
+
+    // The window states where protection is set, and offers the dialog directly.
+    expect(content.textContent ?? '').toContain('الحماية بكلمة سر تُضبط من نافذة «حفظ باسم»');
+    const protectButton = [...content.querySelectorAll('button')].find((node) => node.textContent === 'حماية الملف بكلمة سر…');
+    expect(protectButton, 'the security panel offers the protection dialog').toBeTruthy();
+    protectButton!.click();
+    await settle();
+
+    const dialog = content.querySelector('.faisal-saveas');
+    expect(dialog, 'the shared Save as dialog is open').not.toBeNull();
+    const box = (id: string): HTMLInputElement => {
+      const found = content.querySelector<HTMLInputElement>(`#${id}`);
+      if (!found) throw new Error(`no control #${id} in the dialog`);
+      return found;
+    };
+    const enable = box('faisal-pdf-protect-on');
+    expect(enable.checked).toBe(false);
+    const user = box('faisal-pdf-protect-user');
+    const repeat = box('faisal-pdf-protect-repeat');
+    const owner = box('faisal-pdf-protect-owner');
+    // The fields are masked: nothing about a password may be readable on screen.
+    for (const input of [user, repeat, owner]) expect(input.type).toBe('password');
+    const fields = content.querySelector<HTMLElement>('.faisal-pdf-protect-fields')!;
+    expect(fields.hidden).toBe(true);                          // hidden until the box is ticked
+
+    enable.checked = true;
+    enable.dispatchEvent(new Event('change'));
+    expect(fields.hidden).toBe(false);
+    user.value = 'a-test-password';
+    repeat.value = 'a-test-password';
+    owner.value = 'a-test-owner-password';
+    box('faisal-pdf-perm-copy').checked = false;                // copying is not allowed
+
+    (content.querySelector('.faisal-saveas-actions .is-primary') as HTMLButtonElement).click();
+    await settle();
+    await settle();
+
+    const written = files.get('/home/user/secret-copy.pdf');
+    expect(written, 'the protected copy reached the file system').toBeTruthy();
+    const status = content.querySelector('.faisal-pdf-status')?.textContent ?? '';
+    expect(status).toContain('حُفظ الملف محمياً بكلمة مرور');
+
+    // The bytes are really encrypted: pdf-lib refuses them…
+    await expect(PDFDocument.load(written as Uint8Array)).rejects.toThrow();
+    // …and pdf.js opens them with the password the owner typed.
+    const opened = await openWith(written as Uint8Array, 'a-test-password');
+    expect(opened.text).toContain('secret page');
+    await expect(openWith(written as Uint8Array, 'a-wrong-password')).rejects.toThrow(/password/i);
+    // …with the permission the owner chose (pdf.js reports the bits it read from /P).
+    expect(opened.permissions).not.toContain(0x10);             // PermissionFlag.COPY
+    expect(opened.permissions).toContain(0x04);                 // PermissionFlag.PRINT
+    // The document is now protected, and the window says so before the next save.
+    expect(content.querySelector('.faisal-pdf-protectstate')?.textContent ?? '').toContain('الحماية مفعّلة');
+  });
+
+  it('refuses a protection that cannot be carried, and writes nothing', async () => {
+    const pdf = await makePdf([{ w: 300, h: 300 }]);
+    const { ctx, content, files } = makeApp('/home/user/nope.pdf', pdf);
+
+    app.launch(ctx);
+    await settle();
+
+    ([...content.querySelectorAll('button')].find((node) => node.textContent === 'حماية الملف بكلمة سر…') as HTMLButtonElement).click();
+    await settle();
+    const box = (id: string): HTMLInputElement => content.querySelector<HTMLInputElement>(`#${id}`)!;
+    const enable = box('faisal-pdf-protect-on');
+    enable.checked = true;
+    enable.dispatchEvent(new Event('change'));
+    box('faisal-pdf-protect-user').value = 'one-password';
+    box('faisal-pdf-protect-repeat').value = 'another-password';
+    box('faisal-pdf-protect-owner').value = 'owner-password';
+
+    (content.querySelector('.faisal-saveas-actions .is-primary') as HTMLButtonElement).click();
+    await settle();
+    await settle();
+
+    expect(files.has('/home/user/nope-copy.pdf')).toBe(false);
+    expect(content.querySelector('.faisal-saveas')?.textContent ?? '').toContain('كلمتا المرور غير متطابقتين');
   });
 });

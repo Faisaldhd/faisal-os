@@ -1098,6 +1098,11 @@
 .faisal-pdf-line { font-size: 13px; margin-block: 4px; overflow-wrap: anywhere; }
 .faisal-pdf-hint { flex: 1 1 100%; font-size: 12px; color: var(--app-text-3); }
 .faisal-pdf-soon { display: flex; align-items: center; gap: 8px; margin-block: 8px; padding: 8px 12px; border: 1px dashed var(--app-hairline-strong); border-radius: 10px; color: var(--app-text-2); font-size: 12px; }
+/* The protection controls of the Save as dialog: one column that never leaves a 320px sheet,
+ * every control already 44px tall through `.faisal-pdf-input` and `.faisal-pdf-check`. */
+.faisal-pdf-protect { display: grid; gap: 6px; margin-block: 8px; }
+.faisal-pdf-protect-fields { display: grid; gap: 6px; }
+.faisal-pdf-protect-perms { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0 10px; }
 .faisal-pdf-advanced { margin-block: 8px; }
 .faisal-pdf-advanced > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--app-text-2); }
 

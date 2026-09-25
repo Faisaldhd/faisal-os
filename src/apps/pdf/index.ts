@@ -42,6 +42,10 @@ import {
   type DocInfo, type FormFieldInfo, type FormReadResult, type OpResult, type SignatureImageInput,
 } from './pdfdoc';
 import { previewSave, saveBytes, writePlan, type WriteFailureReason } from './save';
+import {
+  permissionsForChoice, protectedBytes, protectionProblem,
+  type PdfProtection, type PermissionChoice, type ProtectionProblem,
+} from './engine/encrypt';
 import * as writer from './writer';
 import { engineSupported, loadEngine, openForRender, type PdfJsDocument, type PdfJsLib } from './render';
 import { PdfViewer, type FieldWidget } from './viewer';
@@ -301,6 +305,13 @@ function launch(ctx: AppContext): void {
     loaded: false,
     readOnly: false,
     password: undefined as string | undefined,
+    /**
+     * The protection this document is written with. `null` means "saved without a password", so a
+     * document opened normally keeps exactly the behaviour it had. It lives here, in the window,
+     * because a PDF editor has to hold the password the owner typed if later saves are to keep the
+     * file protected — dropping it silently would downgrade the file to an unprotected copy.
+     */
+    protection: null as PdfProtection | null,
     tool: 'select' as ToolId,
     tab: 'home',
     task: '' as string,
@@ -1683,6 +1694,123 @@ function launch(ctx: AppContext): void {
     return ok;
   }
 
+  /* ─────────────── protection: what leaves this window (كلمة السر) ─────────────── */
+
+  /** A message for something that went wrong, from an Error or from anything thrown. */
+  const reasonText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+  function protectionProblemText(problem: ProtectionProblem): string {
+    switch (problem) {
+      case 'noUserPassword': return t('pdf.protectNeedPassword');
+      case 'notAscii': return t('pdf.protectAscii');
+      case 'tooLong': return t('pdf.protectTooLong');
+      case 'samePassword': return t('pdf.protectSame');
+    }
+  }
+
+  /**
+   * The bytes that leave the window as a FILE: the working document, encrypted with the protection
+   * this window holds. `state.protection === null` returns the very same array, so a document
+   * nobody protected behaves exactly as it did before. Encryption refuses rather than half-write:
+   * it re-opens what it produced and throws when the password it was given cannot read it back.
+   */
+  async function outputBytes(): Promise<Uint8Array> {
+    return protectedBytes(state.bytes, state.protection);
+  }
+
+  /** A password field: masked, never autofilled, never written anywhere but the PDF. */
+  function passwordInput(id: string, value = ''): HTMLInputElement {
+    const input = el('input', 'faisal-pdf-input');
+    input.type = 'password';
+    input.id = id;
+    input.value = value;
+    input.autocomplete = 'new-password';
+    input.spellcheck = false;
+    input.dir = 'ltr';
+    return input;
+  }
+
+  interface ProtectionPanel {
+    node: HTMLElement;
+    /** The protection the fields describe, or null when the owner did not ask for one. */
+    read(): PdfProtection | null;
+  }
+
+  /**
+   * The protection controls of the shared Save as dialog. `read()` is the only way out, and it
+   * throws a message the dialog shows when the fields do not describe a protection the
+   * specification can carry: no password, two different passwords, more than 32 characters,
+   * characters outside printable ASCII (PDFDocEncoding does not hold Arabic letters, so another
+   * reader would compute different key bytes), or an owner password equal to the opening one.
+   * The fields start from what this window already holds, so re-saving a protected document does
+   * not silently drop its protection.
+   */
+  function protectionPanel(initial: PdfProtection | null): ProtectionPanel {
+    const node = el('div', 'faisal-pdf-protect');
+    const enable = el('input', 'faisal-pdf-checkbox');
+    enable.type = 'checkbox';
+    enable.id = 'faisal-pdf-protect-on';
+    enable.checked = !!initial;
+    const enableRow = el('label', 'faisal-pdf-check');
+    enableRow.htmlFor = enable.id;
+    enableRow.append(enable, el('span', 'faisal-pdf-label', t('pdf.saveProtect')));
+
+    const user = passwordInput('faisal-pdf-protect-user', initial?.userPassword ?? '');
+    const repeat = passwordInput('faisal-pdf-protect-repeat', initial?.userPassword ?? '');
+    const owner = passwordInput('faisal-pdf-protect-owner', initial?.ownerPassword ?? '');
+    const boxes = {} as Record<keyof PermissionChoice, HTMLInputElement>;
+    const permRow = el('div', 'faisal-pdf-protect-perms');
+    for (const [id, key] of [
+      ['print', 'pdf.permPrint'], ['copy', 'pdf.permCopy'],
+      ['modify', 'pdf.permModify'], ['annotate', 'pdf.permAnnotate'],
+    ] as [keyof PermissionChoice, string][]) {
+      const input = el('input', 'faisal-pdf-checkbox');
+      input.type = 'checkbox';
+      input.id = `faisal-pdf-perm-${id}`;
+      input.checked = initial ? initial.permissions[id] : true;
+      // The label wraps its input, so the whole 44px row is a touch target (`.faisal-pdf-check`).
+      const label = el('label', 'faisal-pdf-check');
+      label.htmlFor = input.id;
+      label.append(input, el('span', 'faisal-pdf-label', t(key)));
+      permRow.append(label);
+      boxes[id] = input;
+    }
+
+    const fields = el('div', 'faisal-pdf-protect-fields');
+    fields.append(
+      el('p', 'faisal-pdf-hint', t('pdf.saveProtectDesc')),
+      field('faisal-pdf-protect-user', 'pdf.savePassword', user),
+      field('faisal-pdf-protect-repeat', 'pdf.savePasswordRepeat', repeat),
+      field('faisal-pdf-protect-owner', 'pdf.saveOwnerPassword', owner, t('pdf.saveOwnerHint')),
+      el('div', 'faisal-pdf-label', t('pdf.savePerms')),
+      permRow,
+      el('p', 'faisal-pdf-hint', t('pdf.saveProtectNote')),
+    );
+    node.append(enableRow, fields);
+    const sync = (): void => { fields.hidden = !enable.checked; };
+    enable.addEventListener('change', sync);
+    sync();
+
+    const read = (): PdfProtection | null => {
+      if (!enable.checked) return null;
+      if (user.value !== repeat.value) throw new Error(t('pdf.protectMismatch'));
+      const protection: PdfProtection = {
+        userPassword: user.value,
+        ownerPassword: owner.value,
+        permissions: permissionsForChoice({
+          print: boxes.print.checked,
+          copy: boxes.copy.checked,
+          modify: boxes.modify.checked,
+          annotate: boxes.annotate.checked,
+        }),
+      };
+      const problem = protectionProblem(protection);
+      if (problem) throw new Error(protectionProblemText(problem));
+      return protection;
+    };
+    return { node, read };
+  }
+
   /** Reads the saved file back and compares it before the window says "saved". */
   async function verifySaved(path: string, bytes: Uint8Array): Promise<boolean> {
     try {
@@ -1709,10 +1837,18 @@ function launch(ctx: AppContext): void {
     if (!state.bytes.length) { setStatus(t('pdf.saveNoBytes'), true); return; }
     if (state.untitled) { await saveUntitled(); return; }
     setBusy(true);
+    let out: Uint8Array;
+    try {
+      out = await outputBytes();
+    } catch (error) {
+      setBusy(false);
+      setStatus(t('pdf.protectFailed', { reason: reasonText(error) }), true);
+      return;
+    }
     const saved = await saveBytes(sys, {
       sourcePath: state.path, suffix: t('pdf.saveCopySuffix'), overwrite,
-    }, state.bytes);
-    const verified = saved.ok ? await verifySaved(saved.path, state.bytes) : false;
+    }, out);
+    const verified = saved.ok ? await verifySaved(saved.path, out) : false;
     setBusy(false);
     if (closed) return;
     if (!saved.ok) {
@@ -1740,8 +1876,16 @@ function launch(ctx: AppContext): void {
   /** Writes to `target` (a new file, or an existing one after its single `.bak`), then adopts it. */
   async function saveTo(target: string, replacing: boolean): Promise<void> {
     setBusy(true);
-    const saved = await writePlan(sys, { source: target, target, backup: replacing ? `${target}.bak` : null, isCopy: !replacing }, state.bytes);
-    const verified = saved.ok ? await verifySaved(saved.path, state.bytes) : false;
+    let out: Uint8Array;
+    try {
+      out = await outputBytes();
+    } catch (error) {
+      setBusy(false);
+      setStatus(t('pdf.protectFailed', { reason: reasonText(error) }), true);
+      return;
+    }
+    const saved = await writePlan(sys, { source: target, target, backup: replacing ? `${target}.bak` : null, isCopy: !replacing }, out);
+    const verified = saved.ok ? await verifySaved(saved.path, out) : false;
     setBusy(false);
     if (closed) return;
     if (!saved.ok) { setStatus(saveFailureMessage(saved), true); return; }
@@ -1761,6 +1905,10 @@ function launch(ctx: AppContext): void {
    * there, replacing is confirmed by the same dialog (one `.bak`, never two), and a cancelled or
    * failed save writes nothing. The bytes are the ones this window holds, and the written file is
    * read back by the dialog before it reports "saved".
+   *
+   * The protection controls are this app's `extras`: they are read inside `encode`, so what is
+   * written is exactly what the fields say at the moment "save" is pressed. A protection the
+   * encryption refuses throws, and the dialog shows the reason instead of writing a file.
    */
   async function saveAs(): Promise<void> {
     if (!state.info || state.readOnly) return;
@@ -1769,6 +1917,9 @@ function launch(ctx: AppContext): void {
       ? await untitledTarget()
       : (await previewSave(sys, { sourcePath: state.path, suffix: t('pdf.saveCopySuffix'), overwrite: false }));
     const initial = typeof suggestion === 'string' ? suggestion : suggestion?.ok ? suggestion.plan.target : `${HOME}/document.pdf`;
+    const hadProtection = state.protection;
+    const panel = protectionPanel(hadProtection);
+    let written: PdfProtection | null = null;
     const outcome = await saveAsDialog({
       vfs: sys.vfs,
       host: win.content,
@@ -1778,16 +1929,28 @@ function launch(ctx: AppContext): void {
       formats: [{ value: 'pdf', label: t('pdf.formatPdf'), ext: 'pdf', mime: 'application/pdf' }],
       format: 'pdf',
       saveLabel: t('pdf.save'),
-      encode: async () => state.bytes,
+      extras: (host) => { host.append(panel.node); },
+      encode: async () => {
+        const protection = panel.read();
+        written = protection;
+        return protectedBytes(state.bytes, protection);
+      },
     });
     if (outcome.status !== 'saved') return;
+    state.protection = written;
     state.path = outcome.path;
     state.untitled = false;
     setDocName(basename(outcome.path), outcome.path);
     markSaved(outcome.path);
     await refreshSaveTarget();
     refreshMergeList();
-    setStatus(t('pdf.saveDoneCopy', { path: outcome.path }));
+    // The security panel answers "will the next save keep the password?" straight away, without
+    // waiting for a render pass that may not happen in every environment.
+    protectState.textContent = state.protection ? t('pdf.protectOn') : t('pdf.protectOff');
+    void refreshSecurity();
+    setStatus(written
+      ? t('pdf.protectSaved', { path: outcome.path })
+      : t(hadProtection ? 'pdf.protectRemoved' : 'pdf.saveDoneCopy', { path: outcome.path }));
   }
 
   saveCopy.addEventListener('click', () => { void runSave(false); });
@@ -1837,11 +2000,18 @@ function launch(ctx: AppContext): void {
   const securityState = el('div', 'faisal-pdf-line');
   const permList = el('ul', 'faisal-pdf-limits');
   const lockRow = el('div', 'faisal-pdf-soon');
-  lockRow.append(icon('lock'), el('span', undefined, t('pdf.limitNoPassword')));
-  securityCard.body.append(securityState, permList, lockRow);
+  lockRow.append(icon('lock'), el('span', undefined, t('pdf.protectHint')));
+  const protectState = el('div', 'faisal-pdf-line faisal-pdf-protectstate');
+  const protectBtn = button(t('pdf.protectOpen'), 'faisal-pdf-btn');
+  protectBtn.addEventListener('click', () => { void saveAs(); });
+  securityCard.body.append(
+    securityState, permList, lockRow, actionRow(protectBtn), protectState,
+    el('p', 'faisal-pdf-hint', t('pdf.permAdvisory')),
+  );
 
   async function refreshSecurity(): Promise<void> {
     securityState.textContent = state.readOnly ? t('pdf.securityEncrypted') : t('pdf.securityOpen');
+    protectState.textContent = state.protection ? t('pdf.protectOn') : t('pdf.protectOff');
     permList.textContent = '';
     const doc = viewer.document;
     if (!doc || !lib) return;
@@ -1860,9 +2030,22 @@ function launch(ctx: AppContext): void {
 
   /* ───────────────────────── view/download actions ───────────────────────── */
 
-  function downloadResult(): void {
+  /**
+   * Downloads the document to the owner's device. Like every other path that hands out a FILE,
+   * it hands out the protected bytes when this document is protected — a download that quietly
+   * dropped the password would be a downgrade, not a convenience.
+   */
+  async function downloadResult(): Promise<void> {
     if (!state.bytes.length) return;
-    const url = URL.createObjectURL(new Blob([state.bytes.slice()], { type: 'application/octet-stream' }));
+    let out: Uint8Array;
+    try {
+      out = await outputBytes();
+    } catch (error) {
+      setStatus(t('pdf.protectFailed', { reason: reasonText(error) }), true);
+      return;
+    }
+    if (closed) return;
+    const url = URL.createObjectURL(new Blob([out.slice()], { type: 'application/octet-stream' }));
     const a = el('a');
     a.href = url;
     const stem = (state.untitled ? state.suggestedName || t('pdf.untitled') : basename(state.path)).replace(/\.pdf$/i, '');
@@ -1900,6 +2083,12 @@ function launch(ctx: AppContext): void {
    * The frame is positioned off-screen (with a real size) rather than `hidden`: `display: none`
    * stops some engines from laying the frame's document out, and a frame that was never laid
    * out cannot print. See `.faisal-pdf-printframe` in `pdf.css`.
+   */
+  /**
+   * Printing prints the document this window has OPEN — the bytes the owner already unlocked and
+   * can see on screen — not a fresh encrypted copy that would ask for the password again inside the
+   * browser's viewer. `/P` is not enforced here; it is advisory in PDF anyway (see the security
+   * panel), and only the reading of the file is protected by the password.
    */
   function printResult(): void {
     if (!state.bytes.length) { setStatus(t('pdf.printNoBytes'), true); return; }
@@ -1943,9 +2132,20 @@ function launch(ctx: AppContext): void {
     win.content.append(frame);
   }
 
-  function openInTab(): void {
+  /**
+   * Hands the document to the browser's own viewer in a new tab. A protected document goes out
+   * protected, so the tab asks for the password exactly like any other reader would.
+   */
+  async function openInTab(): Promise<void> {
     if (!state.bytes.length) return;
-    const url = URL.createObjectURL(new Blob([state.bytes.slice()], { type: 'application/pdf' }));
+    let out: Uint8Array;
+    try {
+      out = await outputBytes();
+    } catch (error) {
+      setStatus(t('pdf.protectFailed', { reason: reasonText(error) }), true);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([out.slice()], { type: 'application/pdf' }));
     window.open(url, '_blank', 'noopener');
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
@@ -3217,7 +3417,11 @@ function launch(ctx: AppContext): void {
 
   /* dialogs: text, drawn signature, stamps, style */
 
-  function askText(title: string, label: string, initial: string, multiline: boolean): Promise<string | null> {
+  /**
+   * A one-field dialog. `multiline` turns it into a text area; `secret` masks what is typed —
+   * a password must never be shown in clear text on screen, not even while it is being typed.
+   */
+  function askText(title: string, label: string, initial: string, multiline: boolean, secret = false): Promise<string | null> {
     return new Promise((resolve) => {
       let result: string | null = null;
       const m = openModal({ title, onClose: () => resolve(result) });
@@ -3225,6 +3429,10 @@ function launch(ctx: AppContext): void {
       input.id = 'faisal-pdf-ask';
       input.dir = 'auto';
       input.value = initial;
+      if (secret && input instanceof HTMLInputElement) {
+        input.type = 'password';
+        input.autocomplete = 'current-password';
+      }
       m.body.append(field('faisal-pdf-ask', label, input));
       m.body.querySelector('label')!.textContent = label;
       const cancel = dialogButton(t('pdf.cancel'));
@@ -3899,7 +4107,7 @@ function launch(ctx: AppContext): void {
     try {
       doc = await openForRender(engine, bytes, {
         onPassword: async (retry) => {
-          const answer = await askText(t('pdf.passwordTitle'), retry ? t('pdf.passwordRetry') : t('pdf.passwordLabel'), '', false);
+          const answer = await askText(t('pdf.passwordTitle'), retry ? t('pdf.passwordRetry') : t('pdf.passwordLabel'), '', false, true);
           password = answer ?? undefined;
           return answer;
         },
