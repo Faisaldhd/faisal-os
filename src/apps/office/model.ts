@@ -9,6 +9,7 @@
  * honest format list: the UI prints it and the tests assert it against what the
  * readers in `src/apps/viewer/formats.ts` actually do.
  */
+import type { Deck } from './impress/deck';
 import { extensionOf } from '../viewer/formats';
 import type { DocBlock } from './writer/types';
 import { diffText, replaceText } from './writer/docops';
@@ -98,7 +99,15 @@ export interface SheetsModel {
    */
   moved?: number;
 }
-export interface DeckModel { kind: 'pptx'; slides: string[][] }
+export interface DeckModel {
+  kind: 'pptx';
+  slides: string[][];
+  /**
+   * The rich slides (shapes at their real positions, pictures, notes, order), when
+   * the file is a complete presentation. `slides` is then derived from it.
+   */
+  deck?: Deck;
+}
 export interface TextModel { kind: 'text'; text: string }
 
 export type OfficeModel = DocModel | SheetsModel | DeckModel | TextModel;
