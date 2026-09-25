@@ -5,7 +5,7 @@
  */
 import type { DeckModel, Edit, OfficeModel } from '../model';
 import { deckTexts, nextUid, type Anim, type Deck, type DeckPara, type DeckShape, type DeckSlide, type Transition } from './deck';
-import { autoAlign, type ParaStylePatch } from './parafmt';
+import { autoAlign, modelColor, type ParaStylePatch } from './parafmt';
 
 export type SlideLayoutKind = 'title' | 'content' | 'two' | 'blank';
 export const SLIDE_LAYOUTS: readonly SlideLayoutKind[] = ['title', 'content', 'two', 'blank'];
@@ -200,7 +200,10 @@ export function setShapeText(deck: Deck, at: number, uid: number, text: string):
 export function setParaStyle(deck: Deck, at: number, uid: number, patch: ParaStylePatch): Deck {
   return mapShape(deck, at, uid, (s) => {
     if (s.locked || (s.kind !== 'text' && s.kind !== 'shape')) return s;
-    const paras = s.paras.map((p) => ({ ...p, ...patch }));
+    // A pick from the ribbon arrives as bare hex and the file as `#RRGGBB`; the model keeps one
+    // representation, so the stage, the thumbnail and the overlay all paint the same colour.
+    const wanted: ParaStylePatch = patch.color ? { ...patch, color: modelColor(patch.color) } : patch;
+    const paras = s.paras.map((p) => ({ ...p, ...wanted }));
     return { ...s, paras };
   });
 }
