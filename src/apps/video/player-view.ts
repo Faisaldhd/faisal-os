@@ -249,6 +249,23 @@ export class PlayerView {
     }
   }
 
+  /**
+   * Shows a clip the browser refused to decode: it joins the playlist, becomes the current one,
+   * and the player's empty state names it and gives the plain reason — with the «Convert» button
+   * next to it when the codec is one this app can convert.
+   *
+   * The button lives here because the message the app shows for an unsupported codec ends with
+   * «press Convert»: the action has to be where the message is, not only in the editor's media
+   * row. Nothing is converted here — the button calls `host.convert`, the same flow the media row
+   * uses, so its progress and its cancel behave exactly as before.
+   */
+  showRefused(id: string): void {
+    const index = this.playlist.items.findIndex((item) => item.mediaId === id);
+    this.playlist = index >= 0 ? selectItem(this.playlist, index) : addToPlaylist(this.playlist, [id]);
+    if (this.active) this.load();
+    this.renderList();
+  }
+
   /** Builds the one-clip project for the current item and hands it to the engine. */
   private load(): void {
     const media = this.currentMedia();
