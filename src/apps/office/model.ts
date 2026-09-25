@@ -10,9 +10,19 @@
  * readers in `src/apps/viewer/formats.ts` actually do.
  */
 import type { Deck } from './impress/deck';
-import { extensionOf } from '../viewer/formats';
+import { MAX_COLS, extensionOf } from '../viewer/formats';
 import type { DocBlock } from './writer/types';
 import { diffText, replaceText } from './writer/docops';
+
+/**
+ * How many rows one sheet holds in this app (سعة الورقة).
+ *
+ * The reader's own default is far smaller (2000 rows) because the Files app previews a workbook
+ * inline; the sheet editor draws only the rows on screen, so it can afford a real spreadsheet's
+ * worth of rows and asks the reader for them at its own call site. The columns stay the reader's
+ * `MAX_COLS`: a hundred columns of a virtualised row is already a wide sheet.
+ */
+export const SHEET_ROWS = 10_000;
 
 /** The four shapes a file can have once read, plus plain text. */
 export type OfficeKind = 'docx' | 'xlsx' | 'pptx' | 'csv' | 'text';

@@ -14,7 +14,7 @@ import { basename } from '../../kernel/path';
 import {
   MAX_COLS, MAX_ROWS, looksLikeText, parseCsv, readDocx, readPptx, readXlsx, type Sheet,
 } from '../viewer/formats';
-import { emptyModel, planFor, type FormatPlan, type Grid, type OfficeModel } from './model';
+import { emptyModel, planFor, SHEET_ROWS, type FormatPlan, type Grid, type OfficeModel } from './model';
 import { writeDocx, writeXlsx } from './ooxml';
 import { writePptx } from './pptx';
 import { readDocxFormats } from './patch';
@@ -52,18 +52,20 @@ export async function loadOfficeFile(path: string, bytes: Uint8Array): Promise<L
       case 'xlsx':
         return {
           ok: true, plan, empty: false,
-          model: { kind: 'xlsx', grids: toGrids(await readXlsx(bytes)), active: 0, delimiter: ',' },
+          // The sheet editor draws only the rows on screen, so it reads a spreadsheet's worth of
+          // rows (SHEET_ROWS) instead of the reader's preview-sized default.
+          model: { kind: 'xlsx', grids: toGrids(await readXlsx(bytes, { maxRows: SHEET_ROWS })), active: 0, delimiter: ',' },
         };
       case 'pptx':
         return { ok: true, plan, model: { kind: 'pptx', slides: await readPptx(bytes) }, empty: false };
       case 'csv': {
         const rows = parseCsv(new TextDecoder().decode(bytes), plan.delimiter);
-        const truncated = rows.length > MAX_ROWS || rows.some((r) => r.length > MAX_COLS);
+        const truncated = rows.length > SHEET_ROWS || rows.some((r) => r.length > MAX_COLS);
         return {
           ok: true, plan, empty: false,
           model: {
             kind: 'csv', active: 0, delimiter: plan.delimiter,
-            grids: [{ name: basename(path), rows: rows.slice(0, MAX_ROWS).map((r) => r.slice(0, MAX_COLS)), truncated }],
+            grids: [{ name: basename(path), rows: rows.slice(0, SHEET_ROWS).map((r) => r.slice(0, MAX_COLS)), truncated }],
           },
         };
       }

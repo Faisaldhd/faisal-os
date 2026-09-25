@@ -14,10 +14,10 @@ import { shellConfirm } from '../../shell/dialog';
 import { registeredKeys, t } from '../../kernel/i18n';
 import { validateManifest } from '../../kernel/apps';
 import type { AppContext, SystemAPI, VFS, WindowHandle } from '../../kernel/types';
-import { MAX_ROWS, openZip, readDocx, readPptx, readXlsx, zipEntries } from '../viewer/formats';
+import { openZip, readDocx, readPptx, readXlsx, zipEntries } from '../viewer/formats';
 import officeApp from './index';
 import { manifest } from './manifest';
-import { OFFICE_EXTENSIONS, VERIFIED_FORMATS } from './model';
+import { OFFICE_EXTENSIONS, SHEET_ROWS, VERIFIED_FORMATS } from './model';
 import { serializeModel } from './file';
 import { contentTypes } from './ooxml';
 import { readRawZip, utf8, writeZip } from './zip';
@@ -228,8 +228,10 @@ describe('the office window', () => {
     expect(meta(content)).toContain(t('office.dirty'));
   });
 
-  it('confirms before overwriting a file the reader only read in part', async () => {
-    const rows = Array.from({ length: MAX_ROWS + 5 }, (_, i) => `${i},x`).join('\n');
+  it('confirms before overwriting a file the sheet only read in part', async () => {
+    // The sheet reads SHEET_ROWS rows (10 000), not the reader's preview-sized default, so the
+    // file here is one row past THAT limit — the case the confirm exists for.
+    const rows = Array.from({ length: SHEET_ROWS + 5 }, (_, i) => `${i},x`).join('\n');
     const store = memVfs({ [HOME_FILE]: rows });
     const { content, launch } = harness(store.vfs);
     launch(HOME_FILE);
@@ -241,7 +243,7 @@ describe('the office window', () => {
 
     expect(vi.mocked(shellConfirm)).toHaveBeenCalledWith(expect.objectContaining({ title: t('office.truncatedTitle') }));
     // The saved file holds only what was read; the .bak holds the whole original.
-    expect(new TextDecoder().decode(store.files.get(HOME_FILE) ?? new Uint8Array()).split('\r\n').length).toBe(MAX_ROWS + 1);
+    expect(new TextDecoder().decode(store.files.get(HOME_FILE) ?? new Uint8Array()).split('\r\n').length).toBe(SHEET_ROWS + 1);
     expect(new TextDecoder().decode(store.files.get(`${HOME_FILE}.bak`) ?? new Uint8Array())).toBe(rows);
     expect(meta(content)).not.toContain(t('office.truncatedBadge'));
   });

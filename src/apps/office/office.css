@@ -443,6 +443,9 @@
 .fo-fxlabel { color: var(--app-text-3); font-style: italic; font-weight: 700; }
 .fo-fxinput { flex: 1; min-width: 0; font-family: var(--faisal-font); }
 .fo-gridwrap { flex: 1; min-height: 0; overflow: auto; background: #fff; overscroll-behavior: contain; }
+/* The virtual grid's stand-in strips: they carry the height of the rows that are NOT drawn, so
+   the scrollbar covers the whole sheet while only a screenful of rows exists in the document. */
+.fo-vpad-cell { padding: 0; border: 0; background: none; }
 .fo-grid { border-collapse: separate; border-spacing: 0; table-layout: fixed; color: #000; font: 11pt/1.2 Calibri, Carlito, Arial, "Noto Sans Arabic", sans-serif; }
 .fo-grid th { position: sticky; background: #f1f3f7; color: #555; font: 12px var(--faisal-font); font-weight: 400; border-inline-end: 1px solid #d5d9e1; border-block-end: 1px solid #d5d9e1; z-index: 2; }
 .fo-colhead { top: 0; height: 26px; text-align: center; }

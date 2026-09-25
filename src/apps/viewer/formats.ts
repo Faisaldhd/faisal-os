@@ -191,6 +191,17 @@ const byTag = (root: Document | Element, tag: string): Element[] => [...root.get
 export const MAX_ROWS = 2000;
 export const MAX_COLS = 100;
 
+/**
+ * How much of a worksheet to read. Both default to the reader's own limits, so every existing
+ * caller behaves exactly as before — the Files app's previews must never pull a huge sheet into
+ * memory. An app whose grid is virtualised (Office's sheets) asks for more ROWS at its own call
+ * site; the columns stay the reader's `MAX_COLS` for everyone.
+ */
+export interface ReadLimits {
+  maxRows?: number;
+  maxCols?: number;
+}
+
 export interface Sheet { name: string; rows: string[][]; truncated: boolean }
 
 /** "C12" → 2 (zero-based column). */
@@ -228,7 +239,9 @@ async function relationships(zip: ZipReader, relsPath: string, base: string): Pr
 }
 
 /** Reads every worksheet of an .xlsx file as plain text cells (values, not formulas). */
-export async function readXlsx(bytes: Uint8Array): Promise<Sheet[]> {
+export async function readXlsx(bytes: Uint8Array, limits: ReadLimits = {}): Promise<Sheet[]> {
+  const maxRows = limits.maxRows ?? MAX_ROWS;
+  const maxCols = limits.maxCols ?? MAX_COLS;
   const zip = openZip(bytes);
   const workbook = await readXml(zip, 'xl/workbook.xml');
   if (!workbook) throw new ZipError('not an Excel workbook');
@@ -255,14 +268,14 @@ export async function readXlsx(bytes: Uint8Array): Promise<Sheet[]> {
     for (const row of byTag(doc, 'row')) {
       const r = Number(row.getAttribute('r')) - 1;
       const at = Number.isInteger(r) && r >= 0 ? r : rows.length;
-      if (at >= MAX_ROWS) { truncated = true; break; }
+      if (at >= maxRows) { truncated = true; break; }
       const cells: string[] = [];
       let next = 0;
       for (const c of byTag(row, 'c')) {
         const ref = c.getAttribute('r');
         const col = ref ? columnIndex(ref) : next;
         next = col + 1;
-        if (col >= MAX_COLS) { truncated = true; continue; }
+        if (col >= maxCols) { truncated = true; continue; }
         const type = c.getAttribute('t');
         const v = byTag(c, 'v')[0]?.textContent ?? '';
         let text: string;

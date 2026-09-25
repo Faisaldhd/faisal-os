@@ -16,22 +16,26 @@ import { t } from '../../../kernel/i18n';
 import type { Editor, EditorContext, StatusInfo } from '../editor';
 import {
   addColumnEdit, addRowEdit, canDeleteColumn, canDeleteRow, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit,
-  gridAt, gridWidth, type CellState, type Edit, type OfficeModel, type SheetsModel,
+  gridAt, gridWidth, SHEET_ROWS, type CellState, type Edit, type OfficeModel, type SheetsModel,
 } from '../model';
 import { evaluateInModel, formatFormula, parseFormula } from '../formula/index';
 import { formatValue } from '../calc/index';
 import { columnName } from '../xml';
-import { MAX_COLS, MAX_ROWS } from '../../viewer/formats';
-import { el } from '../ui/dom';
+import { MAX_COLS } from '../../viewer/formats';
+import { el, observeSize } from '../ui/dom';
 import type { RibbonTab } from '../ui/ribbon';
 import type { BookLook, CellStyle } from './xlsxlook';
 import { hasArabic, startsRtl } from '../writer/docops';
+import { isCoarsePointer } from '../../../shell/device';
+import {
+  DEFAULT_ROW_HEIGHT, OVERSCAN_ROWS, TOUCH_ROW_HEIGHT, rowOffsets, rowWindow, type RowWindow,
+} from './virtual';
 
-const VIEW_ROWS = 300;
-const VIEW_COLS = 40;
-/** The empty grid drawn past the data, so the sheet looks like a sheet. */
+/** Columns drawn past the data on an editable sheet, so a sheet still looks like one. */
 const PAD_ROWS = 30;
 const PAD_COLS = 12;
+/** Height of the column-letter header, which the rows scroll under. */
+const HEADER_HEIGHT = 26;
 
 interface Cell { row: number; col: number }
 
@@ -214,9 +218,38 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
 
   /* ─────────────────────────── drawing ─────────────────────────── */
 
+  /** One drawn row: its element and the cells it currently holds, in column order. */
+  interface RowRecord {
+    tr: HTMLTableRowElement;
+    inputs: HTMLInputElement[];
+    tds: HTMLTableCellElement[];
+    cols: number[];
+  }
+
   let table: HTMLTableElement | null = null;
+  let body: HTMLTableSectionElement | null = null;
+  let spacerTop: HTMLTableRowElement | null = null;
+  let spacerBottom: HTMLTableRowElement | null = null;
   let inputs = new Map<string, HTMLInputElement>();
   let tds = new Map<string, HTMLTableCellElement>();
+  /** The rows in the document right now — never the whole sheet. */
+  let rowCells = new Map<number, RowRecord>();
+  /** Cumulative row tops; rebuilt when the sheet or its row heights change. */
+  let offsets: Float64Array | null = null;
+  let rowHeight = DEFAULT_ROW_HEIGHT;
+  /** False until a drawn row has been measured: see `measureRowHeight`. */
+  let measured = false;
+  let rowCount = 0;
+  let cols = 0;
+  let dataRows = 0;
+  let dataCols = 0;
+  let frozenRows = 0;
+  let winFirst = -1;
+  let winLast = -1;
+  let sheetRtl = false;
+  let covered = new Set<string>();
+  let mergeAt = new Map<string, { r1: number; c1: number }>();
+  let sizes: { disconnect(): void } | null = null;
 
   function styleCell(td: HTMLTableCellElement, input: HTMLInputElement, view: HTMLElement, s: CellStyle | undefined, value: string): void {
     const numeric = /^-?\d+(\.\d+)?(E[+-]?\d+)?$/i.test(value.trim()) && value.trim() !== '';
@@ -256,18 +289,32 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const m = sheets();
     inputs = new Map();
     tds = new Map();
-    if (!m) { scroll.replaceChildren(); return; }
+    rowCells = new Map();
+    winFirst = -1;
+    winLast = -1;
+    if (!m) { scroll.replaceChildren(); table = null; body = null; spacerTop = null; spacerBottom = null; offsets = null; return; }
     const sheet = m.active >= 0 && m.active < m.grids.length ? m.active : 0;
     const grid = m.grids[sheet];
     const look = lookOf();
-    const dataRows = grid ? Math.min(grid.rows.length, VIEW_ROWS) : 0;
-    const dataCols = grid ? Math.max(1, Math.min(gridWidth(grid), VIEW_COLS)) : 1;
-    const rows = Math.max(dataRows + (ctx.editable() ? 5 : 0), PAD_ROWS);
-    const cols = Math.min(Math.max(dataCols + (ctx.editable() ? 3 : 0), PAD_COLS), VIEW_COLS + 3);
-    const frozen = freezeTop === null ? look?.frozenRows ?? 0 : freezeTop ? 1 : 0;
-    const rtlSheet = sheetIsRtl(grid?.rows ?? [], look?.rtl);
-    scroll.dir = rtlSheet ? 'rtl' : 'ltr';
-    root.classList.toggle('is-rtl-sheet', rtlSheet);
+    // The whole sheet, not a fixed window: the rows that are DRAWN are the visible ones (below),
+    // and the row count only decides how far the scrollbar goes.
+    dataRows = grid ? grid.rows.length : 0;
+    dataCols = grid ? Math.max(1, gridWidth(grid)) : 1;
+    rowCount = Math.max(dataRows + (ctx.editable() ? PAD_ROWS : 0), PAD_ROWS);
+    cols = Math.min(Math.max(dataCols + (ctx.editable() ? 3 : 0), PAD_COLS), MAX_COLS);
+    rowHeight = baseRowHeight(look);
+    offsets = rowOffsets(rowCount, rowHeightOf);
+    measured = false;
+    frozenRows = Math.min(freezeTop === null ? look?.frozenRows ?? 0 : freezeTop ? 1 : 0, rowCount);
+    sheetRtl = sheetIsRtl(grid?.rows ?? [], look?.rtl);
+    scroll.dir = sheetRtl ? 'rtl' : 'ltr';
+    root.classList.toggle('is-rtl-sheet', sheetRtl);
+    covered = new Set();
+    mergeAt = new Map();
+    for (const mg of look?.merges ?? []) {
+      for (let r = mg.r0; r <= mg.r1; r++) for (let c = mg.c0; c <= mg.c1; c++) if (r !== mg.r0 || c !== mg.c0) covered.add(`${r}:${c}`);
+      mergeAt.set(`${mg.r0}:${mg.c0}`, { r1: mg.r1, c1: mg.c1 });
+    }
 
     const tbl = el('table', 'faisal-office-table fo-grid');
     const colgroup = el('colgroup');
@@ -290,86 +337,203 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       hr.append(th);
     }
     thead.append(hr);
-    const tbody = el('tbody');
-    const covered = new Set<string>();
-    for (const mg of look?.merges ?? []) {
-      for (let r = mg.r0; r <= mg.r1; r++) for (let c = mg.c0; c <= mg.c1; c++) if (r !== mg.r0 || c !== mg.c0) covered.add(`${r}:${c}`);
-    }
-    let top = 26;
-    for (let r = 0; r < rows; r++) {
-      const tr = el('tr');
-      const height = look?.heights.get(r);
-      if (height) tr.style.height = `${height}px`;
-      const rh = el('th', 'faisal-office-rowhead fo-rowhead', String(r + 1));
-      rh.addEventListener('click', () => { anchor = { row: r, col: 0 }; active = { row: r, col: Math.max(0, dataCols - 1) }; select(false); });
-      tr.append(rh);
-      if (r < frozen) {
-        tr.classList.add('is-frozen');
-        tr.style.top = `${top}px`;
-        top += height ?? look?.defaultHeight ?? 24;
-      }
-      for (let c = 0; c < cols; c++) {
-        if (covered.has(`${r}:${c}`)) continue;
-        const td = el('td', 'faisal-office-celld fo-td');
-        const merge = look?.merges.find((mg) => mg.r0 === r && mg.c0 === c);
-        if (merge) { td.rowSpan = merge.r1 - merge.r0 + 1; td.colSpan = merge.c1 - merge.c0 + 1; }
-        const inData = r < dataRows && c < dataCols;
-        const input = el('input', inData ? 'faisal-office-cell' : 'fo-cell-empty');
-        input.type = 'text';
-        input.dir = 'auto';
-        input.spellcheck = false;
-        input.autocomplete = 'off';
-        input.readOnly = !ctx.editable();
-        input.dataset.r = String(r);
-        input.dataset.c = String(c);
-        input.setAttribute('aria-label', `${columnName(c)}${r + 1}`);
-        input.value = rawOf(r, c);
-        const view = el('span', 'fo-cellview');
-        view.setAttribute('aria-hidden', 'true');
-        const value = grid?.rows[r]?.[c] ?? '';
-        const s = styleAt(r, c);
-        view.textContent = displayValue(value, s?.numFmt);
-        styleCell(td, input, view, s, value);
-        input.addEventListener('focus', () => {
-          if (keepCaret) { keepCaret = false; active = { row: r, col: c }; anchor = active; paintSelection(); return; }
-          active = { row: r, col: c };
-          if (!dragging && !shiftFocus) anchor = active;
-          shiftFocus = false;
-          editing = false;
-          input.select();
-          select(true);
-          showResult();
-        });
-        input.addEventListener('input', () => { editing = true; commitCell(r, c, input.value); fx.value = input.value; });
-        input.addEventListener('dblclick', () => { editing = true; input.setSelectionRange(input.value.length, input.value.length); });
-        td.addEventListener('pointerdown', (ev) => {
-          if (ev.button !== 0) return;
-          if (ev.shiftKey) { ev.preventDefault(); active = { row: r, col: c }; select(false); return; }
-          dragging = true;
-          anchor = { row: r, col: c };
-          active = anchor;
-        });
-        td.addEventListener('pointerenter', () => {
-          if (!dragging) return;
-          active = { row: r, col: c };
-          paintSelection();
-        });
-        td.append(view, input);
-        tr.append(td);
-        inputs.set(`${r}:${c}`, input);
-        tds.set(`${r}:${c}`, td);
-      }
-      tbody.append(tr);
-    }
-    tbl.append(thead, tbody);
+    // The blank strips that stand in for the rows above and below the drawn ones. They are what
+    // makes a 10 000-row sheet scroll correctly while only a screenful of rows exists in the DOM.
+    const makeSpacer = (): HTMLTableRowElement => {
+      const tr = el('tr', 'fo-vpad');
+      tr.setAttribute('aria-hidden', 'true');
+      tr.append(el('td', 'fo-vpad-cell'));
+      return tr;
+    };
+    spacerTop = makeSpacer();
+    spacerBottom = makeSpacer();
+    body = el('tbody');
+    tbl.append(thead, spacerTop, body, spacerBottom);
     table = tbl;
     scroll.replaceChildren(tbl);
+    updateWindow(true);
     renderTabs();
     note.textContent = grid?.truncated
-      ? t('office.cutNote', { rows: MAX_ROWS, cols: MAX_COLS })
-      : grid && (grid.rows.length > VIEW_ROWS || gridWidth(grid) > VIEW_COLS) ? t('office.viewLimit', { rows: VIEW_ROWS, cols: VIEW_COLS }) : '';
+      ? t('office.cutNote', { rows: SHEET_ROWS, cols: MAX_COLS })
+      : '';
     note.hidden = !note.textContent;
     paintSelection();
+  }
+
+  /** The row height a row gets when the file states none: 44px on a touch screen (G8). */
+  function baseRowHeight(look: BookLook['sheets'][number] | undefined): number {
+    if (isCoarsePointer()) return TOUCH_ROW_HEIGHT;
+    return look?.defaultHeight ?? DEFAULT_ROW_HEIGHT;
+  }
+
+  function rowHeightOf(r: number): number {
+    return lookOf()?.heights.get(r) ?? rowHeight;
+  }
+
+  /** The rows a scroll position shows, with the spacers that stand in for the rest. */
+  function updateWindow(force = false): void {
+    if (!body || !offsets) return;
+    const win: RowWindow = rowWindow(offsets, scroll.scrollTop, scroll.clientHeight, OVERSCAN_ROWS);
+    if (!force && win.first === winFirst && win.last === winLast) return;
+    winFirst = win.first;
+    winLast = win.last;
+    // Frozen rows are drawn whatever the scroll position (they are sticky at the top), so the
+    // scrolling window starts after them and the top spacer only covers the gap between.
+    const first = Math.max(win.first, frozenRows);
+    const last = Math.max(first, win.last);
+    if (spacerTop) spacerTop.style.height = `${Math.max(0, offsets[Math.min(first, rowCount)] - offsets[Math.min(frozenRows, rowCount)])}px`;
+    if (spacerBottom) spacerBottom.style.height = `${Math.max(0, win.padBottom)}px`;
+    renderRows(first, last);
+  }
+
+  /**
+   * Draws `[first, last)` into the body, REUSING the row elements that were already on screen:
+   * a one-row scroll keeps every element (and the browser keeps its layout) and only builds the
+   * row that actually entered the window.
+   */
+  function renderRows(first: number, last: number): void {
+    if (!body) return;
+    const keep = new Map<number, RowRecord>();
+    const frag = document.createDocumentFragment();
+    for (let r = 0; r < frozenRows; r++) {
+      const rec = rowCells.get(r) ?? buildRow(r);
+      keep.set(r, rec);
+      frag.append(rec.tr);
+    }
+    for (let r = first; r < last; r++) {
+      if (r < frozenRows || r >= rowCount) continue;
+      const rec = rowCells.get(r) ?? buildRow(r);
+      keep.set(r, rec);
+      frag.append(rec.tr);
+    }
+    body.replaceChildren(frag);
+    rowCells = keep;
+    inputs = new Map();
+    tds = new Map();
+    for (const [r, rec] of keep) rec.cols.forEach((c, i) => { inputs.set(`${r}:${c}`, rec.inputs[i]); tds.set(`${r}:${c}`, rec.tds[i]); });
+    paintSelection();
+    measureRowHeight();
+  }
+
+  /**
+   * The offsets, the spacers and the scroll positions only agree with the pixels if they use the
+   * height the browser really gives a row. The stylesheet says one number and the platform may
+   * render another (borders, a user font, a forced line height), so the FIRST drawn row is
+   * measured once and the offsets are rebuilt from it when they disagree.
+   */
+  function measureRowHeight(): void {
+    if (measured || !offsets || rowCells.size === 0) return;
+    const rec = rowCells.values().next().value as RowRecord | undefined;
+    const height = rec?.tr.getBoundingClientRect().height ?? 0;
+    // A zero height means there was no layout yet (a hidden window, the first paint): come back
+    // for it next time rather than believing 0px forever.
+    if (!(height > 4)) return;
+    measured = true;
+    if (Math.abs(height - rowHeight) < 0.5) return;
+    rowHeight = height;
+    offsets = rowOffsets(rowCount, rowHeightOf);
+    winFirst = -1;
+    winLast = -1;
+    updateWindow(true);
+  }
+
+  /** One row element with its cells, for `rowCells` to keep and reuse. */
+  function buildRow(r: number): RowRecord {
+    const grid = sheets() ? gridAt(sheets() as SheetsModel, (sheets() as SheetsModel).active) : null;
+    const look = lookOf();
+    const tr = el('tr');
+    // The height the offsets were computed from, so a drawn row is exactly as tall as the window
+    // maths believes it is (a touch row is 44px, the touch target G8 asks for). It is set on the
+    // cells as well as the row: a `table-layout: fixed` table takes a row height as a minimum,
+    // and the cells' own CSS height is what the browser ends up honouring.
+    const height = rowHeightOf(r);
+    tr.style.height = `${height}px`;
+    const rh = el('th', 'faisal-office-rowhead fo-rowhead', String(r + 1));
+    rh.addEventListener('click', () => { anchor = { row: r, col: 0 }; active = { row: r, col: Math.max(0, dataCols - 1) }; select(false); });
+    tr.append(rh);
+    if (r < frozenRows) {
+      tr.classList.add('is-frozen');
+      tr.style.top = `${HEADER_HEIGHT + (offsets?.[r] ?? 0)}px`;
+    }
+    const rec: RowRecord = { tr, inputs: [], tds: [], cols: [] };
+    for (let c = 0; c < cols; c++) {
+      if (covered.has(`${r}:${c}`)) continue;
+      const td = el('td', 'faisal-office-celld fo-td');
+      td.style.height = `${height}px`;
+      const merge = mergeAt.get(`${r}:${c}`);
+      if (merge) { td.rowSpan = merge.r1 - r + 1; td.colSpan = merge.c1 - c + 1; }
+      const inData = r < dataRows && c < dataCols;
+      const input = el('input', inData ? 'faisal-office-cell' : 'fo-cell-empty');
+      input.type = 'text';
+      input.dir = 'auto';
+      input.spellcheck = false;
+      input.autocomplete = 'off';
+      input.readOnly = !ctx.editable();
+      input.dataset.r = String(r);
+      input.dataset.c = String(c);
+      input.setAttribute('aria-label', `${columnName(c)}${r + 1}`);
+      input.value = rawOf(r, c);
+      const view = el('span', 'fo-cellview');
+      view.setAttribute('aria-hidden', 'true');
+      const value = grid?.rows[r]?.[c] ?? '';
+      const s = styleAt(r, c);
+      view.textContent = displayValue(value, s?.numFmt);
+      styleCell(td, input, view, s, value);
+      input.addEventListener('focus', () => {
+        if (keepCaret) { keepCaret = false; active = { row: r, col: c }; anchor = active; paintSelection(); return; }
+        active = { row: r, col: c };
+        if (!dragging && !shiftFocus) anchor = active;
+        shiftFocus = false;
+        editing = false;
+        input.select();
+        select(true);
+        showResult();
+      });
+      input.addEventListener('input', () => { editing = true; commitCell(r, c, input.value); fx.value = input.value; });
+      input.addEventListener('dblclick', () => { editing = true; input.setSelectionRange(input.value.length, input.value.length); });
+      td.addEventListener('pointerdown', (ev) => {
+        if (ev.button !== 0) return;
+        if (ev.shiftKey) { ev.preventDefault(); active = { row: r, col: c }; select(false); return; }
+        dragging = true;
+        anchor = { row: r, col: c };
+        active = anchor;
+      });
+      td.addEventListener('pointerenter', () => {
+        if (!dragging) return;
+        active = { row: r, col: c };
+        paintSelection();
+      });
+      td.append(view, input);
+      tr.append(td);
+      rec.inputs.push(input);
+      rec.tds.push(td);
+      rec.cols.push(c);
+    }
+    rowCells.set(r, rec);
+    return rec;
+  }
+
+  /** Scrolls `row` into view (below the sticky header) so it can be drawn and focused. */
+  function revealRow(row: number): void {
+    if (!offsets) return;
+    const top = offsets[row];
+    const bottom = offsets[Math.min(row + 1, rowCount)];
+    const view = Math.max(0, scroll.clientHeight - HEADER_HEIGHT);
+    if (top < scroll.scrollTop) scroll.scrollTop = top;
+    else if (view > 0 && bottom > scroll.scrollTop + view) scroll.scrollTop = bottom - view;
+  }
+
+  /** Makes the active cell exist in the document (scrolling to it if it is out of the window). */
+  function focusCell(row: number, col: number): void {
+    revealRow(row);
+    updateWindow();
+    const input = inputs.get(`${row}:${col}`);
+    if (input) focusInput(input);
+  }
+
+  function focusInput(input: HTMLInputElement): void {
+    shiftFocus = true;
+    input.focus({ preventScroll: true });
   }
   let shiftFocus = false;
   let keepCaret = false;
@@ -451,18 +615,18 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     paintSelection();
     if (!fromFocus) {
       const input = inputs.get(`${active.row}:${active.col}`);
-      if (input && document.activeElement !== input) { shiftFocus = true; input.focus({ preventScroll: false }); }
+      if (input && document.activeElement !== input) focusInput(input);
+      else if (!input) focusCell(active.row, active.col);
     }
     ctx.refresh();
   }
 
   function move(dr: number, dc: number, extend: boolean): void {
-    active = { row: Math.max(0, active.row + dr), col: Math.max(0, Math.min(VIEW_COLS + 2, active.col + dc)) };
+    active = { row: Math.max(0, active.row + dr), col: Math.max(0, Math.min(cols - 1, active.col + dc)) };
     if (!extend) anchor = active;
-    const input = inputs.get(`${active.row}:${active.col}`);
-    if (!input) { renderGrid(); }
     shiftFocus = extend;
-    inputs.get(`${active.row}:${active.col}`)?.focus();
+    // The target may be outside the drawn window: this scrolls to it, draws it, then focuses it.
+    focusCell(active.row, active.col);
     if (extend) paintSelection();
   }
 
@@ -655,6 +819,11 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     return [t('office.statSum', { n: fmt(sum) }), t('office.statAverage', { n: fmt(sum / count) }), t('office.statCount', { n: count })];
   }
 
+  // Redraw the window on every scroll (passive: the wheel is never blocked) and whenever the
+  // viewport changes size, so a resized window draws the rows that really fit.
+  scroll.addEventListener('scroll', () => updateWindow(), { passive: true });
+  sizes = observeSize(scroll, () => updateWindow());
+
   return {
     element: root,
     tabs,
@@ -669,6 +838,8 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     },
     dispose(): void {
       document.removeEventListener('pointerup', onPointerUp);
+      sizes?.disconnect();
+      sizes = null;
     },
     ...{ activeCell: () => active },
   } as Editor;
