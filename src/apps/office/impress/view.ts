@@ -9,8 +9,19 @@ import type { Editor, EditorContext, StatusInfo } from '../editor';
 import { slideTextEdit, type DeckModel } from '../model';
 import { button, el } from '../ui/dom';
 import type { RibbonTab } from '../ui/ribbon';
+import { createSlideEditor } from './slides';
 
+/**
+ * The deck editor: the slide editor for a complete presentation (the rich deck is
+ * present), the plain paragraph view for a package the rich reader cannot open.
+ */
 export function createDeck(ctx: EditorContext): Editor {
+  const m = ctx.model();
+  if (m && m.kind === 'pptx' && m.deck) return createSlideEditor(ctx);
+  return createPlainDeck(ctx);
+}
+
+function createPlainDeck(ctx: EditorContext): Editor {
   const deck = (): DeckModel | null => {
     const m = ctx.model();
     return m && m.kind === 'pptx' ? m : null;

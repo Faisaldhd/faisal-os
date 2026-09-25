@@ -14,6 +14,8 @@
 import { contentTypes } from './ooxml';
 import { xmlText } from './xml';
 import { utf8, writeZip, type ZipInput } from './zip';
+import { shapeXml, slideXml } from './impress/deckxml';
+import { layoutShapes } from './impress/ops';
 
 const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
@@ -214,4 +216,84 @@ export function writePptx(slides: readonly string[][]): Uint8Array {
     })),
   ];
   return writeZip(parts);
+}
+
+/* ─────────────────────── a new presentation (Impress) ─────────────────────── */
+
+const NEW_LAYOUTS: ReadonlyArray<{ type: string; name: string }> = [
+  { type: 'title', name: 'Title Slide' },
+  { type: 'obj', name: 'Title and Content' },
+  { type: 'twoObj', name: 'Two Content' },
+  { type: 'blank', name: 'Blank' },
+];
+
+/**
+ * A new 16:9 presentation: one master (title 44 pt, bulleted body), the four layouts
+ * the slide rail offers (Title · Title and Content · Two Content · Blank), the theme,
+ * and one title slide holding `title` and `subtitle` as placeholders.
+ */
+export function newDeckPptx(title: string, subtitle: string): Uint8Array {
+  const n = NEW_LAYOUTS.length;
+  const master = `${DECL}<p:sldMaster ${NS}><p:cSld>` +
+    '<p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg>' +
+    `<p:spTree>${EMPTY_TREE}</p:spTree></p:cSld>` +
+    '<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3"' +
+    ' accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>' +
+    `<p:sldLayoutIdLst>${NEW_LAYOUTS.map((_, i) => `<p:sldLayoutId id="${2147483649 + i}" r:id="rId${i + 1}"/>`).join('')}</p:sldLayoutIdLst>` +
+    '<p:txStyles><p:titleStyle><a:lvl1pPr algn="l" rtl="0"><a:defRPr sz="4400"/></a:lvl1pPr></p:titleStyle>' +
+    '<p:bodyStyle><a:lvl1pPr marL="228600" indent="-228600"><a:buFont typeface="Arial"/><a:buChar char="&#8226;"/><a:defRPr sz="2800"/></a:lvl1pPr></p:bodyStyle>' +
+    '<p:otherStyle><a:defPPr><a:defRPr lang="en-US"/></a:defPPr></p:otherStyle></p:txStyles></p:sldMaster>';
+  const layout = (type: string, name: string): string => `${DECL}<p:sldLayout ${NS} type="${type}" preserve="1">` +
+    `<p:cSld name="${name}"><p:spTree>${EMPTY_TREE}</p:spTree></p:cSld>` +
+    '<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>';
+  const relsDoc = (body: string): Uint8Array => utf8(`${DECL}<Relationships xmlns="${RELS_NS}">${body}</Relationships>`);
+
+  const [ctrTitle, sub] = layoutShapes('title', 12192000, 6858000);
+  ctrTitle.paras = [{ ...ctrTitle.paras[0], text: title }];
+  sub.paras = [{ ...sub.paras[0], text: subtitle }];
+  const slide = slideXml(shapeXml(ctrTitle, 2, null) + shapeXml(sub, 3, null), null, 'none', '');
+
+  const overrides = [
+    '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>',
+    '<Override PartName="/ppt/presProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presProps+xml"/>',
+    '<Override PartName="/ppt/viewProps.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.viewProps+xml"/>',
+    '<Override PartName="/ppt/tableStyles.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.tableStyles+xml"/>',
+    '<Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>',
+    '<Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>',
+    ...NEW_LAYOUTS.map((_, i) => `<Override PartName="/ppt/slideLayouts/slideLayout${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>`),
+    '<Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>',
+  ];
+  const presentation =
+    `${DECL}<p:presentation ${NS} saveSubsetFonts="1">` +
+    '<p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/></p:sldMasterIdLst>' +
+    '<p:sldIdLst><p:sldId id="256" r:id="rId2"/></p:sldIdLst>' +
+    '<p:sldSz cx="12192000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>';
+
+  return writeZip([
+    { name: '[Content_Types].xml', data: utf8(contentTypes(overrides)) },
+    { name: '_rels/.rels', data: relsDoc(rel('rId1', 'officeDocument', 'ppt/presentation.xml')) },
+    { name: 'ppt/presentation.xml', data: utf8(presentation) },
+    {
+      name: 'ppt/_rels/presentation.xml.rels',
+      data: relsDoc(rel('rId1', 'slideMaster', 'slideMasters/slideMaster1.xml') + rel('rId2', 'slide', 'slides/slide1.xml') +
+        rel('rId3', 'presProps', 'presProps.xml') + rel('rId4', 'viewProps', 'viewProps.xml') +
+        rel('rId5', 'theme', 'theme/theme1.xml') + rel('rId6', 'tableStyles', 'tableStyles.xml')),
+    },
+    { name: 'ppt/presProps.xml', data: utf8(PRES_PROPS) },
+    { name: 'ppt/viewProps.xml', data: utf8(VIEW_PROPS) },
+    { name: 'ppt/tableStyles.xml', data: utf8(TABLE_STYLES) },
+    { name: 'ppt/theme/theme1.xml', data: utf8(THEME) },
+    { name: 'ppt/slideMasters/slideMaster1.xml', data: utf8(master) },
+    {
+      name: 'ppt/slideMasters/_rels/slideMaster1.xml.rels',
+      data: relsDoc(NEW_LAYOUTS.map((_, i) => rel(`rId${i + 1}`, 'slideLayout', `../slideLayouts/slideLayout${i + 1}.xml`)).join('') +
+        rel(`rId${n + 1}`, 'theme', '../theme/theme1.xml')),
+    },
+    ...NEW_LAYOUTS.flatMap((l, i) => [
+      { name: `ppt/slideLayouts/slideLayout${i + 1}.xml`, data: utf8(layout(l.type, l.name)) },
+      { name: `ppt/slideLayouts/_rels/slideLayout${i + 1}.xml.rels`, data: relsDoc(rel('rId1', 'slideMaster', '../slideMasters/slideMaster1.xml')) },
+    ]),
+    { name: 'ppt/slides/slide1.xml', data: utf8(slide) },
+    { name: 'ppt/slides/_rels/slide1.xml.rels', data: relsDoc(rel('rId1', 'slideLayout', '../slideLayouts/slideLayout1.xml')) },
+  ]);
 }
