@@ -5,7 +5,7 @@
 
 export type ToolId =
   | 'move' | 'hand' | 'zoom' | 'marquee' | 'ellipse' | 'lasso' | 'wand' | 'crop'
-  | 'brush' | 'eraser' | 'bucket' | 'gradient' | 'eyedropper' | 'clone' | 'text' | 'shape';
+  | 'brush' | 'eraser' | 'bucket' | 'gradient' | 'eyedropper' | 'clone' | 'text' | 'shape' | 'transform';
 
 export type Action =
   | { kind: 'tool'; tool: ToolId }

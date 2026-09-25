@@ -34,6 +34,11 @@ import {
   type ShapeLayer, type TextLayer, type TextSpec,
 } from './layers';
 import { blankTiled, fromBuffer, readRegion, writeRegion } from './tiles';
+import {
+  FT_IDENTITY, corners as ftCorners, dragHandle, ftMatrix, ftReadout, handlePoints, hitHandle, isIdentity as ftIsIdentity,
+  type FreeTransform, type FtHandle,
+} from './freetransform';
+import { multiply, tidy } from './transform';
 import { addLayerMask, applyLayerMask, invertLayerMask, maskPaintHides } from './masks';
 import { apply as applyMatrix, invert, isTranslationOnly, scaleOf, type Matrix } from './transform';
 import {
@@ -102,6 +107,7 @@ const TOOLS: { id: ToolId; icon: IconName; label: string; hint: string }[] = [
   { id: 'lasso', icon: 'lasso', label: 'toolLasso', hint: 'hintLasso' },
   { id: 'wand', icon: 'wand', label: 'toolWand', hint: 'hintWand' },
   { id: 'crop', icon: 'crop', label: 'toolCrop', hint: 'hintCrop' },
+  { id: 'transform', icon: 'transform', label: 'toolTransform', hint: 'hintTransform' },
   { id: 'brush', icon: 'brush', label: 'toolBrush', hint: 'hintBrush' },
   { id: 'eraser', icon: 'eraser', label: 'toolEraser', hint: 'hintEraser' },
   { id: 'clone', icon: 'clone', label: 'toolClone', hint: 'hintClone' },
@@ -164,6 +170,9 @@ export function launch(ctx: AppContext): void {
   let settingCloneSource = false;
   /** True while brush/eraser/fill/delete target the active layer's MASK instead of its pixels. */
   let maskEdit = false;
+  /** An open free transform: the active layer (live preview in `doc`) or the selection. */
+  let ft: { target: 'layer' | 'selection'; id: string; box: Rect; cur: FreeTransform; base: PhotoDoc } | null = null;
+  const FT_ROTATE_GAP = 28;
 
   /* ───────────────────────────── DOM ───────────────────────────── */
 
@@ -575,6 +584,7 @@ export function launch(ctx: AppContext): void {
   }
 
   function afterChange(): void {
+    if (tool === 'transform' && ft?.target === 'layer' && doc && ft.id !== doc.activeId && !gesture) initTransform();
     if (doc && selection && (selection.width !== doc.width || selection.height !== doc.height)) selection = null;
     requestRender();
     renderLayers();
@@ -612,9 +622,11 @@ export function launch(ctx: AppContext): void {
     if (session) cancelSession();
     abortGesture();
     revertLive();
+    if (ft) { if (ft.target === 'layer') doc = ft.base; ft = null; }
     const next = dir === 'undo' ? history.undo() : history.redo();
-    if (!next) return;
+    if (!next) { if (tool === 'transform') initTransform(); return; }
     doc = next;
+    if (tool === 'transform') initTransform();
     afterChange();
     say(`${dir === 'undo' ? L('undo') : L('redo')}: ${history.current()?.label.split('#')[0] ?? ''}`);
   }
@@ -841,6 +853,49 @@ export function launch(ctx: AppContext): void {
       ctx.setLineDash([4, 3]);
       ctx.lineWidth = 1.5;
       ctx.strokeRect(a.x - 2, a.y - 2, b.w * view.zoom + 4, b.h * view.zoom + 4);
+      ctx.restore();
+    }
+    // free transform box and handles
+    if (tool === 'transform' && ft) {
+      const pts = ftCorners(ft.box, ft.cur).map(S);
+      ctx.save();
+      if (ft.target === 'selection' && selection) {
+        const m = ftMatrix(ft.box, ft.cur);
+        const tr = edgesFor(selection);
+        const path = new Path2D();
+        for (let i = 0; i < tr.length; i += 4) {
+          const a = S(applyMatrix(m, { x: tr[i], y: tr[i + 1] }));
+          const b = S(applyMatrix(m, { x: tr[i + 2], y: tr[i + 3] }));
+          path.moveTo(a.x, a.y);
+          path.lineTo(b.x, b.y);
+        }
+        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = '#fff';
+        ctx.stroke(path);
+        ctx.setLineDash([]);
+      }
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = accent;
+      ctx.beginPath();
+      pts.forEach((q, i) => (i ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+      ctx.closePath();
+      ctx.stroke();
+      const hs = handlePoints(ft.box, ft.cur, FT_ROTATE_GAP / view.zoom);
+      const top = S(hs.find((h) => h.id === 'n')!);
+      const rot = S(hs.find((h) => h.id === 'rotate')!);
+      ctx.beginPath();
+      ctx.moveTo(top.x, top.y);
+      ctx.lineTo(rot.x, rot.y);
+      ctx.stroke();
+      for (const h of hs) {
+        const q = S(h);
+        ctx.beginPath();
+        if (h.id === 'rotate') ctx.arc(q.x, q.y, 6, 0, Math.PI * 2);
+        else ctx.rect(q.x - 5, q.y - 5, 10, 10);
+        ctx.fillStyle = '#fff';
+        ctx.fill();
+        ctx.stroke();
+      }
       ctx.restore();
     }
     // brush cursor
@@ -1500,7 +1555,9 @@ export function launch(ctx: AppContext): void {
   function setTool(id: ToolId): void {
     if (gesture) abortGesture();
     if (tool === 'crop' && id !== 'crop') cropBox = null;
+    if (tool === 'transform' && id !== 'transform') applyTransform();
     tool = id;
+    if (id === 'transform' && !initTransform()) { tool = 'move'; id = 'move'; say(L('transformNothing')); }
     for (const [key, b] of toolButtons) b.setAttribute('aria-pressed', String(key === id));
     if (id === 'crop' && doc) cropBox = centredAspect(doc, cropAspect);
     settingCloneSource = false;
@@ -1712,6 +1769,22 @@ export function launch(ctx: AppContext): void {
       case 'move':
         add(...selectionButtons().slice(0, 1));
         break;
+      case 'transform': {
+        if (ft) {
+          const r = ftReadout(ft.box, ft.cur);
+          add(el('span', 'fp-opt-readout', L('transformSize', { w: r.w, h: r.h, angle: r.angle })));
+        }
+        const fh = iconButton(L('flipH'), 'flipH');
+        fh.addEventListener('click', () => flipTransform('h'));
+        const fv = iconButton(L('flipV'), 'flipV');
+        fv.addEventListener('click', () => flipTransform('v'));
+        const c = button(L('cancel'));
+        c.addEventListener('click', cancelTransform);
+        const a = button(L('transformApply'), 'primary', 'check');
+        a.addEventListener('click', () => { applyTransform(); setTool('move'); });
+        add(fh, fv, el('span', 'fp-spacer'), c, a);
+        break;
+      }
     }
     add(el('span', 'fp-opt-hint', L(def.hint)));
   }
@@ -1773,6 +1846,65 @@ export function launch(ctx: AppContext): void {
   fgBtn.addEventListener('click', () => openColor(L('foreground'), fg, (v) => { setFg(v); renderOptions(); }));
   bgBtn.addEventListener('click', () => openColor(L('background'), bg, (v) => { setBg(v); renderOptions(); }));
   swapBtn.addEventListener('click', () => runCommand('swapColors'));
+
+  /* ─────────────────────────── free transform ─────────────────────────── */
+
+  /** Opens a free transform on the selection (when there is one) or the active layer. */
+  function initTransform(): boolean {
+    ft = null;
+    if (!doc) return false;
+    if (selection) {
+      ft = { target: 'selection', id: '', box: { ...selection.bounds }, cur: { ...FT_IDENTITY }, base: doc };
+      return true;
+    }
+    const a = activeLayer(doc);
+    if (a.locked) return false;
+    const box = layerBounds(a, measureText);
+    if (!(box.w >= 1 && box.h >= 1)) return false;
+    ft = { target: 'layer', id: a.id, box, cur: { ...FT_IDENTITY }, base: doc };
+    return true;
+  }
+
+  function previewTransform(): void {
+    if (!ft) return;
+    if (ft.target === 'layer') {
+      const l = layerById(ft.base, ft.id);
+      if (l) doc = updateLayer(ft.base, ft.id, { matrix: tidy(multiply(ftMatrix(ft.box, ft.cur), l.matrix)) });
+      requestRender();
+    } else drawOverlay();
+    if (tool === 'transform') renderOptions();
+  }
+
+  function applyTransform(): void {
+    const t = ft;
+    ft = null;
+    if (!t || !doc || ftIsIdentity(t.cur)) return;
+    if (t.target === 'layer') { commit(L('hTransform')); return; }
+    if (!selection) return;
+    const m = ftMatrix(t.box, t.cur);
+    const { canvas, ctx } = canvas2d(doc.width, doc.height, true);
+    ctx.setTransform(m[0], m[1], m[2], m[3], m[4], m[5]);
+    ctx.drawImage(maskCanvas(selection), 0, 0);
+    const data = readCanvas(canvas).data;
+    const mask = new Uint8Array(doc.width * doc.height);
+    for (let i = 0; i < mask.length; i++) mask[i] = data[i * 4 + 3];
+    selection = selectionFromMask(doc.width, doc.height, mask);
+    afterSelection();
+    say(L('hTransformSel'));
+  }
+
+  function cancelTransform(): void {
+    if (ft?.target === 'layer') doc = ft.base;
+    ft = null;
+    setTool('move');
+    requestRender();
+  }
+
+  function flipTransform(axis: 'h' | 'v'): void {
+    if (!ft) return;
+    ft.cur = axis === 'h' ? { ...ft.cur, sx: -ft.cur.sx } : { ...ft.cur, sy: -ft.cur.sy };
+    previewTransform();
+  }
 
   /* ─────────────────────────── crop ─────────────────────────── */
 
@@ -1922,7 +2054,8 @@ export function launch(ctx: AppContext): void {
     | { kind: 'crop'; handle: CropHandle; start: Point; box: Rect }
     | { kind: 'stroke'; s: StrokeState }
     | { kind: 'gradient'; from: Point; to: Point | null; layer: RasterLayer; work: HTMLCanvasElement }
-    | { kind: 'shape'; from: Point; base: PhotoDoc; id: string };
+    | { kind: 'shape'; from: Point; base: PhotoDoc; id: string }
+    | { kind: 'ft'; handle: FtHandle; from: Point; start: FreeTransform };
   let gesture: Gesture | null = null;
   const pointers = new Map<number, Point>();
   let pinch: { base: View; a: Point; b: Point } | null = null;
@@ -1940,6 +2073,7 @@ export function launch(ctx: AppContext): void {
     if (g.kind === 'stroke') overrides.delete(g.s.target === 'mask' ? `mask:${g.s.layerId}` : g.s.layerId);
     if (g.kind === 'gradient') overrides.delete(g.layer.id);
     if (g.kind === 'move' || g.kind === 'shape') doc = g.base;
+    if (g.kind === 'ft' && ft) { ft.cur = g.start; previewTransform(); }
     requestRender();
   }
 
@@ -2050,6 +2184,13 @@ export function launch(ctx: AppContext): void {
       case 'zoom':
         setZoom(zoomStop(view.zoom, e.altKey ? -1 : 1), screen);
         return;
+      case 'transform': {
+        if (!ft && !initTransform()) return;
+        const reach = (e.pointerType === 'touch' ? 26 : 12) / view.zoom;
+        const handle = hitHandle(ft!.box, ft!.cur, p, reach, FT_ROTATE_GAP / view.zoom);
+        if (handle) gesture = { kind: 'ft', handle, from: p, start: { ...ft!.cur } };
+        return;
+      }
       case 'marquee':
         gesture = { kind: 'marquee', from: p, to: null, square: e.shiftKey && opts.selMode === 'replace', mode: modeFromModifiers(opts.selMode, e.shiftKey, e.altKey) };
         return;
@@ -2167,6 +2308,11 @@ export function launch(ctx: AppContext): void {
         requestRender();
         return;
       }
+      case 'ft':
+        if (!ft) return;
+        ft.cur = dragHandle(ft.box, g.start, g.handle, g.from, p, e.shiftKey);
+        previewTransform();
+        return;
       case 'marquee':
         g.to = p;
         g.square = e.shiftKey && g.mode === 'replace';
@@ -2593,10 +2739,12 @@ export function launch(ctx: AppContext): void {
       case 'brushBigger': opts.size = Math.min(400, Math.round(opts.size * 1.2) + 1); renderOptions(); drawOverlay(); return;
       case 'apply':
         if (tool === 'crop') applyCrop();
+        else if (tool === 'transform') { applyTransform(); setTool('move'); }
         else if (session) void applySession();
         return;
       case 'cancel':
         if (gesture) abortGesture();
+        else if (tool === 'transform') cancelTransform();
         else if (session) cancelSession();
         else if (tool === 'crop') setTool('move');
         else if (selection) { selection = null; afterSelection(); }
@@ -2633,7 +2781,7 @@ export function launch(ctx: AppContext): void {
     if (mode === 'gallery' && !(action.kind === 'command' && ['open', 'new', 'help'].includes(action.command))) return;
     if (action.kind === 'command' && (action.command === 'copy' || action.command === 'cut') && !doc) return;
     if (action.kind === 'command' && action.command === 'paste') return; // let the paste event fire
-    if (action.kind === 'command' && action.command === 'cancel' && !gesture && !session && tool !== 'crop' && !selection) return;
+    if (action.kind === 'command' && action.command === 'cancel' && !gesture && !session && tool !== 'crop' && tool !== 'transform' && !selection) return;
     e.preventDefault();
     e.stopPropagation();
     if (action.kind === 'tool') {
