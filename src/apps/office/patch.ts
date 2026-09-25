@@ -58,6 +58,7 @@ import {
 import { entryData, readRawZip, rebuildZip, utf8, type RawZip } from './zip';
 import type { OpaqueRun } from './writer/types';
 import { patchDocxRich } from './writer/docxpatch';
+import { patchDeck } from './impress/deckpatch';
 import {
   formulaAt, gridWidth, sameFormat, type DeckModel, type DocModel, type Grid, type OfficeKind, type OfficeModel,
   type ParagraphFormat, type SheetsModel,
@@ -95,7 +96,8 @@ export function snapshotModel(model: OfficeModel): OfficeModel {
       // snapshot can share them; only the list itself is copied.
       ...(model.blocks ? { blocks: model.blocks.slice() } : {}),
     };
-    case 'pptx': return { kind: 'pptx', slides: model.slides.map((slide) => [...slide]) };
+    // The rich deck is never mutated (every operation builds a new one), so it is shared.
+    case 'pptx': return { kind: 'pptx', slides: model.slides.map((slide) => [...slide]), ...(model.deck ? { deck: model.deck } : {}) };
     case 'text': return { kind: 'text', text: model.text };
     default: return {
       kind: model.kind,
@@ -134,6 +136,8 @@ export async function patchPackage(
       return await patchXlsx(archive, baseline, current);
     }
     if (baseline.kind !== 'pptx' || current.kind !== 'pptx') return null;
+    // The slide editor's rich deck: shapes, order, new and deleted slides.
+    if (baseline.deck && current.deck) return await patchDeck(archive, baseline.deck, current.deck);
     return await patchPptx(archive, baseline, current);
   } catch {
     // A refusal, a damaged archive, an unexpected part: never a guess. The caller
