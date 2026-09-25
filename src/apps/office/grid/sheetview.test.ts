@@ -8,7 +8,7 @@ import {
   MAX_SORT_LEVELS, addChart, addCondRule, addSortLevel, chartNumber, chartTypeChoices, clearCondRules,
   clearFilter, clearFilters, clearSort, colorScaleRule, conditionalStyles, dataBarRule, displayText,
   dragPosition, emptySheetView, filteredColumns, formatChoices, formatForCell, isFiltered, looksLikeHeader,
-  rangeToChartSpec, removeChart, removeSortLevel, setFilter, setSortOrder, topRule, visibleRowMap,
+  rangeToChartSpec, removeChart, removeSortLevel, setFilter, setSortOrder, shiftViewFor, topRule, visibleRowMap,
 } from './sheetview';
 
 const SHEET: string[][] = [
@@ -227,5 +227,54 @@ describe('charts as objects over the sheet', () => {
     expect(dragPosition({ x: 10, y: 20 }, -1000, -1000, bounds, size)).toEqual({ x: 0, y: 0 });
     // A chart bigger than the sheet cannot go negative.
     expect(dragPosition({ x: 0, y: 0 }, 10, 10, { w: 100, h: 100 }, { w: 300, h: 300 })).toEqual({ x: 0, y: 0 });
+  });
+});
+
+/**
+ * The view-level state moves with the structure. Its own rule, and it has to agree with the model's
+ * `shiftFormula` — a number format that stays behind is a screen that contradicts the data.
+ */
+describe('the view-level state across a structural change', () => {
+  const base = (): typeof emptySheetView extends () => infer T ? T : never => ({
+    ...emptySheetView(),
+    formats: { '0:0': 'General', '2:1': '0%', '5:1': '#,##0' },
+    filters: { 1: { kind: 'values', keys: ['x'] } },
+    sort: [{ col: 1, order: 'asc' }],
+    charts: [{ id: 'c1', type: 'bar', range: { r0: 1, c0: 0, r1: 3, c1: 1 }, title: 'T', x: 0, y: 0, w: 100, h: 80 }],
+  });
+
+  it('carries the chosen number formats with their cells', () => {
+    const rows = shiftViewFor(base(), 'row', 2, 1);
+    expect(rows.formats).toEqual({ '0:0': 'General', '3:1': '0%', '6:1': '#,##0' });
+    const cols = shiftViewFor(base(), 'col', 1, 1);
+    expect(cols.formats).toEqual({ '0:0': 'General', '2:2': '0%', '5:2': '#,##0' });
+  });
+
+  it('drops the format of a cell the deletion removed', () => {
+    expect(shiftViewFor(base(), 'row', 2, -1).formats).toEqual({ '0:0': 'General', '4:1': '#,##0' });
+    // Deleting a column takes every format ON that column with it: both `2:1` and `5:1` are gone.
+    expect(shiftViewFor(base(), 'col', 1, -1).formats).toEqual({ '0:0': 'General' });
+    // …and the ones to its right move left with their cells.
+    expect(shiftViewFor(base(), 'col', 0, -1).formats).toEqual({ '2:0': '0%', '5:0': '#,##0' });
+  });
+
+  it('moves the filter and sort keys only for a column change', () => {
+    expect(shiftViewFor(base(), 'row', 0, 1).filters).toEqual({ 1: { kind: 'values', keys: ['x'] } });
+    expect(shiftViewFor(base(), 'row', 0, 1).sort).toEqual([{ col: 1, order: 'asc' }]);
+    expect(shiftViewFor(base(), 'col', 1, 1).filters).toEqual({ 2: { kind: 'values', keys: ['x'] } });
+    expect(shiftViewFor(base(), 'col', 1, 1).sort).toEqual([{ col: 2, order: 'asc' }]);
+    expect(shiftViewFor(base(), 'col', 1, -1).filters).toEqual({});
+  });
+
+  it('moves a chart range, and drops the chart whose range was deleted', () => {
+    expect(shiftViewFor(base(), 'row', 0, 1).charts[0].range).toEqual({ r0: 2, c0: 0, r1: 4, c1: 1 });
+    expect(shiftViewFor(base(), 'row', 2, -1).charts[0].range).toEqual({ r0: 1, c0: 0, r1: 2, c1: 1 });
+    expect(shiftViewFor(base(), 'col', 0, 1).charts[0].range).toEqual({ r0: 1, c0: 1, r1: 3, c1: 2 });
+    expect(shiftViewFor({ ...base(), charts: [{ ...base().charts[0], range: { r0: 2, c0: 0, r1: 2, c1: 1 } }] }, 'row', 2, -1).charts).toEqual([]);
+  });
+
+  it('leaves a conditional-format rule alone: it has no range of its own', () => {
+    const view = { ...base(), condRules: [topRule(5)] };
+    expect(shiftViewFor(view, 'row', 1, 1).condRules).toEqual(view.condRules);
   });
 });

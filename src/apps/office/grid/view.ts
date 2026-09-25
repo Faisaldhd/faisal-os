@@ -43,7 +43,7 @@ import {
   MAX_SORT_LEVELS, addChart, addCondRule, addSortLevel, chartNumber, chartTypeChoices, clearCondRules,
   clearFilter, clearFilters, clearSort, colorScaleRule, conditionalStyles, dataBarRule, displayText,
   dragPosition, emptySheetView, filteredColumns, formatChoices, formatForCell, isFiltered, looksLikeHeader,
-  rangeToChartSpec, removeChart, removeSortLevel, setFilter, setSortOrder, topRule, visibleRowMap,
+  rangeToChartSpec, removeChart, removeSortLevel, setFilter, setSortOrder, shiftViewFor, topRule, visibleRowMap,
   type ChartObject, type SheetRange, type SheetView,
 } from './sheetview';
 import { distinctValues, sortRows, type CellStyle as CondCellStyle, type SortKey } from '../calc/index';
@@ -1321,14 +1321,21 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     if (!m || !grid) return;
     // Excel's "insert row": above the active row (past the data it simply adds one).
     const mr = modelRowOf(active.row);
-    ctx.commit(addRowEdit(m.active, mr < 0 ? grid.rows.length : Math.min(mr, grid.rows.length)));
+    const at = mr < 0 ? grid.rows.length : Math.min(mr, grid.rows.length);
+    ctx.commit(addRowEdit(m.active, at));
+    // The model moves its cells and the file's own look; this moves the copies the SCREEN is drawn
+    // from (the chosen number formats, the charts, the filter and sort keys), with the same rule, so
+    // a format cannot stay on the row the data just left.
+    sheetView = shiftViewFor(sheetView, 'row', at, 1);
     renderGrid();
   }
   function addColumn(): void {
     const m = sheets();
     const grid = m ? gridAt(m, m.active) : null;
     if (!m || !grid) return;
-    ctx.commit(addColumnEdit(m.active, Math.min(active.col, gridWidth(grid))));
+    const at = Math.min(active.col, gridWidth(grid));
+    ctx.commit(addColumnEdit(m.active, at));
+    sheetView = shiftViewFor(sheetView, 'col', at, 1);
     renderGrid();
   }
   function deleteRow(): void {
@@ -1337,6 +1344,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const mr = modelRowOf(active.row);
     if (!m || !grid || !grid.rows[mr]) return;
     ctx.commit(deleteRowEdit(m.active, mr, grid.rows[mr]));
+    sheetView = shiftViewFor(sheetView, 'row', mr, -1);
     const last = grid.rows.length - 2;
     if (active.row > last) active = { ...active, row: Math.max(0, last) };
     anchor = active;
@@ -1346,7 +1354,9 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const m = sheets();
     const grid = m ? gridAt(m, m.active) : null;
     if (!m || !grid) return;
-    ctx.commit(deleteColumnEdit(m.active, active.col, grid.rows.map((r) => r[active.col] ?? '')));
+    const at = active.col;
+    ctx.commit(deleteColumnEdit(m.active, at, grid.rows.map((r) => r[at] ?? '')));
+    sheetView = shiftViewFor(sheetView, 'col', at, -1);
     const last = gridWidth(grid) - 2;
     if (active.col > last) active = { ...active, col: Math.max(0, last) };
     anchor = active;
