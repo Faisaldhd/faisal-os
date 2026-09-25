@@ -183,6 +183,25 @@ describe('engine/filters — named looks', () => {
   });
 });
 
+describe('engine/filters — 12 MP', () => {
+  it('runs every filter on a 4000×3000 photo in reasonable time', () => {
+    const big = bigImg(4000, 3000);
+    const times: string[] = [];
+    for (const id of FILTER_IDS) {
+      const t0 = performance.now();
+      const out = applyFilter(big, id, 1, 1);
+      const ms = performance.now() - t0;
+      times.push(`${id} ${ms.toFixed(0)}`);
+      expect(out.width).toBe(4000);
+      expect(out.height).toBe(3000);
+      // Generous: CI machines vary; this catches a quadratic or per-pixel-allocation regression.
+      expect(ms).toBeLessThan(15000);
+    }
+    // eslint-disable-next-line no-console
+    console.log(`[perf] 4000×3000 filters (ms): ${times.join(', ')}`);
+  }, 240000);
+});
+
 describe('engine/filters — the ops.ts seam applyFilter(buf, id, amount, scale)', () => {
   it('knows every id; amount 0 of a look is identity; unknown ids copy', () => {
     const src = randomImg(12, 12, 6);
