@@ -29,13 +29,17 @@ export function loadLibheif(): Promise<HeifLibLike> {
     if (!res.ok) throw new Error(`wasm ${res.status}`);
     const wasmBinary = await res.arrayBuffer();
     return new Promise<HeifLibLike>((resolve, reject) => {
-      const lib = (libheifFactory as unknown as Factory)({
+      // With `wasmBinary` given, the runtime can initialise synchronously INSIDE the factory
+      // call, before its return value exists; Emscripten fills in the options object itself as
+      // the module, so that object is what gets resolved.
+      const opts: Parameters<Factory>[0] = {
         wasmBinary,
-        onRuntimeInitialized: () => resolve(lib),
         onAbort: (what) => reject(new Error(String(what))),
         print: () => {},
         printErr: () => {},
-      });
+      };
+      opts.onRuntimeInitialized = () => resolve(opts as unknown as HeifLibLike);
+      (libheifFactory as unknown as Factory)(opts);
     });
   })().catch((e: unknown) => {
     pending = null; // a later open (back online) may retry
