@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DocModel, SheetsModel, TextModel } from './model';
-import { defaultSaveFormat, saveFormatChoices, serializeAs, textOf } from './save-as';
+import { defaultSaveFormat, isExportOnlyFormat, saveFormatChoices, serializeAs, textOf } from './save-as';
 
 /**
  * Office "Save as" — the format table.
@@ -18,9 +18,11 @@ const sheet: SheetsModel = {
 const text: TextModel = { kind: 'text', text: '# Title\n\nbody' };
 
 describe('office save-as — format choices', () => {
-  it('offers Word only its own family, and never another document type', () => {
-    expect(saveFormatChoices(doc).map((c) => c.value)).toEqual(['docx', 'txt']);
-    expect(saveFormatChoices(doc).map((c) => c.ext)).toEqual(['docx', 'txt']);
+  it('offers Word its own family: .docx, the OpenDocument text export, and plain text', () => {
+    expect(saveFormatChoices(doc).map((c) => c.value)).toEqual(['docx', 'odt', 'txt']);
+    expect(saveFormatChoices(doc).map((c) => c.ext)).toEqual(['docx', 'odt', 'txt']);
+    // The OpenDocument choice carries the ODF text media type, not the OOXML one.
+    expect(saveFormatChoices(doc).find((c) => c.value === 'odt')?.mime).toBe('application/vnd.oasis.opendocument.text');
   });
 
   it('offers a spreadsheet .xlsx and .csv', () => {
@@ -55,6 +57,17 @@ describe('office save-as — the bytes', () => {
     }
   });
 
+  it('writes a real ODF package for .odt, with the text media type stored first', () => {
+    const bytes = serializeAs(doc, 'odt');
+    expect([bytes[0], bytes[1], bytes[2], bytes[3]]).toEqual([0x50, 0x4b, 0x03, 0x04]);
+    const nameLength = bytes[26] | (bytes[27] << 8);
+    expect(new TextDecoder().decode(bytes.subarray(30, 30 + nameLength))).toBe('mimetype');
+    const content = new TextDecoder().decode(bytes.subarray(30 + nameLength, 30 + nameLength + 39));
+    expect(content).toBe('application/vnd.oasis.opendocument.text');
+    expect(isExportOnlyFormat('odt')).toBe(true);
+    expect(isExportOnlyFormat('docx')).toBe(false);
+  });
+
   it('writes RFC 4180 CSV, always with a comma, whatever the model delimiter was', () => {
     const tsv: SheetsModel = { ...sheet, kind: 'csv', delimiter: '\t', grids: [{ name: 's', rows: [['a', 'b,c']], truncated: false }] };
     expect(new TextDecoder().decode(serializeAs(tsv, 'csv'))).toBe('a,"b,c"\r\n');
@@ -76,5 +89,6 @@ describe('office save-as — the bytes', () => {
     expect(() => serializeAs(doc, 'xlsx')).toThrow(/cannot write/);
     expect(() => serializeAs(doc, 'pptx')).toThrow(/cannot write/);
     expect(() => serializeAs(text, 'csv')).toThrow(/cannot write/);
+    expect(() => serializeAs(sheet, 'odt')).toThrow(/cannot write/);
   });
 });

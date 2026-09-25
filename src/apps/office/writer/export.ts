@@ -12,7 +12,11 @@ export function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-function headingLevel(format: ParagraphFormat | undefined, outline: number | undefined): number {
+/**
+ * The heading level a paragraph's style or outline says it is: 1-6, or 0 for body text. Shared with
+ * the `.odt` writer so a heading is the same heading in every export.
+ */
+export function headingLevel(format: ParagraphFormat | undefined, outline: number | undefined): number {
   const style = format?.style ?? '';
   const m = /^Heading([1-6])$/.exec(style);
   if (m) return Number(m[1]);

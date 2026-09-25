@@ -36,7 +36,9 @@ import { loadOfficeFile, serializeModel, type LoadRefusal } from './file';
 import { patchPackage, packageKind, snapshotModel, type PatchResult } from './patch';
 import { backupPathFor, saveFailure, saveWithBackup, withinHome } from './save';
 import { formatBytes } from '../files/format';
-import { defaultSaveFormat, saveFormatChoices, serializeAs, type SaveFormatId } from './save-as';
+import {
+  defaultSaveFormat, isExportOnlyFormat, saveFormatChoices, saveFormatLabelKey, serializeAs, type SaveFormatId,
+} from './save-as';
 import { newDeckPptx } from './pptx';
 import { deckTexts, readDeck } from './impress/deck';
 import { writeDelimited } from './file';
@@ -343,7 +345,7 @@ function launch(ctx: AppContext): void {
 
   function fileTab(): RibbonTab {
     const kind = model?.kind;
-    const writer = editor as (Editor & { printDoc?: () => void; exportHtml?: () => void; exportMd?: () => void }) | null;
+    const writer = editor as (Editor & { printDoc?: () => void; exportHtml?: () => void; exportMd?: () => void; exportOdt?: () => void }) | null;
     return {
       id: 'file', label: t('office.tabFile'), groups: [
         {
@@ -362,6 +364,7 @@ function launch(ctx: AppContext): void {
             ...(kind === 'docx' ? [
               { type: 'button' as const, id: 'html', icon: 'doc' as const, label: t('office.exportHtml'), showLabel: true, run: () => writer?.exportHtml?.() },
               { type: 'button' as const, id: 'md', icon: 'draft' as const, label: t('office.exportMd'), showLabel: true, run: () => writer?.exportMd?.() },
+              { type: 'button' as const, id: 'odt', icon: 'draft' as const, label: t('office.exportOdt'), showLabel: true, run: () => writer?.exportOdt?.() },
             ] : []),
             ...(kind === 'xlsx' ? [{ type: 'button' as const, id: 'csv', icon: 'csv' as const, label: t('office.exportCsv'), showLabel: true, run: exportCsv }] : []),
           ],
@@ -913,6 +916,7 @@ function launch(ctx: AppContext): void {
 
     busy = true;
     syncBar();
+    let written: SaveFormatId | null = null;
     const outcome = await saveAsDialog({
       vfs,
       host: win.content,
@@ -923,6 +927,7 @@ function launch(ctx: AppContext): void {
       format: defaultSaveFormat(source, currentExt),
       encode: async (target) => {
         const format = target.format as SaveFormatId;
+        written = format;
         // A rich Word document is rebuilt (runs, images, tables), exactly like the in-place save.
         if (format === 'docx' && source.kind === 'docx' && source.blocks) {
           return (await rebuildDocxRich(source)) ?? serializeAs(source, 'docx');
@@ -938,6 +943,13 @@ function launch(ctx: AppContext): void {
     busy = false;
     syncBar();
     if (outcome.status !== 'saved') return;
+    // An export-only format (`.odt`) writes the file and keeps THIS document open, with its own
+    // path untouched: the reader cannot open an OpenDocument file back yet, and pretending the
+    // window is now editing the `.odt` would be a lie the very next save would expose.
+    if (written && isExportOnlyFormat(written)) {
+      setStatus(t('office.exportedAs', { name: basename(outcome.path), format: t(saveFormatLabelKey(written)) }));
+      return;
+    }
     filePath = normalize(outcome.path);
     await open();
     setStatus(t('office.saveAsDone', { name: basename(filePath) }));

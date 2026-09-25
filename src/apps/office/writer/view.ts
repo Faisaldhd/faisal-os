@@ -30,6 +30,7 @@ import {
 } from './docops';
 import { galleryStyles, resolveStyle, type DocLook, type ParaLook, type TextLook } from './docxread';
 import { toHtml, toMarkdown } from './export';
+import { ODT_MIME, odtTitleOf, toOdt } from './odt';
 import { findAll, type Match } from './find';
 import { paginate, PX } from './paginate';
 import {
@@ -1805,6 +1806,16 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       for (const url of mediaUrls.values()) URL.revokeObjectURL(url);
       mediaUrls.clear();
     },
-    ...{ printDoc, exportHtml: () => { const m = doc(); if (m) void ctx.exportFile(toHtml(m, ctx.filePath() ?? '', outlines()), 'html', 'text/html'); }, exportMd: () => { const m = doc(); if (m) void ctx.exportFile(toMarkdown(m, outlines()), 'md', 'text/markdown'); } },
-  } as Editor & { printDoc(): void; exportHtml(): void; exportMd(): void };
+    ...{
+      printDoc,
+      exportHtml: () => { const m = doc(); if (m) void ctx.exportFile(toHtml(m, ctx.filePath() ?? '', outlines()), 'html', 'text/html'); },
+      exportMd: () => { const m = doc(); if (m) void ctx.exportFile(toMarkdown(m, outlines()), 'md', 'text/markdown'); },
+      // OpenDocument Text: the package is built by `odt.ts` (mimetype stored and first) and written
+      // by the same export path as the other formats — this document keeps its own file.
+      exportOdt: () => {
+        const m = doc();
+        if (m) void ctx.exportFile(toOdt(m, { title: odtTitleOf(m, 'Untitled'), created: new Date().toISOString() }), 'odt', ODT_MIME);
+      },
+    },
+  } as Editor & { printDoc(): void; exportHtml(): void; exportMd(): void; exportOdt(): void };
 }
