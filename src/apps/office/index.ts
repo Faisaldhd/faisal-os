@@ -50,6 +50,11 @@ import { readDocxDocument, type DocLook } from './writer/docxread';
 import { emptyDocxPackage, rebuildDocxRich } from './writer/docxpatch';
 import { blockText } from './writer/types';
 import { createWriter } from './writer/view';
+import {
+  AUTOSAVE_INTERVALS, AUTOSAVE_KEY, AUTOSAVE_TICK_MS, clampInterval, formatClock,
+  newestRecovery, parseAutosavePrefs, recoveryPathFor, serializeAutosavePrefs, shouldAutosave,
+  type AutosavePrefs,
+} from './writer/autosave';
 import { readBookLook, type BookLook } from './grid/xlsxlook';
 import { createSheet } from './grid/view';
 import { createDeck } from './impress/view';
@@ -110,6 +115,33 @@ function launch(ctx: AppContext): void {
   let bookLook: BookLook | null = null;
   let statusMessage = '';
   const history = new History();
+
+  /* ───────────────────────────── autosave state ───────────────────────────── */
+  // The recovery copy never touches the document or its `.bak`: it is a separate file beside it.
+  let autosave: AutosavePrefs = loadAutosavePrefs();
+  /** Grows with every change; compared against `recoverySeq` so idle documents are not rewritten. */
+  let editSeq = 0;
+  /** The `editSeq` the recovery copy was last written for. */
+  let recoverySeq = 0;
+  /** When the last change happened (ms). */
+  let lastEditAt = 0;
+  /** True while a recovery write is in flight, so two ticks cannot overlap. */
+  let recoveryBusy = false;
+  let autosaveTimer: ReturnType<typeof setInterval> | null = null;
+
+  function loadAutosavePrefs(): AutosavePrefs {
+    try {
+      return parseAutosavePrefs(localStorage.getItem(AUTOSAVE_KEY));
+    } catch {
+      return parseAutosavePrefs(null); // private mode: the default, for this window only
+    }
+  }
+
+  function storeAutosavePrefs(): void {
+    try {
+      localStorage.setItem(AUTOSAVE_KEY, serializeAutosavePrefs(autosave));
+    } catch { /* private mode: lives for this window only */ }
+  }
 
   /* ─────────────────────────────── frame ─────────────────────────────── */
 
@@ -275,6 +307,8 @@ function launch(ctx: AppContext): void {
     if (!model) return;
     model = recompute(edit.apply(model));
     history.push(edit);
+    editSeq++;
+    lastEditAt = Date.now();
     syncBar();
   }
   function undo(): void {
@@ -330,6 +364,23 @@ function launch(ctx: AppContext): void {
               { type: 'button' as const, id: 'md', icon: 'draft' as const, label: t('office.exportMd'), showLabel: true, run: () => writer?.exportMd?.() },
             ] : []),
             ...(kind === 'xlsx' ? [{ type: 'button' as const, id: 'csv', icon: 'csv' as const, label: t('office.exportCsv'), showLabel: true, run: exportCsv }] : []),
+          ],
+        },
+        // Writer's autosave settings, where the rest of the app's settings live. The recovery copy
+        // is the only thing it writes — never the document, never its `.bak`.
+        {
+          label: t('office.groupAutosave'), controls: [
+            {
+              type: 'button', id: 'autosave', icon: 'save', label: t('office.autosaveToggle'), showLabel: true,
+              pressed: () => autosave.on,
+              run: () => setAutosave({ on: !autosave.on }),
+            },
+            {
+              type: 'select', id: 'autosaveevery', label: t('office.autosaveEvery', { n: autosave.seconds }), width: 150,
+              options: () => AUTOSAVE_INTERVALS.map((n) => ({ value: String(n), label: t('office.autosaveEvery', { n }) })),
+              value: () => String(autosave.seconds),
+              onChange: (value) => setAutosave({ seconds: Number(value) }),
+            },
           ],
         },
       ],
@@ -549,6 +600,8 @@ function launch(ctx: AppContext): void {
     else if (plan.ext === '.md') setNote(t('office.markdownNote'));
     else setNote('');
     syncBar();
+    // A recovery copy newer than the file it belongs to is offered, never applied silently.
+    void offerRecovery();
   }
 
   async function openPath(path: string): Promise<void> {
@@ -664,6 +717,9 @@ function launch(ctx: AppContext): void {
     setStatus(t('office.saving'));
     // Known before the try so a refused write can name the size it tried to store.
     let attempt = 0;
+    // Set once the write and the read-back both succeeded; the editor is re-rendered from it in
+    // the finally, AFTER `busy` is false (see there).
+    let showSaved = false;
     try {
       let data: Uint8Array;
       if (patched) data = patched.bytes;
@@ -695,14 +751,136 @@ function launch(ctx: AppContext): void {
       if ((model.kind === 'xlsx' || model.kind === 'csv') && model.moved) { model = { ...model }; delete (model as SheetsModel).moved; }
       onDiskBytes = data;
       onDiskModel = snapshotModel(model);
-      editor?.render();
+      showSaved = true;
       setStatus(result.backup ? t('office.savedWithBackup', { name: basename(result.backup) }) : t('office.saved'));
     } catch (err) {
       setStatus(t('office.saveFailed', { message: errorMessage(err, attempt) }));
     } finally {
       busy = false;
+      // Re-rendered HERE, with `busy` already false: a render during the save re-applies
+      // `ctx.editable()`, which is false while a save is in flight, so the editor (or the one a
+      // rebuild just mounted) would be left read-only — and a saved Writer document could not be
+      // typed into again, which is also what autosave waits for.
+      if (showSaved) editor?.render();
       syncBar();
     }
+  }
+
+  /* ──────────────────────────── autosave (Writer) ──────────────────────────── */
+
+  /**
+   * The bytes an explicit save would write — the recovery copy must hold exactly the document the
+   * owner is looking at, so it is serialised the same way.
+   */
+  async function currentBytes(source: OfficeModel): Promise<Uint8Array> {
+    if (source.kind === 'docx' && source.blocks) return (await rebuildDocxRich(source)) ?? serializeModel(source);
+    return serializeModel(source);
+  }
+
+  /**
+   * Writes the recovery copy of the open document. It NEVER touches the document and never rotates
+   * its `.bak`: the copy is a separate file (`<name>.autosave`) and the explicit save keeps its
+   * own meaning exactly. A refused write is said plainly in the status line and breaks nothing.
+   */
+  async function writeRecovery(): Promise<void> {
+    if (!filePath || !model || closed || recoveryBusy) return;
+    const target = recoveryPathFor(filePath);
+    const source = model;
+    const seq = editSeq;
+    recoveryBusy = true;
+    let attempt = 0;
+    try {
+      const data = await currentBytes(source);
+      attempt = data.length;
+      if (closed) return;
+      await vfs.writeFile(target, data);
+      recoverySeq = seq;
+      if (closed) return;
+      setStatus(t('office.autosaved', { time: formatClock(new Date()) }));
+    } catch (err) {
+      if (!closed) setStatus(t('office.autosaveFailed', { message: errorMessage(err, attempt) }));
+    } finally {
+      recoveryBusy = false;
+    }
+  }
+
+  /** Asked by the timer; the decision itself is the tested, pure `shouldAutosave`. */
+  function autosaveTick(): void {
+    if (closed || !filePath || !model) return;
+    // Writer slice: the sheet and the deck get their own turn later, so nothing changes for them.
+    if (model.kind !== 'docx') return;
+    if (!shouldAutosave({
+      on: autosave.on,
+      seconds: autosave.seconds,
+      dirty: history.dirty,
+      saving: busy || recoveryBusy,
+      editSeq,
+      writtenSeq: recoverySeq,
+      sinceEditMs: Date.now() - lastEditAt,
+    })) return;
+    void writeRecovery();
+  }
+
+  function setAutosave(patch: { on?: boolean; seconds?: number }): void {
+    autosave = {
+      on: patch.on ?? autosave.on,
+      seconds: clampInterval(patch.seconds ?? autosave.seconds),
+    };
+    storeAutosavePrefs();
+    ribbon.sync();
+    syncBar();
+  }
+
+  /**
+   * Offers the recovery copy of the document that was just opened — and only when that copy is
+   * NEWER than the file, and only after asking. The restored text becomes an unsaved change with
+   * the file's own content as its undo step: the document on disk is not written until the owner
+   * saves it, exactly like any other edit.
+   */
+  async function offerRecovery(): Promise<void> {
+    if (!filePath || closed || !model || plan.readOnly || model.kind !== 'docx') return;
+    const doc = filePath;
+    const wanted = recoveryPathFor(doc);
+    let entry: { path: string; mtime: number } | null = null;
+    let docMtime = 0;
+    try {
+      const dir = dirname(doc);
+      const [stat, entries] = await Promise.all([vfs.stat(doc), vfs.readdir(dir)]);
+      docMtime = stat.mtime;
+      entry = newestRecovery(entries.map((e) => ({ path: e.path, mtime: e.mtime })), doc, docMtime);
+    } catch {
+      return; // no copy, or a directory we cannot read: nothing to offer
+    }
+    if (closed || !entry) return;
+    const proceed = await shellConfirm({
+      title: t('office.recoveryTitle'),
+      message: t('office.recoveryBody', { name: basename(wanted), time: formatClock(new Date(entry.mtime)) }),
+      okLabel: t('office.recoveryRestore'),
+      cancelLabel: t('office.recoveryKeep'),
+      danger: true,
+    });
+    if (!proceed || closed) return;
+    let bytes: Uint8Array;
+    try {
+      bytes = await vfs.readFile(wanted);
+    } catch (err) {
+      setStatus(t('office.autosaveFailed', { message: errorMessage(err) }));
+      return;
+    }
+    const result = await loadOfficeFile(doc, bytes);
+    if (closed || !result.ok) return;
+    const restored = recompute(await enrich(result.model, bytes));
+    if (closed) return;
+    const before = model;
+    model = restored;
+    // Undo goes back to what the file holds; nothing is saved until the owner says so.
+    history.push({ apply: () => restored, revert: () => before });
+    editSeq++;
+    lastEditAt = Date.now();
+    mountEditor();
+    setStatus(t('office.recoveryRestored', { name: basename(wanted) }));
+    // The bar must show the restored text as an unsaved change: the file still holds the old one.
+    syncBar();
   }
 
   /**
@@ -818,6 +996,7 @@ function launch(ctx: AppContext): void {
   window.addEventListener('beforeunload', onBeforeUnload);
   win.onClose(() => {
     closed = true;
+    if (autosaveTimer !== null) { clearInterval(autosaveTimer); autosaveTimer = null; }
     closePopovers();
     narrowObserver.disconnect();
     editor?.dispose();
@@ -839,6 +1018,9 @@ function launch(ctx: AppContext): void {
     })();
   });
 
+  // Writer's autosave: awake while the window is, writing only when the tested rule says so. It
+  // runs even on the start screen, because a document opened from there must be covered too.
+  autosaveTimer = setInterval(autosaveTick, AUTOSAVE_TICK_MS);
   if (!filePath) { void goStart(); return; }
   void open();
 }
