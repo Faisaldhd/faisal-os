@@ -3,17 +3,17 @@ import { manifest } from './manifest';
 import { MANIFEST_OPENS, OPEN_EXTENSIONS } from './formats';
 
 /**
- * The store-only rule and the capability claims, pinned.
+ * The install default, the capability claims and the format table, pinned.
  *
- * `isInstalled` (src/kernel/apps.ts:131) counts an app whose `defaultInstalled` is false only
- * after its id is in the owner's `added` list — that is what makes this app load from the
- * Store instead of shipping pre-installed. Flipping either flag below would silently
- * pre-install the editor, which is the one thing this app must not do.
+ * The owner's decision (2026-09-25) is that the four suite apps ship installed, so this
+ * manifest keeps `defaultInstalled: true`: `isInstalled` (src/kernel/apps.ts) then reads
+ * "installed unless its id is in the owner's `removed` list". `core: false` stays, so the
+ * editor can still be removed from the Store — and that removal is remembered.
  */
-describe('photo manifest — store-only, home-only, honest about formats', () => {
-  it('is not core and not installed by default, so the owner installs it from the Store', () => {
+describe('photo manifest — installed by default, home-only, honest about formats', () => {
+  it('is installed by default and still removable (not core)', () => {
     expect(manifest.core).toBe(false);
-    expect(manifest.defaultInstalled).toBe(false);
+    expect(manifest.defaultInstalled).toBe(true);
     expect(manifest.id).toBe('org.faisal.Photo');
   });
 

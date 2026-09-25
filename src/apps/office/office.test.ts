@@ -129,10 +129,10 @@ describe('the office manifest', () => {
     expect(() => validateManifest(manifest)).not.toThrow();
   });
 
-  it('is store-only: not core, not installed by default', () => {
+  it('is installed by default but still removable (not core)', () => {
     expect(manifest.id).toBe('org.faisal.Office');
     expect(manifest.core).toBe(false);
-    expect(manifest.defaultInstalled).toBe(false);
+    expect(manifest.defaultInstalled).toBe(true);
   });
 
   it('asks for fs:home and nothing else', () => {

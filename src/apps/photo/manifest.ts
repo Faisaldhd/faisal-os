@@ -6,12 +6,10 @@ import { MANIFEST_OPENS } from './formats';
  * Static app metadata: kept apart from the app code so the desktop can list the app
  * without loading (or downloading) it.
  *
- * This is a STORE-ONLY app. `defaultInstalled: false` and `core: false` are what make
- * that true: `isInstalled` in src/kernel/apps.ts:131 only counts an app whose
- * `defaultInstalled` is false once its id is in the owner's `added` list — i.e. after he
- * presses "Install" in the Store. It is therefore absent from the dock and the launcher
- * until then, and the Store shows it as available rather than pre-installed. Do not flip
- * either flag: a pre-installed editor would contradict the "install it yourself" rule.
+ * Installed by default (the owner's decision, 2026-09-25) with `core: false`: the editor is
+ * on the desktop from the first run, so a double-clicked image opens here and not in the
+ * read-only Image Viewer — and the owner can still remove it from the Store, which is
+ * remembered in the `removed` list (`isInstalled`, src/kernel/apps.ts).
  *
  * `fs:home` only. No network, no settings, no notifications: every byte this app reads
  * and writes stays inside /home/user.
@@ -21,8 +19,8 @@ import { MANIFEST_OPENS } from './formats';
  * really decodes. Without it the OS would never offer this editor for an image: the kernel
  * picks the first INSTALLED app that declares the extension (src/kernel/apps.ts:192).
  *
- * `defaultInstalled: false` is deliberate: that extension list only takes effect once the
- * owner installs the app from the Store, which is the intended flow.
+ * Being installed by default is what makes that extension list take effect on the first run,
+ * which is the intended flow since the owner's decision: double-click an image, get the editor.
  */
 export const manifest: AppManifest = {
   id: 'org.faisal.Photo',
@@ -39,5 +37,5 @@ export const manifest: AppManifest = {
   releasedAt: '2026-09-24',
   singleInstance: false,
   core: false,
-  defaultInstalled: false,
+  defaultInstalled: true,
 };
