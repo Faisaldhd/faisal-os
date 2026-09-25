@@ -207,8 +207,66 @@ export function displayText(raw: string, pattern: string, locale: 'ar' | 'en' = 
   }
 }
 
-/* ──────────────────────── conditional formatting ──────────────────────── */
+/**
+ * The view-level state after a row or column was inserted or deleted (إزاحة فهارس العرض).
+ *
+ * Everything this file holds is keyed by a position in the SHEET: the number format the owner chose
+ * (`row:col`), the AutoFilter and the sort keys (column indices), and a chart's range. The model
+ * moves its own copies of the data and of the file's formatting when the structure changes; this
+ * moves the copies the SCREEN is drawn from, with the same rule, so a format cannot end up on a row
+ * the owner never formatted — a display that contradicts the data is worse than no format at all.
+ *
+ * The rule is the one `shiftFormula` uses on a reference: what is at or below the change point moves
+ * with the data, what is above stays, a deleted line takes its own entries with it, and a range
+ * whose whole body was deleted goes too.
+ */
+export function shiftViewFor(view: SheetView, axis: 'row' | 'col', at: number, delta: 1 | -1): SheetView {
+  const move = (index: number): number | null => {
+    if (delta > 0) return index >= at ? index + delta : index;
+    if (index < at) return index;
+    if (index > at) return index - 1;
+    return null;                                  // the deleted line itself
+  };
+  const formats: Record<string, string> = {};
+  for (const [key, pattern] of Object.entries(view.formats)) {
+    const [rowText, colText] = key.split(':');
+    const row = Number(rowText);
+    const col = Number(colText);
+    if (!Number.isInteger(row) || !Number.isInteger(col)) continue;
+    const nextRow = axis === 'row' ? move(row) : row;
+    const nextCol = axis === 'col' ? move(col) : col;
+    if (nextRow !== null && nextCol !== null) formats[`${nextRow}:${nextCol}`] = pattern;
+  }
+  const charts = view.charts.flatMap((chart) => {
+    const rng = chart.range;
+    const lo = axis === 'row' ? Math.min(rng.r0, rng.r1) : Math.min(rng.c0, rng.c1);
+    const hi = axis === 'row' ? Math.max(rng.r0, rng.r1) : Math.max(rng.c0, rng.c1);
+    if (delta < 0 && lo >= at && hi <= at) return [];      // its whole range was deleted
+    const nextLo = move(lo) ?? at;
+    const nextHi = Math.max(nextLo, move(hi) ?? Math.max(0, at - 1));
+    const range = axis === 'row' ? { ...rng, r0: nextLo, r1: nextHi } : { ...rng, c0: nextLo, c1: nextHi };
+    return [{ ...chart, range }];
+  });
+  // The AutoFilter and the sort levels are keyed by COLUMN, so a row change never moves them.
+  const lineKeys = <T>(map: Readonly<Record<number, T>>): Record<number, T> => {
+    if (axis !== 'col') return { ...map };
+    const out: Record<number, T> = {};
+    for (const [key, value] of Object.entries(map)) {
+      const next = move(Number(key));
+      if (next !== null) out[next] = value;
+    }
+    return out;
+  };
+  return {
+    ...view,
+    formats,
+    filters: lineKeys(view.filters),
+    sort: axis === 'col' ? view.sort.map((key) => ({ ...key, col: move(key.col) ?? key.col })) : view.sort,
+    charts,
+  };
+}
 
+/* ──────────────────────── conditional formatting ──────────────────────── */
 /** Per-cell styles from the rules, indexed like `rows`. */
 export function conditionalStyles(
   rows: ReadonlyArray<ReadonlyArray<CellInput>>,
