@@ -459,7 +459,10 @@ export function createSlideEditor(ctx: EditorContext): Editor {
       if (!editing) return;
       const to = ev.relatedTarget as HTMLElement | null;
       // Focus went to a formatting control: keep the overlay and take the caret back after it.
-      if (pickerGesture || to?.closest('.fo-ribbon, .fo-phonebar, .fo-pop, .fo-sheet')) {
+      // Read from the element that actually took focus, never from a flag left over from the
+      // previous gesture: a stale flag kept the overlay "editing" for ever, so `finishEdit`
+      // never redrew the stage and a new colour was never painted.
+      if (to?.closest('.fo-ribbon, .fo-phonebar, .fo-pop, .fo-sheet')) {
         caret = [area.selectionStart, area.selectionEnd];
         return;
       }
