@@ -2782,7 +2782,7 @@ export function launch(ctx: AppContext): void {
         projectPath = null;
         sourcePath = path;
         installDoc(docFromBuffer(decoded.buffer, L('layerBackground')), name, L('hOpen'));
-        if (decoded.note === 'scaled') say(L('exportTooBig'));
+        if (decoded.note === 'scaled') say(L('openScaled'));
       }
       rememberRecent(path);
       setMode(targetMode ?? (mode === 'gallery' ? 'pro' : mode));
@@ -3239,8 +3239,11 @@ export function launch(ctx: AppContext): void {
     caps.append(el('li', undefined, L('capAnimFirst')));
     caps.append(el('li', undefined, L('capProbe')));
     const limits = el('ul', 'fp-list');
+    // The quota line quotes the limits the file system is enforcing RIGHT NOW (`vfs.quota`
+    // follows the platform tier), so the panel can never drift back to a hard-coded number.
+    const quotaVars = { file: formatSize(vfs.quota.file, getLocale()), total: formatSize(vfs.quota.total, getLocale()) };
     for (const key of ['limitLayers', 'limitCmyk', 'limitRaw', 'limitAnim', 'limitVector', 'limitText', 'limitBrush', 'limitQuota', 'limitColors', 'limitNoOriginal', 'limitClosing']) {
-      limits.append(el('li', undefined, L(key)));
+      limits.append(el('li', undefined, key === 'limitQuota' ? L(key, quotaVars) : L(key)));
     }
     capsDlg.body.append(caps, el('h3', 'fp-group-title', L('limitsTitle')), limits);
     const close = button(L('close'), 'primary');

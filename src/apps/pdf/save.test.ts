@@ -5,7 +5,7 @@ import { scopeVFS } from '../../kernel/apps';
 import { VFSError, type SystemAPI, type VFS } from '../../kernel/types';
 import { createVFS } from '../../vfs';
 import { backupPathFor, planSave } from './ops';
-import { previewSave, saveBytes, writePlan } from './save';
+import { previewSave, saveBytes, writeFailureReason, writePlan } from './save';
 
 /**
  * The save path runs against the REAL VFS (IndexedDB through fake-indexeddb), not a mock:
@@ -122,5 +122,48 @@ describe('saving through the VFS', () => {
     // Nothing in the module ever feeds a backup path back in, so a `.bak.bak` cannot appear;
     // the policy test above reads the directory after two overwrites to prove it.
     expect(backupPathFor('/home/user/a.pdf')).not.toContain('.bak.bak');
+  });
+
+  it('carries the reason of a refused write, so the window can name the limit', async () => {
+    // A small quota of its own: the mapping is what is under test, and the real tier would mean
+    // allocating 100 MB to reach the same branch.
+    const small = await createVFS(createBus(), { quota: { file: 1000, total: 1500 } });
+    const tiny: SystemAPI = { vfs: small } as unknown as SystemAPI;
+    const refused = await saveBytes(tiny, { sourcePath: '/home/user/big.pdf', suffix: '-copy', overwrite: false }, new Uint8Array(1001));
+    expect(refused.ok).toBe(false);
+    expect(refused.ok ? null : refused.reason).toBe('file-too-big');
+    expect(await small.exists('/home/user/big-copy.pdf')).toBe(false);
+  });
+
+  it('names a full store when the bytes themselves would fit', async () => {
+    const small = await createVFS(createBus(), { quota: { file: 1000, total: 4000 } });
+    const tiny: SystemAPI = { vfs: small } as unknown as SystemAPI;
+    // Fill the tree until it really refuses, whatever the seeded files already weigh.
+    let filled = 0;
+    for (; filled < 12; filled++) {
+      try { await small.writeFile(`/home/user/fill-${filled}.bin`, new Uint8Array(1000)); } catch { break; }
+    }
+    expect(filled).toBeGreaterThan(0);
+    // 600 bytes is well under the 1000-byte per-file limit, so it is the TOTAL that refuses.
+    const refused = await saveBytes(tiny, { sourcePath: '/home/user/small.pdf', suffix: '-copy', overwrite: false }, new Uint8Array(600));
+    expect(refused.ok).toBe(false);
+    expect(refused.ok ? null : refused.reason).toBe('storage-full');
+    expect(await small.exists('/home/user/small-copy.pdf')).toBe(false);
+  });
+});
+
+describe('writeFailureReason', () => {
+  const quota = { file: 100 };
+
+  it('separates a per-file refusal from a full store, on the boundary', () => {
+    expect(writeFailureReason(new VFSError('EINVAL', '/home/user/a.pdf', 'quota'), 101, quota)).toBe('file-too-big');
+    expect(writeFailureReason(new VFSError('EINVAL', '/home/user/a.pdf', 'quota'), 100, quota)).toBe('storage-full');
+    expect(writeFailureReason(new VFSError('EINVAL', '/home/user/a.pdf', 'quota'), 1, quota)).toBe('storage-full');
+  });
+
+  it('reports anything else as a plain failure instead of guessing', () => {
+    expect(writeFailureReason(new Error('boom'), 10, quota)).toBe('write-failed');
+    expect(writeFailureReason(new VFSError('EACCES', '/etc/x'), 10, quota)).toBe('write-failed');
+    expect(writeFailureReason(undefined, 10, quota)).toBe('write-failed');
   });
 });

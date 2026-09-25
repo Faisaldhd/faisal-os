@@ -16,7 +16,22 @@ import { planSave, type SaveErrorCode, type SavePlan, type SavePlanResult, type 
 
 export type SaveOutcome =
   | { ok: true; path: string; backup: string | null; isCopy: boolean }
-  | { ok: false; code: SaveErrorCode };
+  | { ok: false; code: SaveErrorCode; reason?: WriteFailureReason };
+
+/**
+ * Why a write was refused. The kernel refuses BOTH quota cases with the same `EINVAL` code and
+ * the message "quota" — one file above the per-file limit, or a store that is full — so the reason
+ * comes from comparing the bytes with the limit the VFS reports right now: that is the difference
+ * between "make it smaller" and "delete something", and the window can only say it if it is told.
+ */
+export type WriteFailureReason = 'file-too-big' | 'storage-full' | 'write-failed';
+
+export function writeFailureReason(err: unknown, bytes: number, quota: { file: number }): WriteFailureReason {
+  const code = (err as { code?: string } | null)?.code;
+  const message = err instanceof Error ? err.message : '';
+  if (code === 'EINVAL' || message === 'quota') return bytes > quota.file ? 'file-too-big' : 'storage-full';
+  return 'write-failed';
+}
 
 /** The path a save would use, so the window can show it before writing anything. */
 export async function previewSave(sys: SystemAPI, request: SaveRequest): Promise<SavePlanResult> {
@@ -34,8 +49,14 @@ export async function writePlan(sys: SystemAPI, plan: SavePlan, bytes: Uint8Arra
       await sys.vfs.writeFile(plan.backup, original);
     }
     await sys.vfs.writeFile(plan.target, bytes);
-  } catch {
-    return { ok: false, code: 'writeFailed' };
+  } catch (err) {
+    // The reason travels with the failure when it names a limit: the window then says which one
+    // was hit instead of "could not save". A plain failure keeps the exact failure shape the
+    // rest of the app (and its tests) already knows.
+    const reason = writeFailureReason(err, bytes.length, sys.vfs.quota);
+    return reason === 'write-failed'
+      ? { ok: false, code: 'writeFailed' }
+      : { ok: false, code: 'writeFailed', reason };
   }
   return { ok: true, path: plan.target, backup: plan.backup, isCopy: plan.isCopy };
 }

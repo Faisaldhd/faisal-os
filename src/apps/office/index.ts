@@ -32,7 +32,8 @@ import {
 import { computeSheets, parseFormula } from './formula/index';
 import { loadOfficeFile, serializeModel, type LoadRefusal } from './file';
 import { patchPackage, packageKind, snapshotModel, type PatchResult } from './patch';
-import { backupPathFor, saveWithBackup, withinHome } from './save';
+import { backupPathFor, saveFailure, saveWithBackup, withinHome } from './save';
+import { formatBytes } from '../files/format';
 import { defaultSaveFormat, saveFormatChoices, serializeAs, type SaveFormatId } from './save-as';
 import { newDeckPptx } from './pptx';
 import { deckTexts, readDeck } from './impress/deck';
@@ -201,8 +202,23 @@ function launch(ctx: AppContext): void {
 
   function setStatus(text: string): void { statusMessage = text; statusEl.textContent = text; }
   function setNote(text: string): void { noteEl.textContent = text; noteEl.hidden = !text; }
-  function errorMessage(err: unknown): string {
-    if (err instanceof VFSError) return `${err.code}: ${err.path}`;
+  /**
+   * What to tell the owner about a failed write. A refusal by the storage limits becomes a
+   * translated sentence naming the limit that was hit — never the raw `EINVAL: /path` the kernel
+   * throws, which says nothing to anyone who does not read the source.
+   */
+  function errorMessage(err: unknown, bytes?: number): string {
+    if (err instanceof VFSError) {
+      if (typeof bytes === 'number') {
+        const why = saveFailure(err, bytes, vfs.quota);
+        if (why === 'file-too-big') return t('office.saveTooBig', { max: formatBytes(vfs.quota.file, getLocale()) });
+        if (why === 'storage-full') return t('office.storeFull', { total: formatBytes(vfs.quota.total, getLocale()) });
+        if (why === 'outside-home') return t('office.outsideHome');
+      } else if (err.code === 'EACCES') {
+        return t('office.outsideHome');
+      }
+      return `${err.code}: ${err.path}`;
+    }
     return err instanceof Error ? err.message : String(err);
   }
   function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
@@ -577,16 +593,18 @@ function launch(ctx: AppContext): void {
 
   async function createNew(kind: NewKind): Promise<void> {
     const base = kind === 'docx' ? t('office.untitledDoc') : kind === 'xlsx' ? t('office.untitledSheet') : t('office.untitledDeck');
+    // Built outside the try so a refused write can name the size it tried to store.
+    const fresh = newBytes(kind);
     try {
       const dir = '/home/user/Documents';
       if (!(await vfs.exists(dir))) await vfs.mkdir(dir, { recursive: true });
       const target = await uniquePath(dir, base, kind);
-      await vfs.writeFile(target, newBytes(kind));
+      await vfs.writeFile(target, fresh);
       filePath = target;
       await open();
       setStatus(t('office.created', { name: basename(target) }));
     } catch (err) {
-      setStatus(t('office.saveFailed', { message: errorMessage(err) }));
+      setStatus(t('office.saveFailed', { message: errorMessage(err, fresh.length) }));
     }
   }
 
@@ -597,15 +615,16 @@ function launch(ctx: AppContext): void {
     input.addEventListener('change', async () => {
       const file = input.files?.[0];
       if (!file) return;
+      const incoming = new Uint8Array(await file.arrayBuffer());
       try {
         const dir = '/home/user/Documents';
         if (!(await vfs.exists(dir))) await vfs.mkdir(dir, { recursive: true });
         const dot = file.name.lastIndexOf('.');
         const target = await uniquePath(dir, dot > 0 ? file.name.slice(0, dot) : file.name, dot > 0 ? file.name.slice(dot + 1) : 'txt');
-        await vfs.writeFile(target, new Uint8Array(await file.arrayBuffer()));
+        await vfs.writeFile(target, incoming);
         await openPath(target);
       } catch (err) {
-        setStatus(t('office.saveFailed', { message: errorMessage(err) }));
+        setStatus(t('office.saveFailed', { message: errorMessage(err, incoming.length) }));
       }
     });
     input.click();
@@ -641,11 +660,14 @@ function launch(ctx: AppContext): void {
     busy = true;
     syncBar();
     setStatus(t('office.saving'));
+    // Known before the try so a refused write can name the size it tried to store.
+    let attempt = 0;
     try {
       let data: Uint8Array;
       if (patched) data = patched.bytes;
       else if (model.kind === 'docx' && model.blocks) data = (await rebuildDocxRich(model)) ?? serializeModel(model);
       else data = serializeModel(model);
+      attempt = data.length;
       const result = await saveWithBackup(vfs, filePath, data);
       const written = await vfs.readFile(filePath);
       if (!sameBytes(written, data)) {
@@ -674,7 +696,7 @@ function launch(ctx: AppContext): void {
       editor?.render();
       setStatus(result.backup ? t('office.savedWithBackup', { name: basename(result.backup) }) : t('office.saved'));
     } catch (err) {
-      setStatus(t('office.saveFailed', { message: errorMessage(err) }));
+      setStatus(t('office.saveFailed', { message: errorMessage(err, attempt) }));
     } finally {
       busy = false;
       syncBar();

@@ -1058,6 +1058,16 @@ defineStrings('pdf', {
 
 /* «حفظ باسم» — the format label for the shared shell dialog (src/shell/save-as.ts). */
 defineStrings('pdf', {
-  ar: { formatPdf: 'مستند PDF (.pdf)' },
-  en: { formatPdf: 'PDF document (.pdf)' },
+  ar: {
+    formatPdf: 'مستند PDF (.pdf)',
+    // A refused write names the limit it hit, and says nothing was written.
+    saveTooBig: 'الملف أكبر من الحد المسموح للملف الواحد ({max})، فما كُتب شيء. جرّب تقليل الصور أو تقسيم المستند.',
+    storeFull: 'مساحة نظام الملفات ممتلئة (الحد الكلي {total})، فما كُتب شيء. احذف ملفات غير مستخدمة ثم أعد المحاولة.',
+  },
+  en: {
+    formatPdf: 'PDF document (.pdf)',
+    // A refused write names the limit it hit, and says nothing was written.
+    saveTooBig: 'The file is larger than the per-file limit ({max}), so nothing was written. Try smaller images or split the document.',
+    storeFull: 'The file system is full (total limit {total}), so nothing was written. Delete unused files and try again.',
+  },
 });

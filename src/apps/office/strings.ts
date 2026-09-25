@@ -596,6 +596,10 @@ defineStrings('office', {
     formatCsv: 'قيم مفصولة بفواصل (.csv)',
     formatMd: 'Markdown (.md)',
     formatTxt: 'نص عادي (.txt)',
+    // Refusals by the storage limits, in plain words: what was hit, and that nothing was written.
+    saveTooBig: 'الملف أكبر من الحد المسموح للملف الواحد ({max})، فما كُتب شيء. جرّب تقسيمه أو تصديره بصيغة أخف.',
+    storeFull: 'مساحة نظام الملفات ممتلئة (الحد الكلي {total})، فما كُتب شيء. احذف ملفات غير مستخدمة ثم أعد المحاولة.',
+    outsideHome: 'الحفظ داخل مجلد المستخدم فقط، فما كُتب شيء.',
   },
   en: {
     saveAs: 'Save as',
@@ -606,5 +610,9 @@ defineStrings('office', {
     formatCsv: 'Comma-separated values (.csv)',
     formatMd: 'Markdown (.md)',
     formatTxt: 'Plain text (.txt)',
+    // Refusals by the storage limits, in plain words: what was hit, and that nothing was written.
+    saveTooBig: 'The file is larger than the per-file limit ({max}), so nothing was written. Try splitting it or exporting a lighter format.',
+    storeFull: 'The file system is full (total limit {total}), so nothing was written. Delete unused files and try again.',
+    outsideHome: 'Saving is only allowed inside your home folder, so nothing was written.',
   },
 });
