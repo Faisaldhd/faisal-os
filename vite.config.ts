@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { ffmpegCore } from './build/ffmpeg-core.ts';
 import { pwa } from './build/pwa.ts';
 
 export default defineConfig({
@@ -13,6 +14,8 @@ export default defineConfig({
       ignored: ['**/.*.tmpdir/**', '**/*.tmp', '**/.*.swp', '**/.npm-cache/**', '**/.tmp-uicheck/**'],
     },
   },
-  plugins: [pwa()],
+  // ffmpeg.wasm's worker is found with `new URL('./worker.js', import.meta.url)`; pre-bundling would break that path.
+  optimizeDeps: { exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'] },
+  plugins: [ffmpegCore(), pwa()],
   test: { environment: 'jsdom' },
 } as any);

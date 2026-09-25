@@ -81,6 +81,7 @@ export const ICONS = {
   keyboard: I(['M3 7h18v11H3z', 'M7 11h.01M11 11h.01M15 11h.01M19 11h.01M8 14.5h8']),
   back: I(['M15 5l-7 7 7 7'], undefined, true),
   square: I(['M5 5h14v14H5z']),
+  convert: I(['M4 12a8 8 0 0 1 13.7-5.6L20 8', 'M20 4v4h-4', 'M20 12a8 8 0 0 1-13.7 5.6L4 16', 'M4 20v-4h4']),
   spark: I(['M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z']),
 } satisfies Record<string, IconSpec>;
 

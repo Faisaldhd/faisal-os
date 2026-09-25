@@ -81,6 +81,7 @@ import { isTypingTarget, matchShortcut, shuttle, type ShortcutAction } from './s
 import { TimelineView } from './timeline-view';
 import { button, el, formatClock, iconButton, openModal, promptName, s, segmented, setIcon } from './ui';
 import { dialogsFor } from './app-dialogs';
+import { CONVERT_LIMIT } from './convert/plan';
 import type { StudioEngine, EngineMedia } from './engine-port';
 import { ExportCancelled } from './engine-port';
 import { CanvasStudioEngine, exportSettings, hasWebCodecs, planMp4, type Mp4Plan } from './engine';
@@ -436,6 +437,7 @@ function launch(ctx: AppContext): void {
       if (sheet) closeSheet();
     },
     relink: (item) => void relink(item),
+    convert: (item) => openConvert(item),
     remove: (item) => library.remove(item.id),
     inUse: (id) => usedMediaIds(project).has(id),
   });
@@ -509,6 +511,7 @@ function launch(ctx: AppContext): void {
     saveSelection: (item, range) => void saveSelection(item, range),
     toggleFullscreen: (target) => toggleFullscreen(target),
     status,
+    convert: (item) => openConvert(item),
     narrow: () => narrow,
     openSheet,
     closeSheet,
@@ -1305,7 +1308,10 @@ function launch(ctx: AppContext): void {
       } catch { return false; }
     };
     let kind: 'video' | 'audio' = hasPicture(target.project) ? 'video' : 'audio';
-    const webCodecs = hasWebCodecs();
+    // Same rule as the recorder: offer the WebCodecs MP4 only where this browser can also play H.264 back.
+    const webCodecs = hasWebCodecs() && (() => {
+      try { return document.createElement('video').canPlayType('video/mp4; codecs="avc1.42E01E"') !== ''; } catch { return false; }
+    })();
     let container: 'mp4' | 'webm' = webCodecs || recorderOk('video/mp4') ? 'mp4' : 'webm';
     // The real MP4 path (WebCodecs + mp4-muxer) is confirmed per size/rate with isConfigSupported.
     let mp4Plan: Mp4Plan | null = null;
@@ -1545,6 +1551,92 @@ function launch(ctx: AppContext): void {
       go.hidden = true;
       status(s('exportSavedShort', { path }));
     };
+  }
+
+  /**
+   * "Convert" for a video whose codec the browser refuses: ffmpeg.wasm (loaded
+   * only now) transcodes it to H.264 MP4 (VP9 WebM without libx264); the result
+   * is saved next to the original and added to the media pool.
+   */
+  function openConvert(item: MediaItem): void {
+    if (exportRunning) return;
+    const modal = openModal(root, s('convertTitle'));
+    const intro = el('p', 'fvs-note', s('convertIntro', { name: item.name }));
+    intro.dir = 'auto';
+    const progressWrap = el('div', 'fvs-progress');
+    progressWrap.hidden = true;
+    const bar = el('progress', 'fvs-progress-bar');
+    bar.max = 1000;
+    bar.value = 0;
+    const text = el('p', 'fvs-progress-text');
+    text.setAttribute('role', 'status');
+    text.setAttribute('aria-live', 'polite');
+    progressWrap.append(bar, text);
+    modal.body.append(intro, progressWrap);
+    const cancel = button(s('cancel'), 'fvs-btn');
+    const go = button(s('convert'), 'fvs-btn is-primary', 'convert');
+    modal.actions.append(cancel, go);
+    let running: AbortController | null = null;
+    cancel.addEventListener('click', () => {
+      if (running) running.abort();
+      else modal.close();
+    });
+    modal.onClose(() => running?.abort());
+    if (item.size > CONVERT_LIMIT) {
+      go.disabled = true;
+      text.textContent = s('convertTooBig', { max: formatBytes(CONVERT_LIMIT, sys.locale()) });
+      progressWrap.hidden = false;
+    }
+    go.addEventListener('click', () => void (async () => {
+      const controller = new AbortController();
+      running = controller;
+      exportRunning = controller;
+      go.disabled = true;
+      progressWrap.hidden = false;
+      bar.value = 0;
+      text.textContent = s('convertDownloading', { percent: 0 });
+      try {
+        const source = await (await fetch(item.url)).blob();
+        const { convertVideo } = await import('./convert/ffmpeg');
+        const out = await convertVideo(source, item.name, controller.signal, (p) => {
+          const pct = Math.round(p.fraction * 100);
+          // The one-time download is the first fifth of the bar, the conversion the rest.
+          bar.value = Math.round((p.phase === 'download' ? p.fraction * 0.2 : 0.2 + p.fraction * 0.8) * 1000);
+          text.textContent = p.phase === 'download' ? s('convertDownloading', { percent: pct }) : s('convertRunning', { percent: pct });
+        });
+        if (controller.signal.aborted) throw Object.assign(new Error('cancelled'), { name: 'ConvertCancelled' });
+        text.textContent = s('exportSaving');
+        const dir = item.path && item.path.startsWith(HOME) ? dirname(item.path) : VIDEOS_DIR;
+        let added: MediaItem;
+        if (out.bytes.length > sys.vfs.quota.file) {
+          // Too big for the file system: keep it in this session's pool only.
+          added = await library.addFile(new File([out.bytes as BlobPart], out.name, { type: out.mime }), null);
+          text.textContent = s('convertNotSaved', { name: out.name, max: formatBytes(sys.vfs.quota.file, sys.locale()) });
+        } else {
+          const path = await writeChecked(dir, out.name, out.bytes);
+          added = await library.addPath(path);
+          text.textContent = s('convertDone', { path });
+        }
+        text.dir = 'auto';
+        bar.value = 1000;
+        status(s('convertDoneShort', { name: out.name }));
+        if (mode === 'player' && added.status === 'ready') player.add([added.id], true);
+        go.hidden = true;
+      } catch (err) {
+        if (controller.signal.aborted || (err instanceof Error && err.name === 'ConvertCancelled')) {
+          text.textContent = s('convertCancelled');
+        } else {
+          text.textContent = s('convertFailed', { reason: err instanceof Error ? err.message : '' });
+        }
+        bar.value = 0;
+        go.disabled = false;
+      } finally {
+        running = null;
+        exportRunning = null;
+        const label = cancel.querySelector('.fvs-btn-label');
+        if (label) label.textContent = s('close');
+      }
+    })());
   }
 
   function saveSelection(item: MediaItem, range: { start: number; end: number }): void {

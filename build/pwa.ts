@@ -3,8 +3,11 @@ import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { Plugin } from 'vite';
 
-/** Too big to download on first visit; cached when the Linux VM is first started. */
-const RUNTIME_ONLY = [/^v86\//, /\.wasm$/, /^assets\/libv86-/, /\.map$/, /\/README\.md$/, /^sw\.js$/];
+/**
+ * Too big to download on first visit; cached when first used (the Linux VM, and
+ * ffmpeg.wasm for the Video Studio's "Convert").
+ */
+const RUNTIME_ONLY = [/^v86\//, /^ffmpeg\//, /\.wasm$/, /^assets\/libv86-/, /\.map$/, /\/README\.md$/, /^sw\.js$/];
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
