@@ -14,14 +14,19 @@ import type { Editor, EditorContext, StatusInfo } from '../editor';
 import { button, el, NARROW_BREAKPOINT, observeSize } from '../ui/dom';
 import { icon, type IconName } from '../ui/icons';
 import { menuList, openPopover, type MenuItem } from '../ui/popover';
-import type { RibbonTab } from '../ui/ribbon';
+import { PALETTE, type RibbonTab } from '../ui/ribbon';
 import { EMU_PER_PT, type Anim, type Deck, type DeckShape, type Transition } from './deck';
 import {
   addShape, addSlide, deckEdit, deleteShape, deleteSlide, duplicateSlide, moveSlide, newPicture, newShape, setAnim, setBounds,
-  setShapeText, setTransition, SLIDE_LAYOUTS, type NewShapeKind, type SlideLayoutKind,
+  setParaStyle, setShapeText, setTransition, SLIDE_LAYOUTS, type NewShapeKind, type SlideLayoutKind,
 } from './ops';
+import { paraStyleOf, type ParaStyle, type ParaStylePatch } from './parafmt';
 import { drawSlide, fitSlide, fitWidth } from './render';
 import { startShow } from './show';
+import './strings';
+
+/** The sizes the size control offers, in points: the ones a slide deck actually uses. */
+const FONT_SIZES: readonly number[] = [12, 14, 16, 18, 20, 24, 28, 32, 36, 44, 54, 60];
 
 const LAYOUT_LABEL: Record<SlideLayoutKind, string> = {
   title: 'office.impLayoutTitle', content: 'office.impLayoutContent', two: 'office.impLayoutTwo', blank: 'office.impLayoutBlank',
@@ -43,6 +48,8 @@ export function createSlideEditor(ctx: EditorContext): Editor {
   let current = 0;
   let selected: number | null = null;
   let editing = false;
+  /** Repaints the open text overlay after a formatting command (null while nothing is edited). */
+  let repaintEdit: (() => void) | null = null;
   let scale = 1;
   let stageWidth = 0;
   let railDragging = false;
@@ -346,6 +353,43 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     window.addEventListener('pointercancel', onUp);
   }
 
+  /**
+   * The look of the selected text box — the ribbon's pressed states read this, and `null` means
+   * "nothing here can take text", which is what greys the whole Text group out.
+   */
+  const style = (): ParaStyle | null => {
+    const s = shapeOf(selected);
+    return s && !s.locked && (s.kind === 'text' || s.kind === 'shape') ? paraStyleOf(s.paras) : null;
+  };
+  const canText = (): boolean => ctx.editable() && !!style();
+
+  /**
+   * One formatting command, applied to the whole text box (what PowerPoint does with nothing
+   * selected inside it) as a single undoable edit. While the text overlay is open it is repainted
+   * from the model instead of the stage, so the caret and the half-typed line stay where they are.
+   */
+  function formatText(patch: ParaStylePatch): void {
+    const d = deck();
+    if (!d || selected === null || !canText()) { ctx.setStatus(t('impress.selectTextBox')); return; }
+    apply(setParaStyle(d, current, selected, patch));
+    if (editing) repaintEdit?.();
+    else drawStage();
+    refreshThumb(current);
+    ctx.refresh();
+  }
+
+  /** The overlay takes the look of the paragraph it edits, so what is typed looks like the slide. */
+  function paintEditArea(area: HTMLTextAreaElement, s: DeckShape): void {
+    const first = s.paras[0];
+    area.style.fontSize = `${(first?.size ?? 18) * s.fontScale}px`;
+    area.style.fontWeight = first?.bold ? '700' : '';
+    area.style.fontStyle = first?.italic ? 'italic' : '';
+    area.style.textDecoration = first?.underline ? 'underline' : '';
+    area.style.color = first?.color ?? s.ink ?? deck()?.scheme.dk1 ?? '#000';
+    // `start` follows the overlay's own `dir="auto"`, which is what keeps Arabic typing RTL.
+    area.style.textAlign = first?.align === 'ctr' ? 'center' : first?.align === 'r' ? 'right' : first?.align === 'l' ? 'left' : 'start';
+  }
+
   function beginEdit(): void {
     const s = shapeOf(selected);
     if (!s || s.locked || !ctx.editable() || (s.kind !== 'text' && s.kind !== 'shape') || !canvas) return;
@@ -353,20 +397,18 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     if (!node) return;
     editing = true;
     node.classList.add('is-editing');
-    const first = s.paras[0];
     const area = el('textarea', 'fo-sh-edit');
     area.value = s.paras.map((p) => p.text).join('\n');
     area.dir = 'auto';
     area.setAttribute('aria-label', t('office.impEditText'));
+    area.title = t('impress.editHint');
     area.style.left = `${pt(s.x)}px`;
     area.style.top = `${pt(s.y)}px`;
     area.style.width = `${Math.max(pt(s.w), 40)}px`;
     area.style.height = `${Math.max(pt(s.h), 24)}px`;
-    area.style.fontSize = `${(first?.size ?? 18) * s.fontScale}px`;
-    if (first?.bold) area.style.fontWeight = '700';
-    area.style.color = first?.color ?? s.ink ?? deck()?.scheme.dk1 ?? '#000';
-    if (first?.align) area.style.textAlign = first.align === 'ctr' ? 'center' : first.align === 'r' ? 'right' : 'left';
+    paintEditArea(area, s);
     const uid = s.uid;
+    repaintEdit = () => { const now = shapeOf(uid); if (now) paintEditArea(area, now); };
     area.addEventListener('input', () => {
       const d = deck();
       if (d) apply(setShapeText(d, current, uid, area.value), `slidetext:${uid}`);
@@ -379,6 +421,7 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     area.addEventListener('blur', () => {
       if (!editing) return;
       editing = false;
+      repaintEdit = null;
       drawStage();
       refreshThumb(current);
       ctx.refresh();
@@ -476,6 +519,21 @@ export function createSlideEditor(ctx: EditorContext): Editor {
             { type: 'menu', id: 'shapes', icon: 'shape', label: t('office.impShapes'), phone: true, enabled: can,
               items: () => SHAPES.map((s) => ({ label: t(s.label), icon: icon(s.icon), run: () => { const d = deck(); if (d) insert(newShape(d, s.kind)); } })) },
             { type: 'button', id: 'delShape', icon: 'trash', label: t('office.impDeleteObject'), enabled: () => can() && !!sel(), run: deleteSelected },
+          ] },
+          // Type into a text box (double-click) and shape what you typed; the whole box takes
+          // the command, and a command with nothing selected says so instead of doing nothing.
+          { label: t('impress.textGroup'), controls: [
+            { type: 'button', id: 'bold', icon: 'bold', label: t('impress.bold'), phone: true, enabled: canText, pressed: () => !!style()?.bold, run: () => formatText({ bold: !style()?.bold }) },
+            { type: 'button', id: 'italic', icon: 'italic', label: t('impress.italic'), enabled: canText, pressed: () => !!style()?.italic, run: () => formatText({ italic: !style()?.italic }) },
+            { type: 'button', id: 'underline', icon: 'underline', label: t('impress.underline'), enabled: canText, pressed: () => !!style()?.underline, run: () => formatText({ underline: !style()?.underline }) },
+            { type: 'select', id: 'fontSize', label: t('impress.fontSize'), cls: 'fo-fontsize', enabled: canText, width: 76,
+              options: () => FONT_SIZES.map((n) => ({ value: String(n), label: String(n) })),
+              value: () => String(style()?.size ?? ''), onChange: (v) => formatText({ size: Number(v) }) },
+            { type: 'color', id: 'fontColor', icon: 'textColor', label: t('impress.fontColor'), palette: PALETTE, noneLabel: t('impress.colorAuto'),
+              value: () => style()?.color ?? null, onPick: (hex) => formatText({ color: hex }) },
+            { type: 'button', id: 'alignRight', icon: 'alignRight', label: t('impress.alignRight'), enabled: canText, pressed: () => style()?.align === 'r', run: () => formatText({ align: 'r' }) },
+            { type: 'button', id: 'alignCenter', icon: 'alignCenter', label: t('impress.alignCenter'), enabled: canText, pressed: () => style()?.align === 'ctr', run: () => formatText({ align: 'ctr' }) },
+            { type: 'button', id: 'alignLeft', icon: 'alignLeft', label: t('impress.alignLeft'), enabled: canText, pressed: () => style()?.align === 'l', run: () => formatText({ align: 'l' }) },
           ] },
         ],
       },

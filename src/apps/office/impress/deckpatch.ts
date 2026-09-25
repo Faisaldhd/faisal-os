@@ -24,6 +24,7 @@ import {
   type Anim, type Deck, type DeckPara, type DeckShape, type DeckSlide,
 } from './deck';
 import { shapeXml, slideXml, timingXml, transitionXml } from './deckxml';
+import { sameParaStyle, styleParagraphXml } from './parafmt';
 
 const SLIDE_CT = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
 const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml' };
@@ -99,8 +100,17 @@ function rewriteParagraph(sub: string, text: string): string {
   return `${open}${pPr ? sub.slice(pPr.start, pPr.end) : ''}${runs}${end ? sub.slice(end.start, end.end) : ''}</${p.name}>`;
 }
 
-function sameText(a: readonly DeckPara[], b: readonly DeckPara[]): boolean {
-  return a.length === b.length && a.every((p, i) => p.text === b[i]?.text);
+/**
+ * True when the paragraphs say the same thing *and* look the same. Comparing the look too is
+ * what makes a formatting change reach the file: bold, italic, underline, size, colour and
+ * alignment are written into the paragraph that already exists instead of being dropped because
+ * its text did not move.
+ */
+function sameParas(a: readonly DeckPara[], b: readonly DeckPara[]): boolean {
+  return a.length === b.length && a.every((p, i) => {
+    const q = b[i];
+    return !!q && p.text === q.text && sameParaStyle(p, q);
+  });
 }
 
 function textEdits(xml: string, el: XmlElement, before: DeckShape, after: DeckShape): XmlEdit[] | null {
@@ -111,10 +121,16 @@ function textEdits(xml: string, el: XmlElement, before: DeckShape, after: DeckSh
   const out: string[] = [];
   after.paras.forEach((p, i) => {
     const old = ps[i];
-    if (old && before.paras[i]?.text === p.text) { out.push(xml.slice(old.start, old.end)); return; }
+    const sameText = !!old && before.paras[i]?.text === p.text;
+    if (old && sameText && before.paras[i] && sameParaStyle(before.paras[i], p)) {
+      out.push(xml.slice(old.start, old.end));
+      return;
+    }
     const template = old ?? ps[ps.length - 1];
     const sub = xml.slice(template.start, template.end);
-    out.push(rewriteParagraph(sub, p.text));
+    // New or changed text keeps the paragraph's own markup (bullets, fields, run language);
+    // the look is then applied to whatever came out, which is what carries a bare format change.
+    out.push(styleParagraphXml(sameText ? sub : rewriteParagraph(sub, p.text), p));
   });
   if (!out.length) return null;
   return [{ start: ps[0].start, end: ps[ps.length - 1].end, xml: out.join('') }];
@@ -173,7 +189,7 @@ function editSlide(ctx: Ctx, part: string, xml: string, rels: string, before: De
       if (!e) return null;
       edits.push(...e);
     }
-    if (!sameText(b.paras, c.paras)) {
+    if (!sameParas(b.paras, c.paras)) {
       const e = textEdits(xml, el, b, c);
       if (!e) return null;
       edits.push(...e);

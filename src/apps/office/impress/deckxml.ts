@@ -29,6 +29,7 @@ function runProps(tag: 'a:rPr' | 'a:endParaRPr', p: DeckPara, text: string): str
   if (p.size) attrs.push(`sz="${Math.round(p.size * 100)}"`);
   if (p.bold) attrs.push('b="1"');
   if (p.italic) attrs.push('i="1"');
+  if (p.underline) attrs.push('u="sng"');
   attrs.push('dirty="0"');
   const fill = p.color ? `<a:solidFill><a:srgbClr val="${hex(p.color)}"/></a:solidFill>` : '';
   return fill ? `<${tag} ${attrs.join(' ')}>${fill}</${tag}>` : `<${tag} ${attrs.join(' ')}/>`;

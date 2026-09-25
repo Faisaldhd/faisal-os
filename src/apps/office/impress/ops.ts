@@ -5,6 +5,7 @@
  */
 import type { DeckModel, Edit, OfficeModel } from '../model';
 import { deckTexts, nextUid, type Anim, type Deck, type DeckPara, type DeckShape, type DeckSlide, type Transition } from './deck';
+import { autoAlign, type ParaStylePatch } from './parafmt';
 
 export type SlideLayoutKind = 'title' | 'content' | 'two' | 'blank';
 export const SLIDE_LAYOUTS: readonly SlideLayoutKind[] = ['title', 'content', 'two', 'blank'];
@@ -29,7 +30,12 @@ export function deckEdit(before: Deck, after: Deck, key?: string): Edit {
 }
 
 export function para(text: string, size: number, extra: Partial<DeckPara> = {}): DeckPara {
-  return { text, size, bold: false, italic: false, color: null, align: null, bullet: false, ...extra };
+  return {
+    text, size, bold: false, italic: false, color: null, align: null, bullet: false,
+    ...extra,
+    // `underline` is new here: an explicit default keeps `Partial<DeckPara>` from widening it.
+    underline: extra.underline ?? false,
+  };
 }
 
 function baseShape(kind: DeckShape['kind'], x: number, y: number, w: number, h: number): DeckShape {
@@ -168,7 +174,9 @@ export function setBounds(deck: Deck, at: number, uid: number, b: { x: number; y
 
 /**
  * Gives a shape this text, one paragraph per line. A paragraph keeps the look of the
- * paragraph it replaces (or of the last one), so typing never loses the formatting.
+ * paragraph it replaces (or of the last one), so typing never loses the formatting — and it
+ * picks up the right alignment for Arabic as it is typed (`autoAlign`), which is the owner's
+ * "Arabic first" rule showing up where the text is actually entered.
  */
 export function setShapeText(deck: Deck, at: number, uid: number, text: string): Deck {
   return mapShape(deck, at, uid, (s) => {
@@ -176,7 +184,23 @@ export function setShapeText(deck: Deck, at: number, uid: number, text: string):
     const lines = text.replace(/\r\n?/g, '\n').split('\n');
     if (lines.join('\n') === s.paras.map((p) => p.text).join('\n')) return s;
     const fallback: DeckPara = s.paras[s.paras.length - 1] ?? para('', 18);
-    const paras = lines.map((line, i) => ({ ...(s.paras[i] ?? fallback), text: line }));
+    const paras = lines.map((line, i) => {
+      const base = s.paras[i] ?? fallback;
+      return { ...base, text: line, align: autoAlign(line, base.align) };
+    });
+    return { ...s, paras };
+  });
+}
+
+/**
+ * Applies one part of the look — bold, italic, underline, size, colour, alignment — to every
+ * paragraph of a shape, the way PowerPoint treats a text box with nothing selected inside it.
+ * One call is one undoable edit.
+ */
+export function setParaStyle(deck: Deck, at: number, uid: number, patch: ParaStylePatch): Deck {
+  return mapShape(deck, at, uid, (s) => {
+    if (s.locked || (s.kind !== 'text' && s.kind !== 'shape')) return s;
+    const paras = s.paras.map((p) => ({ ...p, ...patch }));
     return { ...s, paras };
   });
 }

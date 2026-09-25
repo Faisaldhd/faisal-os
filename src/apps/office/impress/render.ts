@@ -76,6 +76,7 @@ function drawText(deck: Deck, s: DeckShape, opts: DrawOptions): HTMLElement | nu
     line.style.fontSize = `${(p.size ?? 18) * s.fontScale}px`;
     if (p.bold) line.style.fontWeight = '700';
     if (p.italic) line.style.fontStyle = 'italic';
+    if (p.underline) line.style.textDecoration = 'underline';
     line.style.color = p.color ?? s.ink ?? deck.scheme.dk1 ?? '#000';
     if (p.align) line.style.textAlign = p.align === 'ctr' ? 'center' : p.align === 'r' ? 'right' : p.align === 'just' ? 'justify' : 'left';
     box.append(line);
