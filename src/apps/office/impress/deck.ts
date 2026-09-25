@@ -31,6 +31,7 @@ export interface DeckPara {
   size: number | null;
   bold: boolean;
   italic: boolean;
+  underline: boolean;
   color: string | null;
   align: Align | null;
   bullet: boolean;
@@ -414,6 +415,8 @@ function readParas(ctx: Ctx, txBody: XmlElement | null, isBodyPh: boolean): Deck
       size: Number.isFinite(sz) && sz > 0 ? sz / 100 : null,
       bold: !!rPr && ['1', 'true'].includes(attr(xml, rPr, 'b') ?? ''),
       italic: !!rPr && ['1', 'true'].includes(attr(xml, rPr, 'i') ?? ''),
+      // `u="none"` is an explicit "not underlined"; anything else (sng, dbl, dotted…) is on.
+      underline: !!rPr && !!attr(xml, rPr, 'u') && attr(xml, rPr, 'u') !== 'none',
       color: rPr ? colorOf(xml, child(rPr, 'solidFill'), scheme) : null,
       align: algn === 'ctr' || algn === 'r' || algn === 'just' || algn === 'l' ? algn : algn === 'dist' ? 'just' : null,
       bullet: explicitBullet || (isBodyPh && !noBullet && !!ctx.master?.bodyBullet && text.trim() !== ''),
