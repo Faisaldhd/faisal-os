@@ -15,8 +15,9 @@ const ICON_PDF = tile(
 
 /**
  * Static app metadata, kept apart from the app code so the Store can list the app without
- * loading pdf-lib. Store-only by the owner's choice: `defaultInstalled: false` and
- * `core: false` mean the kernel shows it in the Store until he installs it
+ * loading pdf-lib. Installed by default (the owner's decision, 2026-09-25), so a
+ * double-clicked .pdf opens in this app rather than the generic File Viewer; `core: false`
+ * keeps it removable from the Store and that removal is remembered
  * (see the install rule in `src/kernel/apps.ts`).
  */
 export const manifest: AppManifest = {
@@ -31,7 +32,7 @@ export const manifest: AppManifest = {
   opens: ['.pdf'],
   category: 'utilities',
   core: false,
-  defaultInstalled: false,
+  defaultInstalled: true,
   version: '1.0.0',
   releasedAt: '2026-09-24',
   singleInstance: false,

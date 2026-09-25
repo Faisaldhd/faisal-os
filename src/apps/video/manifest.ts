@@ -6,9 +6,10 @@ import { VIDEO_EXTENSIONS } from './capabilities';
  * Video Studio — static metadata, kept apart from the app code so the Store and
  * the launcher can list it without loading it.
  *
- * STORE-ONLY BY DESIGN: `defaultInstalled: false` and `core: false`, so the app is
- * not on the desktop until the owner installs it from the Store himself
- * (src/kernel/apps.ts:131 asks `settings` for an explicit install in that case).
+ * Installed by default (the owner's decision, 2026-09-25) with `core: false`: the studio is
+ * on the desktop from the first run, so a double-clicked clip opens here; the owner can still
+ * remove it from the Store, and that removal is remembered
+ * (src/kernel/apps.ts keeps every default app installed unless its id is in `removed`).
  *
  * Only `fs:home` is requested: the app reads the file the user opened, writes the
  * exported file and the captured PNG, and nothing else. No network, no settings —
@@ -28,6 +29,6 @@ export const manifest: AppManifest = {
   version: '1.0.0',
   releasedAt: '2026-09-24',
   core: false,
-  defaultInstalled: false,
+  defaultInstalled: true,
   singleInstance: false,
 };
