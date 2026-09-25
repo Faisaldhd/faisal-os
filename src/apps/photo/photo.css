@@ -650,11 +650,76 @@
   pointer-events: none;
 }
 
+/* ─────────────────────────────── rulers ─────────────────────────────── */
+
+/*
+ * The rulers take a real row and column of the stage rather than floating over the picture, so
+ * they never cover an image pixel and the viewport keeps the size every zoom and pan sum reads.
+ * The strips are laid out with logical properties, while their canvases are drawn LTR: the
+ * numbers are measurements (document pixels), not prose, so they stay left-to-right in Arabic.
+ * `--fp-ruler-accent` is read by the canvas for the pointer indicator.
+ */
+.fp-rulers {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: var(--fp-ruler) minmax(0, 1fr);
+  grid-template-rows: var(--fp-ruler) minmax(0, 1fr);
+  min-inline-size: 0;
+  min-block-size: 0;
+  --fp-ruler: 20px;
+  --fp-ruler-accent: var(--app-copper);
+  color: var(--app-text-3);
+  font: 10px/1 var(--faisal-font-mono, ui-monospace, monospace);
+}
+
+.fp-rulers.is-off {
+  grid-template-columns: 0 minmax(0, 1fr);
+  grid-template-rows: 0 minmax(0, 1fr);
+}
+
+.fp-rulers.is-off .fp-ruler,
+.fp-rulers.is-off .fp-ruler-corner {
+  display: none;
+}
+
+.fp-ruler {
+  display: block;
+  inline-size: 100%;
+  block-size: 100%;
+  background: var(--app-glass);
+}
+
+.fp-ruler-h {
+  grid-area: 1 / 2;
+  border-block-end: 1px solid var(--app-hairline);
+}
+
+.fp-ruler-v {
+  grid-area: 2 / 1;
+  border-inline-end: 1px solid var(--app-hairline);
+}
+
+.fp-ruler-corner {
+  grid-area: 1 / 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  direction: ltr;
+  background: var(--app-glass-strong);
+  border-inline-end: 1px solid var(--app-hairline);
+  border-block-end: 1px solid var(--app-hairline);
+}
+
+.fp-rulers .fp-viewport {
+  grid-area: 2 / 2;
+}
+
 .faisal-photo[data-view='start'] {
   grid-template-columns: 0 0 minmax(0, 1fr) 0;
 }
 
 .faisal-photo[data-view='start'] .fp-viewport,
+.faisal-photo[data-view='start'] .fp-rulers,
 .faisal-photo[data-view='start'] .fp-left,
 .faisal-photo[data-view='start'] .faisal-photo-tools,
 .faisal-photo[data-view='start'] .faisal-photo-inspector,

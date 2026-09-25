@@ -686,6 +686,12 @@ defineStrings('photo', {
     quickFiltersHint: 'نقرة واحدة تطبّق الفلتر، و«تراجع» يعيده.',
     viewReadOnly: 'عرض',
     importing: 'جارٍ الاستيراد…',
+
+    /* المساطر */
+    rulers: 'المساطر',
+    rulersShow: 'إظهار المساطر',
+    rulersHide: 'إخفاء المساطر',
+    rulerUnit: 'px',
   },
   en: {
     appName: 'Image Studio',
@@ -1050,5 +1056,11 @@ defineStrings('photo', {
     quickFiltersHint: 'One click applies a filter; Undo takes it back.',
     viewReadOnly: 'View',
     importing: 'Importing…',
+
+    /* Rulers */
+    rulers: 'Rulers',
+    rulersShow: 'Show rulers',
+    rulersHide: 'Hide rulers',
+    rulerUnit: 'px',
   },
 });

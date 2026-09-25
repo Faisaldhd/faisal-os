@@ -58,6 +58,7 @@ import {
   CANVAS_PRESETS, CROP_RATIOS, PIXELATED_ABOVE, centredAspect, dragCrop, exportSize, fitView, formatSize,
   imageToScreen, pinchView, screenToImage, wheelFactor, zoomAbout, zoomStop, type CropHandle, type View,
 } from './view';
+import { formatCursor, formatTick, labelAnchor, rulerCursor, rulerStep, rulerTicks } from './rulers';
 import {
   FONT_IDS, LayerCanvases, PNG_CODEC, bufferCanvas, canvas2d, canvasToBytes, drawDoc, drawLayerContent,
   measureText, proxyScale, putBuffer, readCanvas, renderDoc,
@@ -178,6 +179,10 @@ export function launch(ctx: AppContext): void {
   /** An open free transform: the active layer (live preview in `doc`) or the selection. */
   let ft: { target: 'layer' | 'selection'; id: string; box: Rect; cur: FreeTransform; base: PhotoDoc } | null = null;
   const FT_ROTATE_GAP = 28;
+  /** The last pointer position in viewport pixels (mouse or finger): where the rulers point. */
+  let cursorAt: Point | null = null;
+  /** Rulers on/off; null means automatic — they stay off in a phone-width window until asked for. */
+  let rulersOn: boolean | null = null;
 
   /* ───────────────────────────── DOM ───────────────────────────── */
 
@@ -256,6 +261,20 @@ export function launch(ctx: AppContext): void {
   const overlayCanvas = el('canvas', 'fp-overlay-canvas');
   overlayCanvas.setAttribute('aria-hidden', 'true');
   viewport.append(displayCanvas, overlayCanvas);
+  /*
+   * The rulers own a reserved strip above and beside the canvas — a grid row and column, not an
+   * overlay — so they never cover the picture, and the viewport keeps its own size (which is what
+   * every zoom and pan calculation reads). The corner cell carries the unit, not a control: the
+   * on/off button lives in the status bar where it can be a full 44px touch target.
+   */
+  const rulerH = el('canvas', 'fp-ruler fp-ruler-h');
+  const rulerV = el('canvas', 'fp-ruler fp-ruler-v');
+  rulerH.setAttribute('aria-hidden', 'true');
+  rulerV.setAttribute('aria-hidden', 'true');
+  const rulerCorner = el('div', 'fp-ruler-corner', L('rulerUnit'));
+  rulerCorner.dir = 'ltr';
+  const rulers = el('div', 'fp-rulers');
+  rulers.append(rulerCorner, rulerH, rulerV, viewport);
   const banner = el('div', 'fp-banner');
   banner.hidden = true;
   banner.setAttribute('role', 'alert');
@@ -264,7 +283,7 @@ export function launch(ctx: AppContext): void {
   const startScreen = el('section', 'fp-start');
   const dropOverlay = el('div', 'fp-drop', L('dropHere'));
   dropOverlay.hidden = true;
-  stage.append(viewport, sessionBar, banner, startScreen, dropOverlay);
+  stage.append(rulers, sessionBar, banner, startScreen, dropOverlay);
 
   /* side panels */
   const left = el('aside', 'fp-left');
@@ -287,7 +306,11 @@ export function launch(ctx: AppContext): void {
   const zoomGroup = el('div', 'fp-zoom');
   zoomGroup.dir = 'ltr';
   zoomGroup.append(zoomOutBtn, zoomLabel, zoomInBtn);
-  statusBar.append(statusInfo, statusEl, zoomGroup);
+  // The rulers' on/off switch: a real button, in the bar, at the full control size — a corner
+  // chip inside a 20px strip could never be a 44px touch target.
+  const rulersBtn = iconButton(L('rulers'), 'ruler', 'fp-rulers-btn');
+  rulersBtn.setAttribute('aria-pressed', 'false');
+  statusBar.append(statusInfo, statusEl, rulersBtn, zoomGroup);
 
   /* phone: bottom sheet + bottom bar */
   const sheet = el('section', 'fp-sheet');
@@ -693,6 +716,115 @@ export function launch(ctx: AppContext): void {
     return { width: Math.max(1, viewport.clientWidth), height: Math.max(1, viewport.clientHeight) };
   }
 
+  /* ─────────────────────────── rulers ─────────────────────────── */
+
+  /** On unless the owner said otherwise; automatic keeps them off on a phone-width window. */
+  function rulersVisible(): boolean {
+    return rulersOn ?? viewportSize().width >= 560;
+  }
+
+  /**
+   * The two ruler strips. Ticks are placed at SCREEN positions from `rulers.ts` (so they follow
+   * the image through zoom and pan) while the numbers are the DOCUMENT pixels under them; the
+   * cursor is the last pointer position, mouse or finger, so touch has an indicator too.
+   */
+  function drawRulers(): void {
+    const on = rulersVisible() && !!doc;
+    rulers.classList.toggle('is-off', !on);
+    rulersBtn.setAttribute('aria-pressed', String(on));
+    // The button says what pressing it does, so its name is honest in both states.
+    const label = on ? L('rulersHide') : L('rulersShow');
+    rulersBtn.setAttribute('aria-label', label);
+    rulersBtn.title = label;
+    if (!on) return;
+    const vs = viewportSize();
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    const cs = getComputedStyle(rulers);
+    const ink = cs.color || '#8b93a5';
+    const accent = cs.getPropertyValue('--fp-ruler-accent').trim() || ink;
+    const step = rulerStep(view.zoom);
+    const stripH = rulerH.clientHeight || 20;
+    const stripV = rulerV.clientWidth || 20;
+    const prepare = (canvas: HTMLCanvasElement, w: number, h: number): CanvasRenderingContext2D => {
+      const W = Math.max(1, Math.round(w * dpr));
+      const H = Math.max(1, Math.round(h * dpr));
+      if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+      const c = canvas.getContext('2d')!;
+      c.setTransform(dpr, 0, 0, dpr, 0, 0);
+      c.clearRect(0, 0, w, h);
+      c.font = cs.font;
+      c.direction = 'ltr';
+      return c;
+    };
+    // horizontal ruler
+    const ch = prepare(rulerH, vs.width, stripH);
+    ch.textAlign = 'center';
+    ch.textBaseline = 'top';
+    for (const t of rulerTicks(vs.width, view.panX, view.zoom)) {
+      const x = Math.round(t.pos) + 0.5;
+      ch.strokeStyle = ink;
+      ch.globalAlpha = t.major ? 0.8 : 0.35;
+      ch.beginPath();
+      ch.moveTo(x, t.major ? stripH - 9 : stripH - 5);
+      ch.lineTo(x, stripH);
+      ch.stroke();
+      if (t.major) {
+        ch.globalAlpha = 0.95;
+        ch.fillStyle = ink;
+        ch.fillText(formatTick(t.value, step), labelAnchor(x, vs.width, 12), 2);
+      }
+    }
+    // vertical ruler
+    const cv = prepare(rulerV, stripV, vs.height);
+    cv.textBaseline = 'middle';
+    for (const t of rulerTicks(vs.height, view.panY, view.zoom)) {
+      const y = Math.round(t.pos) + 0.5;
+      cv.strokeStyle = ink;
+      cv.globalAlpha = t.major ? 0.8 : 0.35;
+      cv.beginPath();
+      cv.moveTo(t.major ? stripV - 9 : stripV - 5, y);
+      cv.lineTo(stripV, y);
+      cv.stroke();
+    }
+    // the vertical numbers rotate: a ruler reads bottom-to-top, and the digits stay LTR
+    cv.globalAlpha = 0.95;
+    cv.fillStyle = ink;
+    cv.textAlign = 'center';
+    for (const t of rulerTicks(vs.height, view.panY, view.zoom)) {
+      if (!t.major) continue;
+      cv.save();
+      cv.translate(2, labelAnchor(Math.round(t.pos) + 0.5, vs.height, 12));
+      cv.rotate(-Math.PI / 2);
+      cv.textBaseline = 'top';
+      cv.fillText(formatTick(t.value, step), 0, 0);
+      cv.restore();
+    }
+    // the pointer indicator, on both strips
+    if (cursorAt) {
+      const cx = rulerCursor(cursorAt.x, vs.width);
+      if (cx !== null) {
+        ch.globalAlpha = 1;
+        ch.strokeStyle = accent;
+        ch.beginPath();
+        ch.moveTo(Math.round(cx) + 0.5, 0);
+        ch.lineTo(Math.round(cx) + 0.5, stripH);
+        ch.stroke();
+        ch.fillStyle = accent;
+        ch.textAlign = cx > vs.width / 2 ? 'right' : 'left';
+        ch.fillText(formatCursor(cursorAt.x, view.panX, view.zoom), cx > vs.width / 2 ? cx - 4 : cx + 4, 2);
+      }
+      const cy = rulerCursor(cursorAt.y, vs.height);
+      if (cy !== null) {
+        cv.globalAlpha = 1;
+        cv.strokeStyle = accent;
+        cv.beginPath();
+        cv.moveTo(0, Math.round(cy) + 0.5);
+        cv.lineTo(stripV, Math.round(cy) + 0.5);
+        cv.stroke();
+      }
+    }
+  }
+
   function renderNow(): void {
     const vs = viewportSize();
     const dpr = Math.min(3, window.devicePixelRatio || 1);
@@ -736,6 +868,7 @@ export function launch(ctx: AppContext): void {
     }
     zoomLabel.textContent = L('zoomValue', { value: Math.round(view.zoom * 100) });
     drawOverlay();
+    drawRulers();
   }
 
   function drawOverlay(): void {
@@ -2115,8 +2248,10 @@ export function launch(ctx: AppContext): void {
 
   viewport.addEventListener('pointermove', (e) => {
     const p = local(e);
+    cursorAt = p;
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, p);
     if (doc && e.pointerType === 'mouse') { hover = screenToImage(view, p); if (!gesture) drawOverlay(); }
+    if (!gesture && !pinch && doc) drawRulers();
     if (pinch && pointers.size >= 2) {
       const [a, b] = [...pointers.values()];
       view = pinchView(pinch.base, { a: pinch.a, b: pinch.b }, { a, b });
@@ -2140,7 +2275,7 @@ export function launch(ctx: AppContext): void {
   };
   viewport.addEventListener('pointerup', (e) => endPointer(e, false));
   viewport.addEventListener('pointercancel', (e) => endPointer(e, true));
-  viewport.addEventListener('pointerleave', () => { hover = null; drawOverlay(); });
+  viewport.addEventListener('pointerleave', () => { hover = null; cursorAt = null; drawOverlay(); drawRulers(); });
 
   viewport.addEventListener('wheel', (e) => {
     if (!doc) return;
@@ -3645,6 +3780,13 @@ export function launch(ctx: AppContext): void {
   zoomInBtn.addEventListener('click', () => setZoom(zoomStop(view.zoom, 1)));
   zoomOutBtn.addEventListener('click', () => setZoom(zoomStop(view.zoom, -1)));
   zoomLabel.addEventListener('click', fit);
+  // The rulers remember the choice for this session; without one they follow the window width.
+  rulersBtn.addEventListener('click', () => {
+    const next = !rulersVisible();
+    rulersOn = next;
+    drawRulers();
+    say(next ? L('rulersShow') : L('rulersHide'));
+  });
 
   /* ─────────────────────────── lifecycle ─────────────────────────── */
 
