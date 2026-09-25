@@ -1460,3 +1460,74 @@
 .faisal-pdf-redactlist { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; max-height: 240px; overflow-y: auto; }
 .faisal-pdf-redactrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
 .faisal-pdf-redactrow .faisal-pdf-chip { flex: 1; min-width: 0; justify-content: flex-start; }
+
+/* ── two-page spread, and the full screen presentation (الانتشار والعرض) ── */
+
+/*
+ * One row per spread, holding one page (the cover, and the last odd page) or two. The row is
+ * deliberately NOT positioned: the frame stays the offset parent of every page, so a page's
+ * `offsetTop` still means "top of its row" and the scrolling maths of the viewer is untouched.
+ */
+.faisal-pdf-spread {
+  display: flex;
+  flex: none;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 16px;
+  width: max-content;
+}
+
+/*
+ * Presentation. The app's own chrome (bar, tabs, ribbon, panels, status bar) is hidden, the page
+ * is fitted to the screen by the viewer, and the bar at the bottom is the only control left: it is
+ * always reachable (44px targets, never hover-only) and only fades while nothing is touched.
+ */
+.faisal-pdf.is-present .faisal-pdf-bar,
+.faisal-pdf.is-present .faisal-pdf-tabs,
+.faisal-pdf.is-present .faisal-pdf-ribbon,
+.faisal-pdf.is-present .faisal-pdf-banner,
+.faisal-pdf.is-present .faisal-pdf-side,
+.faisal-pdf.is-present .faisal-pdf-ops,
+.faisal-pdf.is-present .faisal-pdf-statusbar,
+.faisal-pdf.is-present .faisal-pdf-scrim,
+.faisal-pdf.is-present .faisal-pdf-fieldshint { display: none; }
+
+/* A presentation is for looking: a click advances instead of starting a text selection. */
+.faisal-pdf.is-present .faisal-pdf-page { user-select: none; }
+.faisal-pdf.is-present .faisal-pdf-frame { padding: 12px; }
+
+.faisal-pdf-presentbar {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 10px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px;
+  border-radius: 14px;
+  background: var(--app-glass-strong);
+  border: 1px solid var(--app-hairline);
+  box-shadow: var(--app-shadow);
+  backdrop-filter: var(--app-blur);
+  transition: opacity var(--app-med) var(--app-ease);
+}
+.faisal-pdf-presentbar.is-dim { opacity: .45; }
+.faisal-pdf-presentbar.is-dim:focus-within { opacity: 1; }
+.faisal-pdf-presentpos {
+  min-width: 96px;
+  padding-inline: 8px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--app-text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* On a narrow sheet the bar keeps one row of 44px controls and never widens the page. */
+@container pdf (max-width: 520px) {
+  .faisal-pdf-spread { gap: 8px; }
+  .faisal-pdf-presentbar { inset-inline: 6px; gap: 6px; padding: 4px; }
+  .faisal-pdf-presentpos { min-width: 72px; font-size: 12px; }
+}

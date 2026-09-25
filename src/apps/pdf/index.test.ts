@@ -528,4 +528,66 @@ describe('PDF window', () => {
     expect(files.has('/home/user/nope-copy.pdf')).toBe(false);
     expect(content.querySelector('.faisal-saveas')?.textContent ?? '').toContain('كلمتا المرور غير متطابقتين');
   });
+
+  /*
+   * Y7: the surface of the two new view modes. The pairing maths is `spread.test.ts`'s job and the
+   * rows the viewer builds are `viewer.spread.test.ts`'s (jsdom has no pdf.js document, so this
+   * window never lays pages out here) — what this drives is the WINDOW: the ribbon switch, the
+   * status line, and a presentation that Escape always leaves.
+   */
+  it('switches the spread from the ribbon and leaves the presentation with Escape', async () => {
+    const pdf = await makePdf([{ w: 200, h: 300 }, { w: 200, h: 300 }, { w: 200, h: 300 }]);
+    const { ctx, content } = makeApp('/home/user/three.pdf', pdf);
+
+    app.launch(ctx);
+    await settle();
+
+    const tab = content.querySelector<HTMLButtonElement>('#faisal-pdf-tab-view');
+    expect(tab, 'the view tab exists').not.toBeNull();
+    tab!.click();
+    await settle();
+    const spreadBtn = content.querySelector<HTMLButtonElement>('[data-cmd="spread"]');
+    const presentBtn = content.querySelector<HTMLButtonElement>('[data-cmd="present"]');
+    expect(spreadBtn, 'the spread command is in the view tab').not.toBeNull();
+    expect(presentBtn, 'the presentation command is in the view tab').not.toBeNull();
+    expect(spreadBtn!.getAttribute('aria-pressed')).toBe('false');
+    // The RTL decision is stated on the control itself, not chosen silently.
+    expect(spreadBtn!.title).toContain('من اليسار إلى اليمين');
+
+    spreadBtn!.click();
+    await settle();
+    expect(spreadBtn!.getAttribute('aria-pressed')).toBe('true');
+    expect(spreadBtn!.classList.contains('is-active')).toBe(true);
+    expect(content.querySelector('.faisal-pdf-status')?.textContent ?? '').toContain('عرض الانتشار');
+    expect(content.querySelector('.faisal-pdf-status')?.textContent ?? '').toContain('من اليسار إلى اليمين');
+
+    presentBtn!.click();
+    await settle();
+    const root = content.querySelector<HTMLElement>('.faisal-pdf')!;
+    const bar = content.querySelector<HTMLElement>('.faisal-pdf-presentbar')!;
+    expect(root.classList.contains('is-present'), 'the presentation class hides the chrome').toBe(true);
+    expect(bar.hidden).toBe(false);
+    expect(content.querySelector('.faisal-pdf-presentpos')?.textContent ?? '').toContain('من 3');
+    expect(content.querySelector('.faisal-pdf-status')?.textContent ?? '').toContain('وضع العرض');
+    // The bar is the only control left, and its three buttons carry the 44px touch class.
+    expect(bar.querySelectorAll('button')).toHaveLength(3);
+    for (const button of Array.from(bar.querySelectorAll('button'))) {
+      expect(button.classList.contains('faisal-pdf-btn'), button.textContent ?? '').toBe(true);
+    }
+
+    // Escape leaves: chrome back, bar gone, and the window says so.
+    root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    await settle();
+    expect(root.classList.contains('is-present')).toBe(false);
+    expect(bar.hidden).toBe(true);
+    expect(content.querySelector('.faisal-pdf-status')?.textContent ?? '').toContain('خرجت من وضع العرض');
+    // The two-page spread the owner was reading comes back untouched (one page per screen inside).
+    expect(spreadBtn!.getAttribute('aria-pressed')).toBe('true');
+
+    // …and the spread switch goes back to one page at a time.
+    spreadBtn!.click();
+    await settle();
+    expect(spreadBtn!.getAttribute('aria-pressed')).toBe('false');
+    expect(content.querySelector('.faisal-pdf-status')?.textContent ?? '').toContain('عرض صفحة واحدة');
+  });
 });

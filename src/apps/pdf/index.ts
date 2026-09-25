@@ -305,6 +305,14 @@ function launch(ctx: AppContext): void {
     loaded: false,
     readOnly: false,
     password: undefined as string | undefined,
+    /** Two pages side by side (`viewer.setSpread`) — kept while the window lives. */
+    spread: false,
+    /** The presentation view: no chrome, the page fitted to the screen, arrows and click to move. */
+    presentation: false,
+    /** The zoom mode to put back when the presentation ends. */
+    presentReturn: null as ZoomMode | null,
+    /** True when the owner was reading two pages at a time before the presentation started. */
+    presentSpread: false,
     /**
      * The protection this document is written with. `null` means "saved without a password", so a
      * document opened normally keeps exactly the behaviour it had. It lives here, in the window,
@@ -2180,6 +2188,7 @@ function launch(ctx: AppContext): void {
       refreshPageBox();
       thumbs.setSelection(state.selection, page);
       thumbs.reveal(page);
+      refreshPresentPosition();
     },
     onZoomChange: () => { refreshZoomBox(); paintRedactMarks(); },
     onFirstPaint: (canvas) => rememberThumb(canvas),
@@ -2210,9 +2219,137 @@ function launch(ctx: AppContext): void {
   fieldsHint.append(fieldsHintText, fieldsWrite);
   view.append(viewNote, fieldsHint);
 
+  /* ───────────── view modes: two-page spread, and the presentation (الانتشار والعرض) ───────────── */
+
+  /**
+   * Single page ⇄ two pages side by side. The pairing lives in `spread.ts` (cover alone, then
+   * 2‑3 · 4‑5, left to right even in Arabic documents) and the viewer turns it into rows; here only
+   * the window's state, the command's pressed state and the honest status line are handled.
+   */
+  function toggleSpread(): void {
+    if (!state.info) return;
+    state.spread = !state.spread;
+    viewer.setSpread(state.spread);
+    refreshCommands();
+    refreshPageBox();
+    setStatus(state.spread ? t('pdf.spreadOn') : t('pdf.spreadOff'));
+  }
+
+  const presentBar = el('div', 'faisal-pdf-presentbar');
+  presentBar.hidden = true;
+  let presentBarTimer = 0;
+  let releasePresentEsc: (() => void) | null = null;
+  const presentPrev = button(t('pdf.presentPrev'), 'faisal-pdf-btn');
+  const presentNext = button(t('pdf.presentNext'), 'faisal-pdf-btn is-primary');
+  const presentLeave = button(t('pdf.presentLeave'), 'faisal-pdf-btn');
+  const presentPos = el('span', 'faisal-pdf-presentpos');
+  presentPos.setAttribute('role', 'status');
+  presentPrev.addEventListener('click', () => stepPresentation(-1));
+  presentNext.addEventListener('click', () => stepPresentation(1));
+  presentLeave.addEventListener('click', () => exitPresentation());
+  presentBar.append(presentPrev, presentPos, presentNext, presentLeave);
+  root.append(presentBar);
+
+  /** "page 3 of 12", or "pages 2–3 of 12" while two pages are shown together. */
+  function refreshPresentPosition(): void {
+    if (!state.presentation) return;
+    const total = viewer.pageCount || state.info?.pageCount || 0;
+    const info = viewer.spreadInfo();
+    const pages = info.spread?.pages ?? [Math.min(viewer.currentPage, Math.max(0, total - 1))];
+    presentPos.textContent = pages.length > 1
+      ? t('pdf.presentSpread', { a: String(pages[0] + 1), b: String(pages[pages.length - 1] + 1), total: String(total) })
+      : t('pdf.presentPage', { page: String((pages[0] ?? 0) + 1), total: String(total) });
+    presentPrev.disabled = viewer.currentPage <= 0;
+    presentNext.disabled = viewer.currentPage >= Math.max(0, total - 1);
+  }
+
+  /** One spread forward or back, wherever the move came from (a button, an arrow or a tap). */
+  function stepPresentation(dir: 1 | -1): void {
+    if (!state.presentation) return;
+    viewer.goToSpread(dir);
+    refreshPresentPosition();
+    // The overlay must not sit over the page forever on a touch screen.
+    presentBar.classList.remove('is-dim');
+    window.clearTimeout(presentBarTimer);
+    presentBarTimer = window.setTimeout(() => { if (state.presentation) presentBar.classList.add('is-dim'); }, 2500);
+  }
+
+  /**
+   * Full screen presentation. The app chrome is hidden with a class, the page is fitted to the
+   * screen, and the browser's own fullscreen is asked for when it exists — but the mode never traps
+   * the owner: ESC (this window's escape layer), the exit button and the browser leaving fullscreen
+   * all end it, and a browser that refuses the request simply keeps the in-window presentation.
+   */
+  function enterPresentation(): void {
+    if (state.presentation || !state.info) return;
+    state.presentation = true;
+    state.presentReturn = viewer.mode;
+    state.presentSpread = state.spread;
+    // A presentation shows ONE page fitted to the screen, the way every reader presents, even when
+    // the owner was reading two pages at a time; the spread comes back the moment it is left.
+    if (state.spread) {
+      state.spread = false;
+      viewer.setSpread(false);
+    }
+    root.classList.add('is-present');
+    presentBar.hidden = false;
+    presentBar.classList.add('is-dim');
+    viewer.setMode('fitPage');
+    refreshCommands();
+    refreshPresentPosition();
+    releasePresentEsc = pushEscapeLayer(() => exitPresentation());
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    const request = (root as HTMLElement & { requestFullscreen?: () => Promise<void> }).requestFullscreen;
+    if (typeof request === 'function') {
+      try { void (root.requestFullscreen() as Promise<void>)?.catch(() => {}); } catch { /* refused: in-window presentation stays */ }
+    }
+    // The viewer owns the arrow keys; give it the focus so a keyboard reader can move at once.
+    viewer.scroller.focus({ preventScroll: true });
+    setStatus(t('pdf.presentEnter'));
+  }
+
+  function exitPresentation(): void {
+    if (!state.presentation) return;
+    state.presentation = false;
+    root.classList.remove('is-present');
+    presentBar.hidden = true;
+    window.clearTimeout(presentBarTimer);
+    releasePresentEsc?.();
+    releasePresentEsc = null;
+    document.removeEventListener('fullscreenchange', onFullscreenChange);
+    if (document.fullscreenElement && typeof document.exitFullscreen === 'function') {
+      void document.exitFullscreen().catch(() => {});
+    }
+    if (state.presentReturn) viewer.setMode(state.presentReturn);
+    state.presentReturn = null;
+    // The two-page spread the owner was reading before the presentation comes back untouched.
+    if (state.presentSpread && !state.spread) {
+      state.spread = true;
+      viewer.setSpread(true);
+    }
+    state.presentSpread = false;
+    refreshCommands();
+    refreshPageBox();
+    setStatus(t('pdf.presentExit'));
+  }
+
+  /** Leaving the browser's fullscreen (Esc or F11) leaves the presentation too, never a trap. */
+  function onFullscreenChange(): void {
+    if (state.presentation && !document.fullscreenElement) exitPresentation();
+  }
+
+  /** A tap on the page moves one spread forward, the way a presentation is driven on a phone. */
+  function onPresentClick(ev: MouseEvent): void {
+    if (!state.presentation) return;
+    const target = ev.target as HTMLElement | null;
+    if (target?.closest('a, button, input, textarea, select, .faisal-pdf-links, .faisal-pdf-fields')) return;
+    stepPresentation(1);
+  }
+
+  viewer.scroller.addEventListener('click', onPresentClick);
+
   /** (Re)draws the working bytes with pdf.js. `keep` holds the reading position after an edit. */
-  async function refreshView(keep: boolean): Promise<void> {
-    if (!state.bytes.length) return;
+  async function refreshView(keep: boolean): Promise<void> {    if (!state.bytes.length) return;
     if (!viewer.scroller.isConnected) view.prepend(viewer.scroller);
     const token = ++renderToken;
     lib = await loadEngine();
@@ -2634,6 +2771,8 @@ function launch(ctx: AppContext): void {
     edits?: boolean;
     hidden?: boolean;
     disabled?: boolean;
+    /** A second line for the button's tooltip, when the label alone would hide a real rule. */
+    hint?: string;
   }
 
   const cmd = (id: string, iconName: IconName, labelKey: string, run: (anchor: HTMLElement) => void, extra: Partial<Cmd> = {}): Cmd =>
@@ -2741,6 +2880,12 @@ function launch(ctx: AppContext): void {
     {
       id: 'view', label: t('pdf.tabViewRibbon'), groups: [
         { ...zoomGroup(), cmds: [...zoomGroup().cmds, cmd('actual', 'actual', 'pdf.actualSize', () => viewer.setZoom(1))] },
+        {
+          label: t('pdf.groupViewMode'), cmds: [
+            cmd('spread', 'spread', 'pdf.spreadCmd', () => toggleSpread(), { needsDoc: true, hint: t('pdf.spreadHint') }),
+            cmd('present', 'present', 'pdf.presentCmd', () => enterPresentation(), { needsDoc: true }),
+          ],
+        },
         { label: t('pdf.groupRotateView'), cmds: [cmd('view-left', 'rotateLeft', 'pdf.viewRotateLeft', () => viewer.rotateView(-90)), cmd('view-right', 'rotateRight', 'pdf.viewRotateRight', () => viewer.rotateView(90))] },
         {
           label: t('pdf.groupPanels'), cmds: [
@@ -2770,7 +2915,7 @@ function launch(ctx: AppContext): void {
     b.type = 'button';
     b.dataset.cmd = c.id;
     b.append(icon(c.icon), el('span', 'faisal-pdf-rbtn-label', c.label));
-    b.title = c.label;
+    b.title = c.hint ? `${c.label} — ${c.hint}` : c.label;
     if (c.tool) b.setAttribute('aria-pressed', 'false');
     b.addEventListener('click', () => c.run(b));
     cmdButtons.push({ cmd: c, b });
@@ -2824,6 +2969,15 @@ function launch(ctx: AppContext): void {
         const on = state.tool === c.tool;
         b.setAttribute('aria-pressed', String(on));
         b.classList.toggle('is-active', on);
+      }
+      // The spread command is a switch, not a tool: the button says whether two pages are shown.
+      if (c.id === 'spread') {
+        b.setAttribute('aria-pressed', String(state.spread && hasDoc));
+        b.classList.toggle('is-active', state.spread && hasDoc);
+      }
+      if (c.id === 'present') {
+        b.setAttribute('aria-pressed', String(state.presentation));
+        b.classList.toggle('is-active', state.presentation);
       }
     }
     for (const b of [printQuick, downloadQuick, searchBtn]) b.disabled = !hasDoc;
@@ -2891,8 +3045,8 @@ function launch(ctx: AppContext): void {
   zoomBox.append(zoomOutBtn, zoomSlider, zoomInBtn, zoomValue);
   statusbar.append(nav, status, zoomBox);
 
-  prevBtn.addEventListener('click', () => viewer.goToPage(viewer.currentPage - 1));
-  nextBtn.addEventListener('click', () => viewer.goToPage(viewer.currentPage + 1));
+  prevBtn.addEventListener('click', () => { viewer.goToSpread(-1); refreshPageBox(); });
+  nextBtn.addEventListener('click', () => { viewer.goToSpread(1); refreshPageBox(); });
   pageInput.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter') return;
     ev.preventDefault();
@@ -2929,7 +3083,11 @@ function launch(ctx: AppContext): void {
     const label = pageLabels?.[page];
     pageLabel.textContent = label && label !== String(page + 1) ? t('pdf.pageLabel', { label }) : '';
     prevBtn.disabled = page <= 0;
-    nextBtn.disabled = page >= count - 1;
+    // With two pages side by side the step is a spread, so "next" stops on the last spread.
+    const info = viewer.spreadInfo();
+    nextBtn.disabled = state.spread && info.spread
+      ? info.spread.index >= info.total - 1
+      : page >= count - 1;
   }
 
   async function refreshPageLabels(doc: PdfJsDocument): Promise<void> {
@@ -3727,6 +3885,21 @@ function launch(ctx: AppContext): void {
     if (win.content.querySelector('.faisal-saveas-overlay')) return;
     const target = ev.target as HTMLElement;
     const inField = Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
+    /*
+     * The presentation owns the keyboard while it runs: the arrows, the space bar and a click move
+     * one spread (or one page in single-page view), Home/End jump to the ends, and Escape leaves —
+     * the browser's own fullscreen exit leaves too, through `fullscreenchange`.
+     */
+    if (state.presentation) {
+      const forward = ['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Spacebar', 'Enter'];
+      const back = ['ArrowLeft', 'ArrowUp', 'PageUp'];
+      if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); exitPresentation(); return; }
+      if (forward.includes(ev.key)) { ev.preventDefault(); stepPresentation(1); return; }
+      if (back.includes(ev.key)) { ev.preventDefault(); stepPresentation(-1); return; }
+      if (ev.key === 'Home') { ev.preventDefault(); viewer.goToPage(0); refreshPresentPosition(); return; }
+      if (ev.key === 'End') { ev.preventDefault(); viewer.goToPage(viewer.pageCount - 1); refreshPresentPosition(); return; }
+      return;
+    }
     const id: CommandId | null = commandFor(ev, inField);
     if (!id) return;
     const inThumbs = Boolean(target.closest('.faisal-pdf-thumblist'));
@@ -4066,6 +4239,8 @@ function launch(ctx: AppContext): void {
   }
 
   function adopt(bytes: Uint8Array, source: { path?: string; name: string }, info: DocInfo, readOnly: boolean): void {
+    // A new document is never opened behind a running presentation.
+    if (state.presentation) exitPresentation();
     state.path = source.path ?? '';
     state.untitled = !source.path;
     state.suggestedName = source.name.replace(/\.pdf$/i, '');
