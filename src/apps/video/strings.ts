@@ -835,3 +835,12 @@ defineStrings('video', {
     recorderTitle: 'What it can record for export (MediaRecorder)',
   },
 });
+
+/*
+ * «حفظ باسم» — the one label the shared shell dialog (src/shell/save-as.ts) needs from this app.
+ * A second registration, merged into the same namespace, so it never touches the table above.
+ */
+defineStrings('video', {
+  ar: { projectFormat: 'مشروع فيديو (.fvproj)' },
+  en: { projectFormat: 'Video project (.fvproj)' },
+});
