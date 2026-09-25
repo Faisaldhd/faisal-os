@@ -2066,11 +2066,14 @@ function launch(ctx: AppContext): void {
         b.addEventListener('click', () => {
           void (async () => {
             const item = await library.addPath(f.path);
+            setMode('player');
             if (item.status === 'error') {
               status(`${item.name}: ${item.error}`, true);
+              // The message ends with «press Convert»: the clip (and that button) belong in the
+              // player, which is where the user is looking.
+              player.showRefused(item.id);
               return;
             }
-            setMode('player');
             player.add([item.id], true);
           })();
         });
@@ -2129,6 +2132,10 @@ function launch(ctx: AppContext): void {
         setMode('player');
         if (item.status === 'error') {
           status(`${item.name}: ${item.error}`, true);
+          // The message ends with «press Convert»: show the clip in the player, where the button
+          // for it is, instead of the generic "add clips" state.
+          player.showRefused(item.id);
+          perfMark('ui:add');
           return;
         }
         awaitingFirstFrame = true;
