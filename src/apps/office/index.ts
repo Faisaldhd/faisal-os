@@ -34,6 +34,9 @@ import {
 import { computeSheets, parseFormula } from './formula/index';
 import { loadOfficeFile, serializeModel, type LoadRefusal } from './file';
 import { patchPackage, packageKind, snapshotModel, type PatchResult } from './patch';
+import { entryData, readRawZip } from './zip';
+import { emptyLog, type Revision, type RevisionLog } from './writer/revisions';
+import { trackedRevisionsIn } from './writer/trackfile';
 import { backupPathFor, saveFailure, saveWithBackup, withinHome } from './save';
 import { formatBytes } from '../files/format';
 import {
@@ -509,6 +512,22 @@ function launch(ctx: AppContext): void {
   /* ──────────────────────────────── load ──────────────────────────────── */
 
   /** Adds what the editors need beyond the plain model: runs and look for Word, look and stored formulas for Excel. */
+  /** The tracked changes of a Word package, or an empty log when it carries none. */
+  async function trackedInDocument(bytes: Uint8Array, blocks: readonly number[]): Promise<RevisionLog> {
+    try {
+      const xml = await entryData(readRawZip(bytes), 'word/document.xml');
+      return xml ? trackedRevisionsIn(new TextDecoder().decode(xml), blocks) : emptyLog();
+    } catch {
+      return emptyLog();
+    }
+  }
+
+  /** The pending tracked changes of the open document, as the Writer's own log holds them. */
+  function pendingTracked(): Revision[] {
+    const writer = editor as (Editor & { pendingRevisions?: () => Revision[] }) | null;
+    return writer?.pendingRevisions?.() ?? [];
+  }
+
   async function enrich(m: OfficeModel, bytes: Uint8Array): Promise<OfficeModel> {
     docLook = null;
     bookLook = null;
@@ -519,7 +538,14 @@ function launch(ctx: AppContext): void {
         const same = read.blocks.length === texts.length && read.blocks.every((b, i) => blockText(b) === texts[i]);
         if (same) {
           docLook = read.look;
-          return { kind: 'docx', paragraphs: texts, blocks: read.blocks, ...(Object.keys(read.formats).length ? { formats: read.formats } : {}) };
+          // The tracked changes the file already carries come with it: a change made in Word shows
+          // up as a pending mark here instead of being presented as decided text.
+          const tracked = await trackedInDocument(bytes, read.blocks.map((block) => block.id));
+          return {
+            kind: 'docx', paragraphs: texts, blocks: read.blocks,
+            ...(Object.keys(read.formats).length ? { formats: read.formats } : {}),
+            ...(tracked.items.length ? { tracked } : {}),
+          };
         }
       } catch { /* the plain paragraphs still edit and save */ }
       return { kind: 'docx', paragraphs: m.paragraphs, blocks: m.paragraphs.map((text, id) => ({ id, runs: [{ t: 'text', text, props: {} }] })), ...(m.formats ? { formats: m.formats } : {}) };
@@ -695,7 +721,7 @@ function launch(ctx: AppContext): void {
     if (!filePath || !model || !editable || busy) return;
     const kind = packageKind(plan.kind);
     let patched: PatchResult | null = null;
-    if (kind && onDiskBytes && onDiskModel) patched = await patchPackage(kind, onDiskBytes, onDiskModel, model);
+    if (kind && onDiskBytes && onDiskModel) patched = await patchPackage(kind, onDiskBytes, onDiskModel, model, pendingTracked());
     if (kind && !patched) {
       const proceed = await shellConfirm({
         title: t('office.rebuildTitle'),
@@ -730,7 +756,7 @@ function launch(ctx: AppContext): void {
       // A document opened from an `.odt` is written back as OpenDocument: OOXML bytes inside a
       // `.odt` path would be a file no reader opens.
       else if (plan.odf && model.kind === 'docx') data = toOdt(model, { title: odtTitleOf(model, basename(filePath)), created: new Date().toISOString() });
-      else if (model.kind === 'docx' && model.blocks) data = (await rebuildDocxRich(model)) ?? serializeModel(model);
+      else if (model.kind === 'docx' && model.blocks) data = (await rebuildDocxRich(model, pendingTracked())) ?? serializeModel(model);
       else data = serializeModel(model);
       attempt = data.length;
       const result = await saveWithBackup(vfs, filePath, data);
@@ -780,7 +806,7 @@ function launch(ctx: AppContext): void {
    * owner is looking at, so it is serialised the same way.
    */
   async function currentBytes(source: OfficeModel): Promise<Uint8Array> {
-    if (source.kind === 'docx' && source.blocks) return (await rebuildDocxRich(source)) ?? serializeModel(source);
+    if (source.kind === 'docx' && source.blocks) return (await rebuildDocxRich(source, pendingTracked())) ?? serializeModel(source);
     return serializeModel(source);
   }
 
@@ -934,7 +960,7 @@ function launch(ctx: AppContext): void {
         written = format;
         // A rich Word document is rebuilt (runs, images, tables), exactly like the in-place save.
         if (format === 'docx' && source.kind === 'docx' && source.blocks) {
-          return (await rebuildDocxRich(source)) ?? serializeAs(source, 'docx');
+          return (await rebuildDocxRich(source, source.tracked?.items ?? pendingTracked())) ?? serializeAs(source, 'docx');
         }
         // A slide deck is patched from the file it came from, so nothing is lost.
         if (format === 'pptx' && source.kind === 'pptx' && source.deck && onDiskBytes && onDiskModel) {

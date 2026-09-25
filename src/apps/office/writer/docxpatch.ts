@@ -31,7 +31,9 @@ import { attrLocal, elementsOf, localName, paragraphElements, parsePart, type Xm
 import { entryData, rebuildZip, readRawZip, utf8, writeZip, type RawZip } from '../zip';
 import { contentTypes } from '../ooxml';
 import { hasArabic } from './docops';
+import type { Revision } from './revisions';
 import { readDocxDocument } from './docxread';
+import { revisionAttrs, textBody, trackSegments } from './trackfile';
 import { RUN_KEYS, blockText, type DocBlock, type OpaqueRun, type Run, type RunProps, type TextRun } from './types';
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -164,16 +166,68 @@ interface Context {
   fresh: boolean;
 }
 
-function textRunMarkup(run: TextRun): string {
+function textRunMarkup(run: TextRun, text = run.text): string {
   // Newly typed Arabic is marked right-to-left, as Word does; an original run keeps what it had.
-  const rPr = runPropsMarkup(run.rpr ?? '', run.base ?? {}, run.props, run.src === undefined && hasArabic(run.text));
-  const body = textParts(run.text).map((part) => {
+  const rPr = runPropsMarkup(run.rpr ?? '', run.base ?? {}, run.props, run.src === undefined && hasArabic(text));
+  const body = textParts(text).map((part) => {
     if (part.kind === 'tab') return '<w:tab/>';
     if (part.kind === 'br') return '<w:br/>';
     return textElement('w:t', '<w:t>', part.value);
   }).join('');
   if (!body && !rPr) return '';
   return `<w:r>${rPr}${body}</w:r>`;
+}
+
+/**
+ * The runs of a paragraph that has pending tracked changes: what was typed is wrapped in `w:ins`,
+ * what was deleted is put back as `w:del` with the words in `w:delText` (a reader that looked for
+ * `w:t` would show deleted text as kept text). `trackSegments` decides where each piece sits, so
+ * this cannot disagree with what the panel draws; `w:id`, `w:author` and `w:date` come from the
+ * revision itself, which is what makes the change survive the file and belong to a person.
+ *
+ * A run that is not text (a picture, a link) keeps its own markup and is never renamed: only text
+ * can be marked. The deleted words no longer belong to any run, so their deleted run takes the
+ * paragraph's first text-run properties — declared in the report, not hidden.
+ */
+function trackedRunsMarkup(
+  block: DocBlock,
+  ctx: Context,
+  revisions: readonly Revision[],
+): string {
+  const runs = block.runs;
+  const fallback = runs.find((run): run is TextRun => run.t === 'text');
+  let out = '';
+  let open: 'insert' | 'delete' | null = null;
+  let openId = 0;
+  const close = (): void => {
+    if (open === 'insert') out += '</w:ins>';
+    else if (open === 'delete') out += '</w:del>';
+    open = null;
+  };
+  for (const segment of trackSegments(block, revisions)) {
+    const want = segment.mark === 'none' ? null : segment.mark;
+    const id = segment.revision?.id ?? 0;
+    if (want !== open || id !== openId) {
+      close();
+      if (want) {
+        const attrs = segment.revision ? revisionAttrs(segment.revision) : '';
+        out += want === 'insert' ? `<w:ins${attrs}>` : `<w:del${attrs}>`;
+        open = want;
+        openId = id;
+      }
+    }
+    const run = segment.runIndex >= 0 ? runs[segment.runIndex] : undefined;
+    if (want === 'delete') {
+      const props = fallback ? runPropsMarkup(fallback.rpr ?? '', fallback.base ?? {}, fallback.props, false) : '';
+      out += `<w:r>${props}${textBody(segment.text, 'w:delText')}</w:r>`;
+    } else if (run?.t === 'text') {
+      out += textRunMarkup(run, segment.text);
+    } else if (run) {
+      out += opaqueMarkup(run, ctx);
+    }
+  }
+  close();
+  return out;
 }
 
 function opaqueMarkup(run: OpaqueRun, ctx: Context): string {
@@ -216,9 +270,19 @@ function stripSectPr(pPr: string): string {
   return sect ? `${pPr.slice(0, sect.start)}${pPr.slice(sect.end)}` : pPr;
 }
 
-function newParagraph(block: DocBlock, tplPPr: string, tplFormat: ParagraphFormat | undefined, format: ParagraphFormat | undefined, ctx: Context): string {
+function newParagraph(
+  block: DocBlock,
+  tplPPr: string,
+  tplFormat: ParagraphFormat | undefined,
+  format: ParagraphFormat | undefined,
+  ctx: Context,
+  revisions: readonly Revision[] = [],
+): string {
   const pPr = paraPropsMarkup(stripSectPr(tplPPr), tplFormat, format, ctx.numIdFor);
-  return `<w:p>${pPr}${runsMarkup(block, undefined, ctx)}</w:p>`;
+  // A paragraph that arrives with pending tracked changes (a rebuild writes every paragraph this
+  // way) must carry its marks too, or a tracked insertion would land in the file as plain text.
+  const runs = revisions.length ? trackedRunsMarkup(block, ctx, revisions) : runsMarkup(block, undefined, ctx);
+  return `<w:p>${pPr}${runs}</w:p>`;
 }
 
 function tableMarkup(cells: Array<{ block: DocBlock; xml: string }>, ctx: Context): string {
@@ -274,7 +338,13 @@ const RELS = 'word/_rels/document.xml.rels';
  * archive reads as. Returns null when the change cannot be expressed or does not
  * read back exactly.
  */
-export async function patchDocxRich(archive: RawZip, baseline: DocModel, current: DocModel, fresh = false): Promise<PatchResult | null> {
+export async function patchDocxRich(
+  archive: RawZip,
+  baseline: DocModel,
+  current: DocModel,
+  fresh = false,
+  tracked: readonly Revision[] = [],
+): Promise<PatchResult | null> {
   const baseBlocks = baseline.blocks ?? [];
   const curBlocks = current.blocks ?? [];
   if (baseBlocks.length !== baseline.paragraphs.length || curBlocks.length !== current.paragraphs.length) return null;
@@ -441,17 +511,22 @@ export async function patchDocxRich(archive: RawZip, baseline: DocModel, current
   /* changed paragraphs */
   const curIndexById = new Map<number, number>();
   curBlocks.forEach((b, i) => curIndexById.set(b.id, i));
+  /** The pending tracked changes of one block: what the file must hold as w:ins/w:del. */
+  const revisionsOf = (target: DocBlock): Revision[] => tracked.filter((rev) => rev.status === 'pending' && rev.block === target.id);
   for (const [ci, block] of curBlocks.entries()) {
     const bi = baseIndex.get(block.id);
     if (bi === undefined) continue;
     const before = baseBlocks[bi];
+    const revisions = revisionsOf(block);
     const runsSame = unchanged(block, before);
     const formatSame = sameFormat(baseline.formats?.[bi], current.formats?.[ci]);
-    if (runsSame && formatSame) continue;
+    // A paragraph with a pending tracked change is always rewritten: its runs must carry the marks
+    // even when the text and the format are what the file already says (a decision can leave both).
+    if (runsSame && formatSame && !revisions.length) continue;
     const p = paragraphs[bi];
     const pPrRaw = pPrOf(p);
     const pPr = formatSame ? pPrRaw : paraPropsMarkup(pPrRaw, baseline.formats?.[bi], current.formats?.[ci], numIdFor);
-    if (runsSame) {
+    if (runsSame && !revisions.length) {
       // Only the paragraph properties changed: replace (or add) the pPr alone.
       const existing = child(p, 'pPr');
       if (existing) edits.push({ start: existing.start, end: existing.end, xml: pPr });
@@ -460,7 +535,7 @@ export async function patchDocxRich(archive: RawZip, baseline: DocModel, current
       continue;
     }
     if (block.locked || before.locked) return null;
-    const inner = pPr + runsMarkup(block, before, ctx);
+    const inner = pPr + (revisions.length ? trackedRunsMarkup(block, ctx, revisions) : runsMarkup(block, before, ctx));
     if (p.selfClosing) edits.push({ start: p.start, end: p.end, xml: `${xml.slice(p.start, p.end - 2).trimEnd()}>${inner}</${p.name}>` });
     else edits.push({ start: p.openEnd, end: xml.lastIndexOf('<', p.end - 1), xml: inner });
   }
@@ -495,14 +570,14 @@ export async function patchDocxRich(archive: RawZip, baseline: DocModel, current
         while (j < group.length && group[j].cell?.table === table) {
           const b = group[j];
           const tpl = tplOf(b);
-          cells.push({ block: b, xml: newParagraph(b, tpl.pPr, tpl.format, current.formats?.[start + j], ctx) });
+          cells.push({ block: b, xml: newParagraph(b, tpl.pPr, tpl.format, current.formats?.[start + j], ctx, revisionsOf(b)) });
           j++;
         }
         markup += tableMarkup(cells, ctx);
         continue;
       }
       const tpl = tplOf(block);
-      markup += newParagraph(block, tpl.pPr, tpl.format, current.formats?.[ci], ctx);
+      markup += newParagraph(block, tpl.pPr, tpl.format, current.formats?.[ci], ctx, revisionsOf(block));
       j++;
     }
     // Where: after the previous kept paragraph, else before the next, else at the body's start.
@@ -593,6 +668,11 @@ export async function patchDocxRich(archive: RawZip, baseline: DocModel, current
     const reread = await readDocxDocument(bytes);
     for (const [ci, block] of curBlocks.entries()) {
       const bi = baseIndex.get(block.id);
+      // A paragraph whose tracked changes were just written holds MORE runs than the model: the
+      // deleted words are still in the file, as `w:delText`, which is exactly what `w:del` means.
+      // Its text is still checked above (`readDocx` reads only `w:t`, so the deleted words are not
+      // part of it); comparing its run properties one-for-one would reject a correct file.
+      if (revisionsOf(block).length) continue;
       const touched = bi === undefined || !unchanged(block, baseBlocks[bi]) || !sameFormat(baseline.formats?.[bi], current.formats?.[ci]);
       if (!touched) continue;
       const back = reread.blocks[ci];
@@ -675,7 +755,7 @@ export function emptyDocxPackage(rtl: boolean): Uint8Array {
  * their formatting, but anything that pointed at another part of the original
  * (pictures, hyperlinks) becomes plain text. The window warns before it does this.
  */
-export async function rebuildDocxRich(model: DocModel): Promise<Uint8Array | null> {
+export async function rebuildDocxRich(model: DocModel, tracked: readonly Revision[] = []): Promise<Uint8Array | null> {
   const base = emptyDocxPackage(false);
   const archive = readRawZip(base);
   const read = await readDocxDocument(base);
@@ -688,7 +768,7 @@ export async function rebuildDocxRich(model: DocModel): Promise<Uint8Array | nul
     runs: b.runs.map((r) => (r.t === 'text' ? { ...r, rpr: '', base: {}, src: undefined } : { ...r, src: undefined })),
   }));
   const current: DocModel = { kind: 'docx', paragraphs: model.paragraphs.slice(), blocks, ...(model.formats ? { formats: model.formats } : {}) };
-  const out = await patchDocxRich(archive, baseline, current, true);
+  const out = await patchDocxRich(archive, baseline, current, true, tracked);
   if (!out) return null;
   const data = await entryData(readRawZip(out.bytes), 'word/document.xml');
   return data ? out.bytes : null;

@@ -468,7 +468,9 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
 
   /** Tracking is a per-document toggle; the log records every change made while it is on. */
   let tracking = false;
-  let revLog: RevisionLog = emptyLog();
+  // A document opened from a file that already carries tracked changes starts with them pending:
+  // the marks are the file's own, and the save writes them back.
+  let revLog: RevisionLog = doc()?.tracked ?? emptyLog();
   /** The review panel, when it is open. */
   let reviewPanel: HTMLElement | null = null;
 
@@ -578,7 +580,9 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     close.addEventListener('click', () => toggleReviewPanel(false));
     head.append(close);
     const list = el('div', 'fo-review-list');
-    panel.append(head, list);
+    // What the panel says about the FILE is the truth, not a promise: the changes wait for a
+    // decision here, and a save writes them as w:ins/w:del and reads them back on open.
+    panel.append(head, el('div', 'fo-review-note', t('office.revNotSaved')), list);
     panel.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); toggleReviewPanel(false); } });
     root.append(panel);
     reviewPanel = panel;
@@ -1816,6 +1820,9 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
         const m = doc();
         if (m) void ctx.exportFile(toOdt(m, { title: odtTitleOf(m, 'Untitled'), created: new Date().toISOString() }), 'odt', ODT_MIME);
       },
+      // What the save must write into the file as `w:ins`/`w:del`: the changes still waiting for a
+      // decision. An accepted or rejected one is already in the document's own text.
+      pendingRevisions: (): Revision[] => pendingRevisions(revLog),
     },
-  } as Editor & { printDoc(): void; exportHtml(): void; exportMd(): void; exportOdt(): void };
+  } as Editor & { printDoc(): void; exportHtml(): void; exportMd(): void; exportOdt(): void; pendingRevisions(): Revision[] };
 }

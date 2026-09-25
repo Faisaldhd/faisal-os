@@ -12,6 +12,7 @@
 import type { Deck } from './impress/deck';
 import { MAX_COLS, extensionOf } from '../viewer/formats';
 import type { DocBlock } from './writer/types';
+import type { RevisionLog } from './writer/revisions';
 import { diffText, replaceText } from './writer/docops';
 import { shiftSheetFormat, type SheetFormat } from './grid/sheetfmt';
 import { shiftFormula } from './formula/index';
@@ -94,6 +95,12 @@ export interface DocModel {
    * older save path and its tests use.
    */
   blocks?: DocBlock[];
+  /**
+   * Tracked changes the FILE carries (`w:ins`/`w:del`), read when it was opened. The Writer shows
+   * them as pending marks and writes them back on save, so a change made elsewhere is never
+   * presented as text that is already decided.
+   */
+  tracked?: RevisionLog;
 }
 export interface SheetsModel {
   kind: 'xlsx' | 'csv';

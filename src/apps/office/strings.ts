@@ -842,7 +842,7 @@ defineStrings('office', {
     revOnCount: 'تتبّع التعديلات: مفعّل · {n} تغييرًا',
     revOff: 'تتبّع التعديلات: متوقف',
     revNone: 'لا تغييرات معلّقة.',
-    revNotSaved: 'التتبّع يعمل داخل هذه الجلسة فقط، والعلامات لا تُكتب في ملف .docx بعد.',
+    revNotSaved: 'التغييرات المعلّقة تُكتب في ملف .docx بوسمَي w:ins وw:del مع الكاتب والتاريخ، وتُقرأ عند فتح الملف من جديد.',
   },
   en: {
     groupTracking: 'Tracking',
@@ -861,7 +861,7 @@ defineStrings('office', {
     revOnCount: 'Track changes: on · {n} changes',
     revOff: 'Track changes: off',
     revNone: 'No pending changes.',
-    revNotSaved: 'Tracking lives in this session only; the marks are not written into the .docx yet.',
+    revNotSaved: 'Pending changes are written into the .docx as w:ins/w:del with their author and date, and read back when the file is opened again.',
   },
 });
 
