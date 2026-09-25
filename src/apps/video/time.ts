@@ -80,6 +80,42 @@ export function formatDuration(seconds: number): string {
 /** Nominal frame length of a 30 fps timeline; the real value comes from the media. */
 export const DEFAULT_FPS = 30;
 
+/**
+ * The label on the timeline ruler: `m:ss.ff` — the frames come after a DOT, so a tick reads as a
+ * time and a frame instead of three equal colon-separated numbers, and two labels a frame apart
+ * can never look the same. Past an hour it becomes `h:mm:ss.ff` (the hours are never dropped: a
+ * two-hour project would otherwise show `5:12.00` as if it were five seconds).
+ *
+ * `frames: false` is for a zoomed-out ruler whose ticks are seconds apart, where `.00` on every
+ * label is noise: the label then says `m:ss`, honestly second-resolution.
+ * Anything unreadable (NaN, a negative, an absent rate) becomes a real time, never `NaN`.
+ */
+export function formatRulerTime(
+  seconds: number,
+  fps: number | null | undefined,
+  options: { frames?: boolean } = {},
+): string {
+  const withFrames = options.frames !== false;
+  const rate = typeof fps === 'number' && Number.isFinite(fps) && fps > 0 ? Math.round(fps) : DEFAULT_FPS;
+  const safe = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+  const pad = (n: number, width = 2) => String(n).padStart(width, '0');
+
+  const totalFrames = Math.round(safe * rate);
+  const frames = withFrames ? totalFrames % rate : 0;
+  // Without frames the label is second-resolution: the sub-second part is dropped, not printed
+  // as a fraction of a second.
+  const totalSeconds = withFrames ? (totalFrames - frames) / rate : Math.floor(totalFrames / rate);
+  const secs = totalSeconds % 60;
+  const totalMinutes = (totalSeconds - secs) / 60;
+  const minutes = totalMinutes % 60;
+  const hours = (totalMinutes - minutes) / 60;
+  const framePart = withFrames ? `.${pad(frames, 2)}` : '';
+
+  return hours > 0
+    ? `${hours}:${pad(minutes)}:${pad(secs)}${framePart}`
+    : `${minutes}:${pad(secs)}${framePart}`;
+}
+
 /** A frame duration for stepping: the measured fps when known, else 30. */
 export function frameDuration(fps: number | null | undefined): number {
   const value = typeof fps === 'number' && Number.isFinite(fps) && fps > 0 ? fps : DEFAULT_FPS;
