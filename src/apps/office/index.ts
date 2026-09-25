@@ -1,8 +1,10 @@
 /**
  * Office (المكتب) — Writer, spreadsheets and slides in one window.
  *
- * It is a **store-only** app: the manifest sets `defaultInstalled: false` and
- * `core: false`, so it appears in the Store as something the owner installs.
+ * It ships **installed by default** (the owner's decision, 2026-09-25): the manifest sets
+ * `defaultInstalled: true` and keeps `core: false`, so the editor is in the launcher from the
+ * first run and a .docx or .xlsx opens here instead of the read-only File Viewer — while still
+ * being removable from the Store.
  *
  * This file is the window: the app bar (file name, saved state, undo/redo, Save),
  * the ribbon, the status bar, the start screen, and — unchanged in substance —

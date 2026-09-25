@@ -72,8 +72,8 @@ export const OPEN_EXTENSIONS: string[] = SOURCE_FORMAT_LIST.flatMap((id) => FORM
 /**
  * The extension list the MANIFEST declares (`opens`). It is the same list the editor actually
  * attempts to decode, so the kernel's "first installed app that declares this extension" rule
- * (src/kernel/apps.ts:192) sends images here — but only after the owner installs the app from
- * the Store, which is why `defaultInstalled: false` and this list have to agree.
+ * (src/kernel/apps.ts:192) sends images here: the editor is installed by default (the owner's
+ * decision, 2026-09-25), so this list is in force from the first run.
  *
  * `.avif` is included because the app really is built to open it: the runtime probe decides
  * per browser, and a build without an AVIF decoder refuses the file with a message that names

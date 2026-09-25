@@ -32,11 +32,11 @@ export const BUILTIN_APPS: LazyAppModule[] = [
   lazy(terminal, () => import('./terminal')),
   lazy(editor, () => import('./editor')),
   /*
-   * The four store-only editors are registered BEFORE the plain viewers (images,
-   * viewer), because `appForFile` picks the first INSTALLED app that declares a file
-   * extension (src/kernel/apps.ts:192). They are `defaultInstalled: false`, so they
-   * change nothing until the owner installs them from the Store — and once he does,
-   * double-clicking a .docx or a .png opens the editor rather than the viewer.
+   * The four suite editors are registered BEFORE the plain viewers (images, viewer), because
+   * `appForFile` picks the first INSTALLED app that declares a file extension
+   * (src/kernel/apps.ts:192). All four are installed by default (the owner's decision,
+   * 2026-09-25), so from the first run double-clicking a .docx or a .png opens the editor
+   * rather than the viewer — and each one can still be removed from the Store.
    */
   lazy(office, () => import('./office')),
   lazy(pdf, () => import('./pdf')),
