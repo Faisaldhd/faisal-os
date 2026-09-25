@@ -57,7 +57,7 @@
   <header>
     <div>
       <h1>خارطة <span>Fai$al OS</span> — ما تمّ وما تبقّى</h1>
-      <div style="color:var(--dim);font-size:14px">تقرير حالة للإصدار 0.2 · سطح مكتب كامل في المتصفح + تطبيق Windows من نفس الكود</div>
+      <div style="color:var(--dim);font-size:14px">تقرير حالة للإصدار 1.0.2 · سطح مكتب كامل في المتصفح + تطبيق Windows من نفس الكود</div>
     </div>
     <div class="meta">
       ٢٥ سبتمبر ٢٠٢٦<br>
@@ -66,12 +66,12 @@
   </header>
 
   <div class="kpis">
-    <div class="kpi"><b>٣١</b><small>PR دخلت main في هذه الحملة (#86 → #116)</small></div>
+    <div class="kpi"><b>٣١</b><small>PR دخلت main في هذه الحملة (#86 → #116) · فريقا DeepSeek وClaude</small></div>
     <div class="kpi"><b>٢٥٦٩</b><small>اختبارًا ناجحًا · 157 ملفًا · <span class="ok">0 فشل</span></small></div>
     <div class="kpi"><b>٢٠</b><small>تطبيقًا داخل النظام</small></div>
     <div class="kpi"><b>١٢٦٬٩٣٩</b><small>سطرًا في <code>src/</code></small></div>
     <div class="kpi"><b class="ok">٠</b><small>أخطاء Console في كل إثبات</small></div>
-    <div class="kpi"><b class="ok">٠</b><small>عمل مكرر دخل main</small></div>
+    <div class="kpi"><b class="ok">٠</b><small>عمل مكرر دخل main (حُذف المكرر قبل الدمج)</small></div>
   </div>
 
   <h2>تمّ ✅</h2>
@@ -96,6 +96,14 @@
       </ul>
     </div>
     <div class="card done">
+      <h3>المكتب — Impress</h3>
+      <ul>
+        <li>إنشاء · تكرار · حذف · ترتيب الشرائح بالسحب</li>
+        <li><b>تحرير النص داخل الشريحة</b></li>
+        <li>انتقالات وحركات · وضع المُحاضر</li>
+      </ul>
+    </div>
+    <div class="card done">
       <h3>PDF</h3>
       <ul>
         <li><b>تشفير AES‑128</b> بكلمة مرور وصلاحيات (نسخ/طباعة/تعديل)</li>
@@ -111,13 +119,14 @@
         <li><b>HEIC/HEIF</b> بحمل كسول ومستثنى من التخزين المسبق</li>
         <li>تحويل حر بمقابض · مصغّرات فلاتر من الصورة</li>
         <li><b>مساطر</b> بعلامات مطابقة للهندسة (فرق ≤1px)</li>
+        <li><b>أداء 12MP</b>: كل فلتر مختبَر على 4000×3000 (#113)</li>
       </ul>
     </div>
     <div class="card done">
       <h3>الفيديو</h3>
       <ul>
         <li>تصدير <b>MP4 حقيقي</b> · تحويل <b>HEVC</b></li>
-        <li>مسطرة زمنية · إنشاء وترتيب الشرائح</li>
+        <li>مسطرة زمنية · حفظ باسم موحّد</li>
         <li>زر التحويل في مكان رسالة الكودك</li>
         <li>حارس «التعليق الصامت» مع مهلة صريحة</li>
       </ul>
@@ -158,7 +167,7 @@
       <tr><td>٥</td><td><b>Calc: جداول محورية · دوال أكثر</b></td><td class="sz">كبير</td><td>تحليل بيانات</td></tr>
       <tr><td>٦</td><td><b>الفيديو: حفظ النبرة عند تغيير السرعة · تصدير أسرع من الوقت الحقيقي</b></td><td class="sz">متوسط</td><td>جودة التحرير</td></tr>
       <tr><td>٧</td><td><b>Impress: الشريحة الرئيسية · SmartArt/خطوط ربط</b></td><td class="sz">متوسط</td><td>احترافية العروض</td></tr>
-      <tr><td>٨</td><td><b>الصور: قوائم فلاتر مخصّصة · توثيق أداء 12MP</b></td><td class="sz">صغير</td><td>صقل</td></tr>
+      <tr><td>٨</td><td><b>الصور: قوائم فلاتر مخصّصة</b></td><td class="sz">صغير</td><td>صقل</td></tr>
       <tr><td>٩</td><td><b>CI: بوابات E2E وأداء</b></td><td class="sz">صغير‑متوسط</td><td>منع الانحدار مبكرًا</td></tr>
       <tr><td>١٠</td><td><b>تحقق فعلي على تطبيق Windows المثبّت</b> (تثبيت + تحديث تلقائي)</td><td class="sz">صغير</td><td>يحتاج جهازك</td></tr>
     </tbody>
@@ -189,7 +198,7 @@
       <ul>
         <li>أُوقف <b>قبل كتابة الكود</b> بمقارنة الخطة بالمدموج</li>
         <li>حُذفت مهمتان ومهندسان أُوقفا لحظة اكتشاف التغطية</li>
-        <li><b>صفر عمل مكرر دخل main</b></li>
+        <li>وقع تكرار بين الفريقين (Calc ومقبض التعبئة) و<b>حُذفت النسخة المكررة قبل الدمج</b></li>
       </ul>
     </div>
     <div class="card"><h3>٤ <span class="pill">اعتذارات مسؤولة</span></h3>
