@@ -36,6 +36,7 @@ import {
   type Project,
   type Track,
 } from './project';
+import { DEFAULT_FPS, formatRulerTime } from './time';
 import { peaksSlice } from './render-math';
 import { thumbAt, type MediaItem } from './media';
 import { el, iconButton, s, setIcon } from './ui';
@@ -194,7 +195,13 @@ export class TimelineView {
   private buildHead(track: Track): HTMLElement {
     const head = el('div', `fvs-tl-head is-${track.kind}`);
     const label = el('span', 'fvs-tl-head-label');
-    label.append(icon(TRACK_ICON[track.kind]), el('span', 'fvs-tl-head-name', this.trackName(track)));
+    const name = this.trackName(track);
+    const nameEl = el('span', 'fvs-tl-head-name', name);
+    // The head column is narrow on a phone: the name may be shortened on screen, but the full
+    // one is always one hover (or one screen reader) away.
+    nameEl.title = name;
+    nameEl.dir = 'auto';
+    label.append(icon(TRACK_ICON[track.kind]), nameEl);
     head.append(label);
     const audible = track.kind !== 'text' && track.kind !== 'overlay' ? true : track.kind === 'overlay';
     if (audible) {
@@ -250,6 +257,9 @@ export class TimelineView {
     }
     const label = el('span', 'fvs-clip-label', name);
     label.dir = 'auto';
+    // A clip can be narrower than its name at any zoom: the label is shortened on screen and the
+    // whole name is in the tooltip, never silently cut with no way to read it.
+    label.title = name;
     node.append(label);
     if (clip.type !== 'text') {
       const badges: string[] = [];
@@ -360,7 +370,8 @@ export class TimelineView {
       if (tick.major) {
         ctx.globalAlpha = 1;
         ctx.fillStyle = text;
-        ctx.fillText(step < 1 ? timecode(tick.time) : timecode(tick.time).slice(0, 5), x + 4, 6);
+        // `m:ss.ff` while the ticks are sub-second; `m:ss` when they are whole seconds apart.
+        ctx.fillText(formatRulerTime(tick.time, DEFAULT_FPS, { frames: step < 1 }), x + 4, 6);
       }
     }
   }

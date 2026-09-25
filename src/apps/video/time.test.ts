@@ -3,6 +3,7 @@ import {
   clampTime,
   estimateBytes,
   formatDuration,
+  formatRulerTime,
   formatTime,
   frameDuration,
   progressFraction,
@@ -12,6 +13,58 @@ import {
   timestampToken,
   wholeRange,
 } from './time';
+
+/**
+ * The ruler label. This is the one place a frame-accurate time is read on the timeline, and its
+ * whole point is that two ticks a frame apart never look the same — so the checks are written
+ * against the boundary frames, the hour rollover and the rates a source file can really have.
+ */
+describe('formatRulerTime', () => {
+  it('reads as time and frames: m:ss.ff', () => {
+    expect(formatRulerTime(0, 30)).toBe('0:00.00');
+    expect(formatRulerTime(1.5, 30)).toBe('0:01.15');
+    expect(formatRulerTime(62.25, 30)).toBe('1:02.08');
+    expect(formatRulerTime(10, 30)).toBe('0:10.00');
+  });
+
+  it('never prints two labels a frame apart the same', () => {
+    const a = formatRulerTime(4, 30);
+    const b = formatRulerTime(4 + 1 / 30, 30);
+    const c = formatRulerTime(4 + 29 / 30, 30);
+    expect(a).toBe('0:04.00');
+    expect(b).toBe('0:04.01');
+    expect(c).toBe('0:04.29');
+    expect(new Set([a, b, c]).size).toBe(3);
+  });
+
+  it('carries the hours instead of dropping them', () => {
+    expect(formatRulerTime(3600, 30)).toBe('1:00:00.00');
+    expect(formatRulerTime(3661.2, 25)).toBe('1:01:01.05');
+    expect(formatRulerTime(7325.04, 25)).toBe('2:02:05.01');
+  });
+
+  it('follows the rate it is given, and falls back to 30 rather than NaN', () => {
+    expect(formatRulerTime(2, 24)).toBe('0:02.00');
+    expect(formatRulerTime(2 + 23 / 24, 24)).toBe('0:02.23');
+    expect(formatRulerTime(1, 60)).toBe('0:01.00');
+    expect(formatRulerTime(1 + 59 / 60, 60)).toBe('0:01.59');
+    expect(formatRulerTime(3, null)).toBe('0:03.00');
+    expect(formatRulerTime(3, 0)).toBe('0:03.00');
+    expect(formatRulerTime(3, Number.NaN)).toBe('0:03.00');
+  });
+
+  it('drops the frames only when the caller says the ruler is in seconds', () => {
+    expect(formatRulerTime(62.25, 30, { frames: false })).toBe('1:02');
+    expect(formatRulerTime(3661.2, 30, { frames: false })).toBe('1:01:01');
+    expect(formatRulerTime(0, 30, { frames: false })).toBe('0:00');
+  });
+
+  it('treats an unreadable position as the start, never as NaN', () => {
+    expect(formatRulerTime(-5, 30)).toBe('0:00.00');
+    expect(formatRulerTime(Number.NaN, 30)).toBe('0:00.00');
+    expect(formatRulerTime(Number.POSITIVE_INFINITY, 30)).toBe('0:00.00');
+  });
+});
 
 describe('formatTime', () => {
   it('formats minutes, seconds and milliseconds', () => {
