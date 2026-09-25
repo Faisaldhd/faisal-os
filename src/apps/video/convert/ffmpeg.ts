@@ -7,7 +7,9 @@
  * Cancel terminates ffmpeg's worker at once; nothing is returned, so nothing is written.
  */
 import core from 'virtual:ffmpeg-core';
-import { chooseTarget, ffmpegArgs, inputName, joinParts, logDuration, logTime, outputName, progressOf, type ConvertTarget } from './plan';
+import {
+  chooseTarget, ffmpegArgs, inputName, joinParts, logDuration, logTime, outputName, progressOf, withTimeout, type ConvertTarget,
+} from './plan';
 
 export class ConvertCancelled extends Error {
   constructor() {
@@ -64,7 +66,8 @@ export async function convertVideo(file: Blob, fileName: string, signal: AbortSi
   try {
     wasmURL = await wasmUrl(signal, (f) => onProgress({ phase: 'download', fraction: f }));
     if (signal.aborted) throw new ConvertCancelled();
-    await ffmpeg.load({ coreURL: abs(core.core), wasmURL });
+    // Bounded: a worker that never boots leaves this promise pending forever (see plan.ts).
+    await withTimeout(ffmpeg.load({ coreURL: abs(core.core), wasmURL }));
     onProgress({ phase: 'convert', fraction: 0 });
 
     let log = '';

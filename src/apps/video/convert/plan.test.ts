@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { chooseTarget, ffmpegArgs, hasEncoder, inputName, joinParts, logDuration, logTime, outputName, PART_LIMIT, planParts, progressOf } from './plan';
+import {
+  chooseTarget, CONVERT_START_TIMEOUT_MS, ConvertTimeout, ffmpegArgs, hasEncoder, inputName, joinParts, logDuration, logTime,
+  outputName, PART_LIMIT, planParts, progressOf, withTimeout,
+} from './plan';
 
 describe('wasm parts', () => {
   it('cuts a 31 MB file into parts no bigger than 20 MiB, covering every byte once', () => {
@@ -75,5 +78,44 @@ describe('progress', () => {
     expect(progressOf(80, 62.5)).toBe(1);
     expect(progressOf(5, null)).toBe(0);
     expect(progressOf(null, 10)).toBe(0);
+  });
+});
+
+/**
+ * The converter's start guard. `@ffmpeg/ffmpeg` registers no `onerror` on its module worker, so
+ * a worker that never boots (a dev server refusing the file, a proxy, an offline CDN) leaves
+ * `load()` pending forever — the dialog stayed at «downloading the converter… 100%» with nothing
+ * to click. These pin the promise behaviour that turns that into a message and a retry.
+ */
+describe('withTimeout', () => {
+  it('passes the value through when the work settles in time', async () => {
+    await expect(withTimeout(Promise.resolve('loaded'), 1000)).resolves.toBe('loaded');
+  });
+
+  it('keeps the original rejection instead of a timeout', async () => {
+    await expect(withTimeout(Promise.reject(new Error('boom')), 1000)).rejects.toThrow('boom');
+  });
+
+  it('rejects with ConvertTimeout when the work never settles', async () => {
+    const never = new Promise<never>(() => { /* a worker that never answers */ });
+    await expect(withTimeout(never, 20)).rejects.toBeInstanceOf(ConvertTimeout);
+  });
+
+  it('names the failure so the dialog can translate it', async () => {
+    await expect(withTimeout(new Promise(() => {}), 10).catch((e: Error) => e.name)).resolves.toBe('ConvertTimeout');
+  });
+
+  it('ignores a late settlement, so a hang cannot become an unhandled rejection', async () => {
+    let resolveWork: (v: string) => void = () => {};
+    const work = new Promise<string>((r) => { resolveWork = r; });
+    await expect(withTimeout(work, 10)).rejects.toBeInstanceOf(ConvertTimeout);
+    resolveWork('too late'); // must be swallowed, not thrown
+    await new Promise((r) => setTimeout(r, 20));
+    expect(true).toBe(true);
+  });
+
+  it('waits long enough by default for a slow device to boot the wasm', () => {
+    expect(CONVERT_START_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
+    expect(CONVERT_START_TIMEOUT_MS).toBeLessThanOrEqual(60_000);
   });
 });

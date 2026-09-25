@@ -84,7 +84,7 @@ import { button, el, formatClock, iconButton, openModal, s, segmented, setIcon }
 import { exportFormatChoice, projectFormatChoice, projectNameFromPath } from './save-target';
 import { saveAsDialog } from '../../shell/save-as';
 import { dialogsFor } from './app-dialogs';
-import { CONVERT_LIMIT } from './convert/plan';
+import { CONVERT_LIMIT, CONVERT_START_TIMEOUT_MS, ConvertTimeout } from './convert/plan';
 import type { StudioEngine, EngineMedia } from './engine-port';
 import { ExportCancelled } from './engine-port';
 import { CanvasStudioEngine, exportSettings, hasWebCodecs, planMp4, type Mp4Plan } from './engine';
@@ -1637,6 +1637,11 @@ function launch(ctx: AppContext): void {
     modal.body.append(intro, progressWrap);
     const cancel = button(s('cancel'), 'fvs-btn');
     const go = button(s('convert'), 'fvs-btn is-primary', 'convert');
+    // The button's label carries the state: «Convert», then «Try again» after a failed start.
+    const setButtonLabel = (btn: HTMLButtonElement, label: string): void => {
+      const span = btn.querySelector('.fvs-btn-label');
+      if (span) span.textContent = label;
+    };
     modal.actions.append(cancel, go);
     let running: AbortController | null = null;
     cancel.addEventListener('click', () => {
@@ -1654,6 +1659,7 @@ function launch(ctx: AppContext): void {
       running = controller;
       exportRunning = controller;
       go.disabled = true;
+      setButtonLabel(go, s('convert'));
       progressWrap.hidden = false;
       bar.value = 0;
       text.textContent = s('convertDownloading', { percent: 0 });
@@ -1687,6 +1693,11 @@ function launch(ctx: AppContext): void {
       } catch (err) {
         if (controller.signal.aborted || (err instanceof Error && err.name === 'ConvertCancelled')) {
           text.textContent = s('convertCancelled');
+        } else if (err instanceof ConvertTimeout) {
+          // The worker never booted (see plan.ts): say that plainly and offer the retry, instead
+          // of a dialog that waits for an answer that is never coming.
+          text.textContent = s('convertStartFailed', { seconds: Math.round(CONVERT_START_TIMEOUT_MS / 1000) });
+          setButtonLabel(go, s('convertRetry'));
         } else {
           text.textContent = s('convertFailed', { reason: err instanceof Error ? err.message : '' });
         }
@@ -1695,8 +1706,7 @@ function launch(ctx: AppContext): void {
       } finally {
         running = null;
         exportRunning = null;
-        const label = cancel.querySelector('.fvs-btn-label');
-        if (label) label.textContent = s('close');
+        setButtonLabel(cancel, s('close'));
       }
     })());
   }
