@@ -79,7 +79,9 @@ import {
 import { absoluteFallback, parseProjectFile, PROJECT_EXTENSION, ProjectFileError, serializeProject } from './project-file';
 import { isTypingTarget, matchShortcut, shuttle, type ShortcutAction } from './shortcuts';
 import { TimelineView } from './timeline-view';
-import { button, el, formatClock, iconButton, openModal, promptName, s, segmented, setIcon } from './ui';
+import { button, el, formatClock, iconButton, openModal, s, segmented, setIcon } from './ui';
+import { exportFormatChoice, projectFormatChoice, projectNameFromPath } from './save-target';
+import { saveAsDialog } from '../../shell/save-as';
 import { dialogsFor } from './app-dialogs';
 import { CONVERT_LIMIT } from './convert/plan';
 import type { StudioEngine, EngineMedia } from './engine-port';
@@ -1181,13 +1183,42 @@ function launch(ctx: AppContext): void {
 
   async function saveProject(saveAs = false): Promise<boolean> {
     if (mode !== 'editor') return false;
-    let path = projectPath;
-    if (!path || saveAs) {
-      const name = await promptName(root, s('saveProjectTitle'), s('projectName'), project.name || s('untitledProject'), s('save'));
-      if (!name) return false;
-      path = `${VIDEOS_DIR}/${safeName(name)}${PROJECT_EXTENSION}`;
-      project = { ...project, name };
-    }
+    if (!projectPath || saveAs) return saveProjectAs();
+    return writeProject(projectPath);
+  }
+
+  /**
+   * «حفظ باسم» — the shared shell dialog (src/shell/save-as.ts), which replaces the app-local
+   * name prompt. It browses the folders inside /home/user, offers a new folder, confirms a
+   * replacement (exactly one `.bak`) and verifies the file by reading it back before reporting
+   * "saved"; a cancelled dialog writes nothing.
+   */
+  async function saveProjectAs(): Promise<boolean> {
+    const started = projectPath;
+    const outcome = await saveAsDialog({
+      vfs: sys.vfs,
+      host: win.content,
+      title: s('saveProjectTitle'),
+      dir: started ? dirname(started) : VIDEOS_DIR,
+      name: project.name || s('untitledProject'),
+      formats: [projectFormatChoice(s('projectFormat'))],
+      format: 'fvproj',
+      saveLabel: s('save'),
+      encode: async (target) => new TextEncoder().encode(serializeProject(project, library.refs(), target.dir)),
+    });
+    if (outcome.status !== 'saved') return false;
+    projectPath = outcome.path;
+    project = { ...project, name: projectNameFromPath(outcome.path) || project.name };
+    dirty = false;
+    writeJson(AUTOSAVE_KEY, null);
+    rememberRecent({ path: outcome.path, name: project.name || basename(outcome.path), savedAt: Date.now() });
+    syncChrome();
+    status(s('projectSaved', { path: outcome.path }));
+    return true;
+  }
+
+  /** A plain save: the same file, one `.bak`, written and read back before "saved". */
+  async function writeProject(path: string): Promise<boolean> {
     const dir = dirname(path);
     try {
       const text = serializeProject(project, library.refs(), dir);
@@ -1351,9 +1382,9 @@ function launch(ctx: AppContext): void {
     progressText.setAttribute('role', 'status');
     progressText.setAttribute('aria-live', 'polite');
     progressWrap.append(bar, progressText);
-    const result = el('div', 'fvs-export-result');
-    result.hidden = true;
-    form.append(nameField, where, kindSeg, containerRow, resRow, fpsRow, qualityRow, estimate, notes, progressWrap, result);
+    // No result area here any more: the shared Save as dialog writes and verifies the file, and
+    // the result (play it / show it in Files) is its own surface once that dialog is done.
+    form.append(nameField, where, kindSeg, containerRow, resRow, fpsRow, qualityRow, estimate, notes, progressWrap);
     modal.body.append(form);
     const cancel = button(s('cancel'), 'fvs-btn');
     const go = button(s('exportStart'), 'fvs-btn is-primary', 'exportIcon');
@@ -1457,7 +1488,6 @@ function launch(ctx: AppContext): void {
       nameInput.disabled = true;
       go.disabled = true;
       progressWrap.hidden = false;
-      result.hidden = true;
       const started = performance.now();
       const onProgress = (fraction: number) => {
         bar.value = Math.round(fraction * 1000);
@@ -1501,13 +1531,29 @@ function launch(ctx: AppContext): void {
         if (controller.signal.aborted) throw new ExportCancelled();
         progressText.textContent = s('exportSaving');
         const bytes = new Uint8Array(await blob.arrayBuffer());
-        const path = await writeChecked(target.dir, `${name}${ext}`, bytes);
-        // Read the file back and measure what a player will really see.
-        const back = await sys.vfs.readFile(path);
-        const measured = await measureDuration(new Blob([back.slice()], { type: blob.type }));
         bar.value = 1000;
         progressText.textContent = s('exportDone');
-        showResult(path, back.length, measured);
+        // The shared Save as dialog owns the write, so the export gets the same rules as every
+        // other save in the suite: browse the folders, name the file, confirm a replacement
+        // (one `.bak`), read the file back before "saved", and "Download to my device".
+        const choice = exportFormatChoice(ext, blob.type);
+        modal.close();
+        const outcome = await saveAsDialog({
+          vfs: sys.vfs,
+          host: win.content,
+          title: s('exportTitle'),
+          dir: target.dir,
+          name,
+          formats: [choice],
+          format: choice.value,
+          saveLabel: s('save'),
+          encode: async () => bytes,
+        });
+        if (outcome.status !== 'saved') { status(s('exportCancelled')); return; }
+        // Read the file back and measure what a player will really see.
+        const back = await sys.vfs.readFile(outcome.path);
+        const measured = await measureDuration(new Blob([back.slice()], { type: blob.type }));
+        showExportResult(outcome.path, back.length, measured);
       } catch (err) {
         if (err instanceof ExportCancelled || controller.signal.aborted) {
           progressText.textContent = s('exportCancelled');
@@ -1528,29 +1574,32 @@ function launch(ctx: AppContext): void {
       }
     };
 
-    const showResult = (path: string, size: number, measured: number) => {
-      result.hidden = false;
-      result.replaceChildren();
-      const line = el('p', 'fvs-result-line');
-      line.append(icon('check'), el('span', undefined, s('exportSaved', { path, size: formatBytes(size, sys.locale()), len: measured > 0 ? formatClock(measured) : '—' })));
-      line.dir = 'auto';
-      const actions = el('div', 'fvs-action-row');
-      const play = button(s('playExport'), 'fvs-btn is-primary', 'play');
-      play.addEventListener('click', () => {
-        modal.close();
-        void (async () => {
-          const item = await library.addPath(path);
-          setMode('player');
-          player.add([item.id], true);
-        })();
-      });
-      const files = button(s('showInFiles'), 'fvs-btn', 'folder');
-      files.addEventListener('click', () => void sys.apps.launch('org.faisal.Files', [dirname(path)]));
-      actions.append(play, files);
-      result.append(line, actions);
-      go.hidden = true;
-      status(s('exportSavedShort', { path }));
-    };
+  }
+
+  /**
+   * The result of an export, as its own surface: the shared Save as dialog has already written
+   * and verified the file, so this only offers what to do with it.
+   */
+  function showExportResult(path: string, size: number, measured: number): void {
+    const done = openModal(root, s('exportTitle'));
+    const line = el('p', 'fvs-result-line');
+    line.append(icon('check'), el('span', undefined, s('exportSaved', { path, size: formatBytes(size, sys.locale()), len: measured > 0 ? formatClock(measured) : '—' })));
+    line.dir = 'auto';
+    const actions = el('div', 'fvs-action-row');
+    const play = button(s('playExport'), 'fvs-btn is-primary', 'play');
+    play.addEventListener('click', () => {
+      done.close();
+      void (async () => {
+        const item = await library.addPath(path);
+        setMode('player');
+        player.add([item.id], true);
+      })();
+    });
+    const files = button(s('showInFiles'), 'fvs-btn', 'folder');
+    files.addEventListener('click', () => void sys.apps.launch('org.faisal.Files', [dirname(path)]));
+    actions.append(play, files);
+    done.body.append(line, actions);
+    status(s('exportSavedShort', { path }));
   }
 
   /**
