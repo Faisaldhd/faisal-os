@@ -13,7 +13,7 @@
   },
   "keywords": [],
   "author": "Faisal Saeed Al Shahrani",
-  "license": "ISC",
+  "license": "MIT",
   "devDependencies": {
     "@ffmpeg/core": "^0.12.10",
     "@ffmpeg/ffmpeg": "^0.12.15",

@@ -26,3 +26,17 @@ Any 32-bit x86 `bzImage` works if it:
 
 The Terminal passes `console=ttyS0,115200` on the kernel command line.
 If `bzImage`, `seabios.bin` or `vgabios.bin` is missing, the Terminal tells you which file is missing and the Faisal shell keeps working.
+
+## Licenses
+
+The binaries in this directory are third-party components:
+
+| Component | License | Source |
+|-----------|---------|--------|
+| v86 | BSD-2-Clause | https://github.com/copy/v86 |
+| SeaBIOS / SeaVGABIOS | LGPL-3.0 | https://www.seabios.org/ |
+| Linux kernel 6.8.12 | GPL-2.0 | https://kernel.org/ |
+| BusyBox 1.36.1 | GPL-2.0 | https://busybox.net/ |
+
+Full license texts are in `LICENSES/`.
+These components are not owned by the author.

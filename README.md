@@ -241,3 +241,22 @@ Bundled third-party components keep their own licenses: v86 (BSD-2-Clause), SeaB
 - [public/v86/README.md](public/v86/README.md) — the Linux VM assets, their licenses and how to rebuild them.
 - [docs/audit/](docs/audit/) — read-only audit reports: kernel, shell/window manager, apps registry, heavy apps, VFS persistence, build/performance, security and mobile/accessibility/CSS.
 - [docs/AUDIT_ROADMAP.md](docs/AUDIT_ROADMAP.md) — one prioritized plan (P0–P3) built from those reports, with guardrails and open decisions.
+
+## License
+
+Fai$al OS is released under the MIT License. See [LICENSE](LICENSE).
+
+### Third-party components
+
+This project bundles the following components with their own licenses:
+
+- **v86** — BSD-2-Clause
+- **SeaBIOS / SeaVGABIOS** — LGPL-3.0
+- **Linux kernel** — GPL-2.0
+- **BusyBox** — GPL-2.0
+
+Full license texts: `public/v86/LICENSES/`
+Sources and build details: `public/v86/README.md`
+
+These components are not owned by the author and remain under their
+respective original licenses.
