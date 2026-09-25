@@ -23,7 +23,20 @@ import { formatValue } from '../calc/index';
 import { columnName } from '../xml';
 import { MAX_COLS } from '../../viewer/formats';
 import { el, observeSize } from '../ui/dom';
-import type { RibbonTab } from '../ui/ribbon';
+import { PALETTE, type RibbonTab } from '../ui/ribbon';
+import { menuList, openModal, openPopover } from '../ui/popover';
+import { icon } from '../ui/icons';
+import {
+  borderPatch, cellFormatOf, formatRange, overlayStyle, sheetFormatEdit, sheetFormatOf, withColumnWidth, withRowHeight,
+  type BorderPreset, type CellFormat, type SheetFormat,
+} from './sheetfmt';
+import {
+  autoFitColumns, clampColWidth, DEFAULT_COL_WIDTH, draggedWidth, isDoubleAct, MAX_COL_WIDTH,
+} from './virtual';
+import { draggedHeight, isCircularAt, MAX_ROW_HEIGHT, MIN_ROW_HEIGHT, measureCellText, openingWidths, stepDecimals } from './helpers';
+import { fillSeries, fillTarget, type FillCell } from './fill';
+import { validationAt, validationProblem, withoutRules, type RangedValidation } from './rules';
+import { parseListSource, type CompareOp, type ValidationRule } from '../calc/index';
 import type { BookLook, CellStyle } from './xlsxlook';
 import { hasArabic, startsRtl } from '../writer/docops';
 import { isCoarsePointer } from '../../../shell/device';
@@ -168,10 +181,42 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   root.append(fxbar, canvas, tabsBar, note);
 
   const lookOf = (): BookLook['sheets'][number] | undefined => book?.sheets[sheets()?.active ?? 0];
+  /** The owner's formatting of the active sheet (widths, heights, cell formats), saved into the file. */
+  const fmtOf = (): SheetFormat | undefined => sheetFormatOf(ctx.model(), sheets()?.active ?? 0);
+  /** The file's style for a cell (model row) with the owner's formatting on top. */
   const styleAt = (r: number, c: number): CellStyle | undefined => {
     const s = lookOf()?.xf.get(`${r}:${c}`);
-    return s !== undefined ? book?.styles[s] : undefined;
+    return overlayStyle(s !== undefined ? book?.styles[s] : undefined, cellFormatOf(fmtOf(), r, c));
   };
+  /** Auto-fitted widths for a sheet whose file states none (display only). */
+  let autoWidths = new Map<number, number>();
+  const widthOf = (c: number): number => {
+    const own = fmtOf()?.cols?.[c];
+    if (own) return own;
+    const look = lookOf();
+    return look?.widths.get(c) ?? autoWidths.get(c) ?? look?.defaultWidth ?? DEFAULT_COL_WIDTH;
+  };
+  const fitsOnOpen = (): boolean => !(lookOf()?.widths.size);
+  function shownText(r: number, c: number): string {
+    const m = sheets();
+    const value = m ? gridAt(m, m.active)?.rows[r]?.[c] ?? '' : '';
+    const chosen = formatForCell(sheetView.formats, r, c);
+    return chosen ? displayText(value, chosen, getLocale() === 'ar' ? 'ar' : 'en') : displayValue(value, styleAt(r, c)?.numFmt);
+  }
+  function computeAutoWidths(rows: number, count: number): void {
+    autoWidths = new Map();
+    if (!fitsOnOpen()) return;
+    const texts: string[][] = [];
+    for (let r = 0; r < Math.min(rows, 400); r++) { const line: string[] = []; for (let c = 0; c < count; c++) line.push(shownText(r, c)); texts.push(line); }
+    autoWidths = openingWidths(texts, count, measureCellText, lookOf()?.defaultWidth ?? DEFAULT_COL_WIDTH);
+  }
+  /** The width that fits column `c`'s content (double-click on its border). */
+  function fitWidth(c: number): number {
+    const m = sheets();
+    const grid = m ? gridAt(m, m.active) : null;
+    const texts = (grid?.rows ?? []).slice(0, 400).map((_, r) => [shownText(r, c)]);
+    return Math.max(autoFitColumns(texts, [0], measureCellText).get(0) ?? DEFAULT_COL_WIDTH, 40);
+  }
 
   function cellState(r: number, c: number): CellState {
     const m = sheets();
@@ -241,6 +286,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   }
 
   let table: HTMLTableElement | null = null;
+  let colEls: HTMLTableColElement[] = [];
   let body: HTMLTableSectionElement | null = null;
   let spacerTop: HTMLTableRowElement | null = null;
   let spacerBottom: HTMLTableRowElement | null = null;
@@ -378,12 +424,16 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const corner = el('col');
     corner.style.width = '48px';
     colgroup.append(corner);
+    computeAutoWidths(dataRows, Math.min(dataCols, cols));
+    colEls = [];
     for (let c = 0; c < cols; c++) {
       const col = el('col');
-      col.style.width = `${look?.widths.get(c) ?? look?.defaultWidth ?? 88}px`;
+      col.style.width = `${widthOf(c)}px`;
       colgroup.append(col);
+      colEls.push(col);
     }
     tbl.append(colgroup);
+    fitTableWidth(tbl);
     const thead = el('thead');
     const hr = el('tr');
     hr.append(el('th', 'faisal-office-corner fo-corner', ''));
@@ -393,7 +443,11 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       th.dataset.c = String(c);
       // A filtered column says so in its own header: the state must never be invisible.
       if (filtered.has(c)) { th.classList.add('is-filtered'); th.title = t('office.filterTitle', { name: columnName(c) }); }
-      th.addEventListener('click', () => { anchor = { row: 0, col: c }; active = { row: Math.max(0, viewRows - 1), col: c }; select(false); });
+      th.addEventListener('click', (ev) => {
+        if ((ev.target as HTMLElement).closest('.fo-colgrip')) return;
+        anchor = { row: 0, col: c }; active = { row: Math.max(0, viewRows - 1), col: c }; select(false);
+      });
+      th.append(colGrip(c));
       hr.append(th);
     }
     thead.append(hr);
@@ -428,7 +482,9 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   }
 
   function rowHeightOf(r: number): number {
-    return lookOf()?.heights.get(r) ?? rowHeight;
+    // `r` is a drawn row: its height is the model row's (the owner's, else the file's).
+    const mr = modelRowOf(r);
+    return (mr >= 0 ? fmtOf()?.rows?.[mr] ?? lookOf()?.heights.get(mr) : undefined) ?? rowHeight;
   }
 
   /** The rows a scroll position shows, with the spacers that stand in for the rest. */
@@ -515,7 +571,13 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     tr.style.height = `${height}px`;
     // The row number is the SHEET's own number, so hiding rows leaves the others where they were.
     const rh = el('th', 'faisal-office-rowhead fo-rowhead', String((blank ? appendRowOf(r) : mr) + 1));
-    if (!blank) rh.addEventListener('click', () => { anchor = { row: r, col: 0 }; active = { row: r, col: Math.max(0, dataCols - 1) }; select(false); });
+    if (!blank) {
+      rh.addEventListener('click', (ev) => {
+        if ((ev.target as HTMLElement).closest('.fo-rowgrip')) return;
+        anchor = { row: r, col: 0 }; active = { row: r, col: Math.max(0, dataCols - 1) }; select(false);
+      });
+      rh.append(rowGrip(mr, tr));
+    }
     tr.append(rh);
     if (r < frozenRows) {
       tr.classList.add('is-frozen');
@@ -562,6 +624,8 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
         showResult();
       });
       input.addEventListener('input', () => { if (mr < 0) return; editing = true; commitCell(mr, c, input.value); fx.value = input.value; });
+      input.addEventListener('change', () => { if (mr >= 0) checkEntry(mr, c, td); });
+      if (!blank) decorateCell(td, mr, c);
       input.addEventListener('dblclick', () => { editing = true; input.setSelectionRange(input.value.length, input.value.length); });
       td.addEventListener('pointerdown', (ev) => {
         if (ev.button !== 0) return;
@@ -635,6 +699,13 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       const td = input.parentElement as HTMLTableCellElement | null;
       if (td) styleConditional(td, view, condCache[r]?.[c] ?? null);
     }
+    // A sheet whose file has no widths keeps its columns fitted while the owner types.
+    if (fitsOnOpen() && !fmtOf()?.cols?.[active.col] && colEls[active.col]) {
+      const fitted = Math.max(lookOf()?.defaultWidth ?? DEFAULT_COL_WIDTH, fitWidth(active.col));
+      autoWidths.set(active.col, fitted);
+      colEls[active.col].style.width = `${fitted}px`;
+      fitTableWidth();
+    }
     syncBars();
     ctx.refresh();
   }
@@ -687,6 +758,10 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       td.classList.toggle('is-active', r === active.row && c === active.col);
     }
     table?.querySelectorAll('.fo-colhead').forEach((th) => { const c = Number((th as HTMLElement).dataset.c); th.classList.toggle('is-sel', c >= g.c0 && c <= g.c1); });
+    // The fill handle sits on the selection's far corner (not while a filter hides rows).
+    const corner = tds.get(`${g.r1}:${g.c1}`);
+    if (corner && ctx.editable() && !dragging && !rowMap) corner.append(fillHandle);
+    else fillHandle.remove();
     syncBars();
   }
 
@@ -789,7 +864,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
 
   fx.addEventListener('input', () => { if (ctx.editable()) commitCell(modelRowOf(active.row), active.col, fx.value); });
   fx.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter') { ev.preventDefault(); move(1, 0, false); }
+    if (ev.key === 'Enter') { ev.preventDefault(); const mr = modelRowOf(active.row); if (mr >= 0) checkEntry(mr, active.col); move(1, 0, false); }
     if (ev.key === 'Escape') { fx.value = rawOf(modelRowOf(active.row), active.col); inputs.get(`${active.row}:${active.col}`)?.focus(); }
   });
   nameBox.addEventListener('keydown', (ev) => {
@@ -806,20 +881,400 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     select(false);
   });
 
+  /* ─────────────────────────── widths and heights ─────────────────────────── */
+
+  /**
+   * A fixed-layout table as wide as its columns: without it a narrow window (a
+   * phone) squeezes every column to fit and cuts the text in them.
+   */
+  function fitTableWidth(tbl: HTMLTableElement | null = table): void {
+    if (!tbl) return;
+    let total = 48;
+    for (const col of colEls) total += parseFloat(col.style.width) || DEFAULT_COL_WIDTH;
+    tbl.style.width = `${total}px`;
+    tbl.style.minWidth = `${total}px`;
+  }
+
+  /** Commits a new formatting for the active sheet (one undo step) and redraws. */
+  function commitFormat(change: (fmt: SheetFormat | undefined) => SheetFormat | undefined): void {
+    const m = sheets();
+    if (!m || m.kind !== 'xlsx' || !ctx.editable()) return;
+    const before = sheetFormatOf(m, m.active);
+    const after = change(before);
+    if (JSON.stringify(before ?? null) === JSON.stringify(after ?? null)) return;
+    ctx.commit(sheetFormatEdit(m.active, before, after));
+    renderGrid();
+    ctx.refresh();
+  }
+  const canFormat = (): boolean => sheets()?.kind === 'xlsx' && ctx.editable();
+
+  function setColWidth(c: number, px: number): void {
+    commitFormat((f) => withColumnWidth(f, c, clampColWidth(px)));
+  }
+  function fitColumn(c: number): void {
+    setColWidth(c, Math.min(MAX_COL_WIDTH, fitWidth(c)));
+  }
+  function fitRow(mr: number): void {
+    // Excel's double-click on a row border: as tall as its tallest wrapped cell, else back to the default.
+    let tallest = 0;
+    const drawn = drawnRowOf(mr);
+    for (const [key, td] of tds) {
+      if (!key.startsWith(`${drawn}:`)) continue;
+      const view = td.querySelector<HTMLElement>('.fo-cellview.is-wrap');
+      if (view) tallest = Math.max(tallest, view.scrollHeight);
+    }
+    commitFormat((f) => withRowHeight(f, mr, tallest > 0 ? Math.min(MAX_ROW_HEIGHT, tallest + 4) : null));
+  }
+
+  /** A drag handler with a double-act (double-click or double-tap) of its own. */
+  function dragGrip(grip: HTMLElement, onDouble: () => void, onDrag: (dx: number, dy: number) => void, onEnd: (moved: boolean) => void): void {
+    let last = { at: -1e9, x: 0 };
+    grip.addEventListener('pointerdown', (ev) => {
+      if (ev.button !== 0 || !canFormat()) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const now = performance.now();
+      if (isDoubleAct(last.at, last.x, now, ev.clientX)) { last = { at: -1e9, x: 0 }; onDouble(); return; }
+      last = { at: now, x: ev.clientX };
+      const startX = ev.clientX;
+      const startY = ev.clientY;
+      let moved = false;
+      try { grip.setPointerCapture(ev.pointerId); } catch { /* the move events still reach the grip while the pointer is over it */ }
+      root.classList.add('is-resizing');
+      const move = (e: PointerEvent): void => {
+        if (Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY) > 2) moved = true;
+        onDrag(e.clientX - startX, e.clientY - startY);
+      };
+      const done = (): void => {
+        grip.removeEventListener('pointermove', move);
+        grip.removeEventListener('pointerup', done);
+        grip.removeEventListener('pointercancel', done);
+        root.classList.remove('is-resizing');
+        onEnd(moved);
+      };
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('pointerup', done);
+      grip.addEventListener('pointercancel', done);
+    });
+    grip.addEventListener('click', (ev) => ev.stopPropagation());
+  }
+
+  function colGrip(c: number): HTMLElement {
+    const grip = el('span', 'fo-colgrip');
+    grip.setAttribute('aria-hidden', 'true');
+    grip.title = t('office.resizeColumnHint');
+    let start = 0;
+    let width = 0;
+    dragGrip(grip, () => fitColumn(c), (dx) => {
+      if (!start) start = widthOf(c);
+      // The trailing border of a right-to-left sheet's column is its left edge.
+      width = draggedWidth(start, 0, scroll.dir === 'rtl' ? -dx : dx);
+      const col = colEls[c];
+      if (col) col.style.width = `${width}px`;
+      fitTableWidth();
+    }, (moved) => {
+      if (moved && width && width !== start) setColWidth(c, width);
+      start = 0;
+      width = 0;
+    });
+    return grip;
+  }
+
+  function rowGrip(mr: number, tr: HTMLTableRowElement): HTMLElement {
+    const grip = el('span', 'fo-rowgrip');
+    grip.setAttribute('aria-hidden', 'true');
+    grip.title = t('office.resizeRowHint');
+    let start = 0;
+    let height = 0;
+    dragGrip(grip, () => fitRow(mr), (_dx, dy) => {
+      if (!start) start = tr.getBoundingClientRect().height || 24;
+      height = draggedHeight(start, 0, dy);
+      tr.style.height = `${height}px`;
+    }, (moved) => {
+      if (moved && height && height !== start) commitFormat((f) => withRowHeight(f, mr, height));
+      start = 0;
+      height = 0;
+    });
+    return grip;
+  }
+
+  /** "Column width…" / "Row height…": the keyboard's and the phone's way, where a border is hard to grab. */
+  function askSize(kind: 'col' | 'row'): void {
+    const label = kind === 'col' ? t('office.columnWidthPx') : t('office.rowHeightPx');
+    const input = el('input', 'fo-input');
+    input.type = 'number';
+    input.inputMode = 'numeric';
+    input.min = String(kind === 'col' ? 28 : MIN_ROW_HEIGHT);
+    input.max = String(kind === 'col' ? MAX_COL_WIDTH : MAX_ROW_HEIGHT);
+    input.value = String(Math.round(kind === 'col' ? widthOf(active.col) : rowHeightOf(active.row)));
+    const body = el('label', 'fo-field');
+    body.append(el('span', 'fo-field-label', label), input);
+    const g = range();
+    openModal({
+      title: kind === 'col' ? t('office.columnWidth') : t('office.rowHeight'),
+      body, okLabel: t('office.apply'), cancelLabel: t('office.cancel'), host: ctx.host(),
+      onOk: () => {
+        const v = Number(input.value);
+        if (!Number.isFinite(v) || v <= 0) return false;
+        commitFormat((f) => {
+          let next = f;
+          if (kind === 'col') for (let c = g.c0; c <= g.c1; c++) next = withColumnWidth(next, c, clampColWidth(v));
+          else for (let r = g.r0; r <= g.r1; r++) { const mr = modelRowOf(r); if (mr >= 0) next = withRowHeight(next, mr, draggedHeight(v, 0, 0)); }
+          return next;
+        });
+        return true;
+      },
+    });
+  }
+  function fitSelectedColumns(): void {
+    const g = range();
+    commitFormat((f) => {
+      let next = f;
+      for (let c = g.c0; c <= g.c1; c++) next = withColumnWidth(next, c, Math.min(MAX_COL_WIDTH, fitWidth(c)));
+      return next;
+    });
+  }
+
+  /* ─────────────────────────── cell formatting (saved into styles.xml) ─────────────────────────── */
+
+  const activeStyle = (): CellStyle | undefined => {
+    const mr = modelRowOf(active.row);
+    return mr < 0 ? undefined : styleAt(mr, active.col);
+  };
+  /** Applies a format delta to every selected cell, at its model row (a filter may skip rows). */
+  function formatSelection(patch: CellFormat | ((row: number, col: number) => CellFormat)): void {
+    const g = range();
+    commitFormat((f) => {
+      let next = f;
+      for (let r = g.r0; r <= g.r1; r++) {
+        const mr = modelRowOf(r);
+        if (mr < 0) continue;
+        for (let c = g.c0; c <= g.c1; c++) {
+          const p = typeof patch === 'function' ? patch(r, c) : patch;
+          if (Object.keys(p).length) next = formatRange(next, { r0: mr, c0: c, r1: mr, c1: c }, p);
+        }
+      }
+      return next;
+    });
+  }
+  function toggleStyle(key: 'bold' | 'italic' | 'underline' | 'wrap'): void {
+    formatSelection({ [key]: !activeStyle()?.[key] });
+  }
+  function setBorders(preset: BorderPreset): void {
+    formatSelection(borderPatch(preset, range()));
+  }
+  const alignOf = (): string => activeStyle()?.hAlign ?? '';
+  /** One more or one fewer decimal place, through the sheet's own number-format choice. */
+  function changeDecimals(delta: 1 | -1): void {
+    const mr = modelRowOf(active.row);
+    const code = (mr >= 0 ? formatForCell(sheetView.formats, mr, active.col) : '') || activeStyle()?.numFmt || '';
+    applyNumberFormat(stepDecimals(code && code !== 'General' && code !== '@' ? code : '0', delta));
+  }
+
+  /* ─────────────────────────── data validation ─────────────────────────── */
+
+  const validations = new Map<number, RangedValidation[]>();
+  const validationsOf = (): RangedValidation[] => validations.get(sheets()?.active ?? 0) ?? [];
+  /** The selection in model rows (validation rules are kept by the sheet's own rows). */
+  function modelSelection(): SheetRange {
+    const g = range();
+    const a = modelRowOf(g.r0);
+    const b = modelRowOf(g.r1);
+    return { r0: a < 0 ? g.r0 : a, r1: b < 0 ? Math.max(a, g.r1) : b, c0: g.c0, c1: g.c1 };
+  }
+  function decorateCell(td: HTMLTableCellElement, mr: number, c: number): void {
+    const rule = validationAt(validationsOf(), mr, c);
+    if (rule?.kind === 'list' && ctx.editable()) td.append(listButton(mr, c, rule.items));
+  }
+  function listButton(mr: number, c: number, items: readonly string[]): HTMLElement {
+    const b = el('button', 'fo-listbtn');
+    b.type = 'button';
+    b.title = t('office.chooseFromList');
+    b.setAttribute('aria-label', `${t('office.chooseFromList')} ${columnName(c)}${mr + 1}`);
+    b.setAttribute('aria-haspopup', 'menu');
+    b.append(icon('chevronDown', 14));
+    b.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const pop = openPopover(b, menuList(items.map((item) => ({ label: item, run: () => { commitCell(mr, c, item); refreshValues(); } })), () => pop.close()), { label: t('office.chooseFromList') });
+    });
+    return b;
+  }
+  /** Checks an entry against the cell's rule and for a circular reference, and says what is wrong. */
+  function checkEntry(mr: number, c: number, td?: HTMLTableCellElement | null): void {
+    const cellTd = td ?? tds.get(`${drawnRowOf(mr)}:${c}`);
+    const m = sheets();
+    if (m && m.kind === 'xlsx' && formulaAt(m, m.active, mr, c) && isCircularAt(m, mr, c)) {
+      cellTd?.classList.add('is-invalid');
+      ctx.setStatus(t('office.circularWarning', { cell: `${columnName(c)}${mr + 1}` }));
+      return;
+    }
+    const rule = validationAt(validationsOf(), mr, c);
+    if (!rule) { cellTd?.classList.remove('is-invalid'); return; }
+    const problem = validationProblem(cellState(mr, c).value, rule);
+    cellTd?.classList.toggle('is-invalid', !!problem);
+    if (problem) ctx.setStatus(`${problem.prefix ? t('office.validation_lengthPrefix') : ''}${t(problem.key, problem.params)}`);
+  }
+  function validationDialog(): void {
+    const within = modelSelection();
+    const body = el('div', 'fo-validdlg');
+    const field = (label: string, input: HTMLElement): HTMLElement => { const f = el('label', 'fo-field'); f.append(el('span', 'fo-field-label', label), input); return f; };
+    const kind = el('select', 'fo-select');
+    for (const k of ['list', 'whole', 'decimal', 'date', 'textLength'] as const) { const o = el('option', undefined, t(`office.valid_${k}`)); o.value = k; kind.append(o); }
+    const items = el('input', 'fo-input');
+    items.dir = 'auto';
+    items.placeholder = t('office.listItemsHint');
+    const op = el('select', 'fo-select');
+    for (const k of ['between', 'notBetween', 'eq', 'neq', 'gt', 'lt', 'gte', 'lte'] as const) { const o = el('option', undefined, t(`office.op_${k}`)); o.value = k; op.append(o); }
+    const min = el('input', 'fo-input');
+    const max = el('input', 'fo-input');
+    const listF = field(t('office.listItems'), items);
+    const opF = field(t('office.filterCondition'), op);
+    const minF = field(t('office.minimum'), min);
+    const maxF = field(t('office.maximum'), max);
+    const blank = el('input');
+    blank.type = 'checkbox';
+    blank.checked = true;
+    const blankLine = el('label', 'fo-check');
+    blankLine.append(blank, el('span', undefined, t('office.allowBlank')));
+    const sync = (): void => {
+      const list = kind.value === 'list';
+      listF.hidden = !list;
+      opF.hidden = list;
+      minF.hidden = list;
+      maxF.hidden = list || !['between', 'notBetween'].includes(op.value);
+    };
+    kind.addEventListener('change', sync);
+    op.addEventListener('change', sync);
+    body.append(field(t('office.allow'), kind), listF, opF, minF, maxF, blankLine);
+    sync();
+    openModal({
+      title: t('office.dataValidation'), body, okLabel: t('office.apply'), cancelLabel: t('office.cancel'), host: ctx.host(),
+      onOk: () => {
+        let rule: ValidationRule;
+        const allowBlank = blank.checked;
+        if (kind.value === 'list') {
+          const list = parseListSource(items.value);
+          if (!list.length) return false;
+          rule = { kind: 'list', items: list, allowBlank };
+        } else {
+          const num = (x: string): number | undefined => (x.trim() === '' ? undefined : Number(x));
+          const a = kind.value === 'date' ? min.value.trim() || undefined : num(min.value);
+          const b = kind.value === 'date' ? max.value.trim() || undefined : num(max.value);
+          if (a === undefined || (typeof a === 'number' && !Number.isFinite(a))) return false;
+          rule = kind.value === 'date'
+            ? { kind: 'date', op: op.value as CompareOp, min: a, max: b, allowBlank }
+            : { kind: kind.value as 'whole' | 'decimal' | 'textLength', op: op.value as CompareOp, min: a as number, max: b as number | undefined, allowBlank };
+        }
+        const m = sheets();
+        if (!m) return true;
+        validations.set(m.active, [...withoutRules(validationsOf(), within), { range: within, rule }]);
+        renderGrid();
+        ctx.refresh();
+        return true;
+      },
+    });
+  }
+  function clearValidation(): void {
+    const m = sheets();
+    if (!m) return;
+    validations.set(m.active, withoutRules(validationsOf(), modelSelection()));
+    renderGrid();
+    ctx.refresh();
+  }
+
+  /* ─────────────────────────── fill handle ─────────────────────────── */
+
+  const fillHandle = el('span', 'fo-fillhandle');
+  fillHandle.title = t('office.fillHandle');
+  fillHandle.setAttribute('aria-hidden', 'true');
+  fillHandle.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0 || !ctx.editable()) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const g = range();
+    let target: { axis: 'row' | 'col'; count: number } | null = null;
+    try { fillHandle.setPointerCapture(ev.pointerId); } catch { /* moves still reach the handle while over it */ }
+    const preview = (): void => {
+      for (const [key, td] of tds) {
+        const [r, c] = key.split(':').map(Number);
+        const on = !!target && (target.axis === 'row'
+          ? c >= g.c0 && c <= g.c1 && r > g.r1 && r <= g.r1 + target.count
+          : r >= g.r0 && r <= g.r1 && c > g.c1 && c <= g.c1 + target.count);
+        td.classList.toggle('is-fillpreview', on);
+      }
+    };
+    const move = (e: PointerEvent): void => {
+      const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>('.fo-td');
+      if (!hit) return;
+      for (const [key, td] of tds) {
+        if (td !== hit) continue;
+        const [r, c] = key.split(':').map(Number);
+        target = fillTarget(g, r, c);
+        preview();
+        return;
+      }
+    };
+    const up = (): void => {
+      fillHandle.removeEventListener('pointermove', move);
+      fillHandle.removeEventListener('pointerup', up);
+      fillHandle.removeEventListener('pointercancel', up);
+      const t0 = target;
+      target = null;
+      preview();
+      if (t0) runFill(g, t0.axis, t0.count);
+    };
+    fillHandle.addEventListener('pointermove', move);
+    fillHandle.addEventListener('pointerup', up);
+    fillHandle.addEventListener('pointercancel', up);
+  });
+
+  /** Writes a fill (no filter is on, so drawn rows are the sheet's rows). */
+  function runFill(g: SheetRange, axis: 'row' | 'col', count: number): void {
+    const m = sheets();
+    if (!m || !ctx.editable() || rowMap) return;
+    const edits: Edit[] = [];
+    const fmtBefore = sheetFormatOf(m, m.active);
+    let fmtAfter = fmtBefore;
+    const lines = axis === 'row' ? g.c1 - g.c0 + 1 : g.r1 - g.r0 + 1;
+    const n = axis === 'row' ? g.r1 - g.r0 + 1 : g.c1 - g.c0 + 1;
+    for (let i = 0; i < lines; i++) {
+      const at = (k: number): { r: number; c: number } => (axis === 'row' ? { r: g.r0 + k, c: g.c0 + i } : { r: g.r0 + i, c: g.c0 + k });
+      const sources: FillCell[] = [];
+      for (let k = 0; k < n; k++) { const p = at(k); const st = cellState(p.r, p.c); sources.push(st.formula && m.kind === 'xlsx' ? { value: st.value, formula: st.formula } : { value: st.value }); }
+      fillSeries(sources, count, axis).forEach((out, k) => {
+        const p = at(n + k);
+        edits.push(formulaCellEdit(m.active, p.r, p.c, cellState(p.r, p.c), out.formula ? { value: out.value, formula: out.formula } : { value: out.value }));
+        const src = at(k % n);
+        const srcFmt = cellFormatOf(fmtBefore, src.r, src.c);
+        if (srcFmt) fmtAfter = formatRange(fmtAfter, { r0: p.r, c0: p.c, r1: p.r, c1: p.c }, srcFmt);
+      });
+    }
+    if (fmtAfter !== fmtBefore) edits.push(sheetFormatEdit(m.active, fmtBefore, fmtAfter));
+    if (!edits.length) return;
+    ctx.commit(compositeEdit(edits));
+    anchor = { row: g.r0, col: g.c0 };
+    active = axis === 'row' ? { row: g.r1 + count, col: g.c1 } : { row: g.r1, col: g.c1 + count };
+    renderGrid();
+    ctx.refresh();
+  }
+
   /* ─────────────────────────── commands ─────────────────────────── */
 
   function addRow(): void {
     const m = sheets();
     const grid = m ? gridAt(m, m.active) : null;
     if (!m || !grid) return;
-    ctx.commit(addRowEdit(m.active, grid.rows.length));
+    // Excel's "insert row": above the active row (past the data it simply adds one).
+    const mr = modelRowOf(active.row);
+    ctx.commit(addRowEdit(m.active, mr < 0 ? grid.rows.length : Math.min(mr, grid.rows.length)));
     renderGrid();
   }
   function addColumn(): void {
     const m = sheets();
     const grid = m ? gridAt(m, m.active) : null;
     if (!m || !grid) return;
-    ctx.commit(addColumnEdit(m.active, gridWidth(grid)));
+    ctx.commit(addColumnEdit(m.active, Math.min(active.col, gridWidth(grid))));
     renderGrid();
   }
   function deleteRow(): void {
@@ -1181,7 +1636,50 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       {
         id: 'home', label: t('office.tabHome'), groups: [
           {
+            label: t('office.groupFont'), controls: [
+              { type: 'button', id: 'bold', icon: 'bold', label: t('office.bold'), enabled: canFormat, pressed: () => !!activeStyle()?.bold, run: () => toggleStyle('bold') },
+              { type: 'button', id: 'italic', icon: 'italic', label: t('office.italic'), enabled: canFormat, pressed: () => !!activeStyle()?.italic, run: () => toggleStyle('italic') },
+              { type: 'button', id: 'underline', icon: 'underline', label: t('office.underline'), enabled: canFormat, pressed: () => !!activeStyle()?.underline, run: () => toggleStyle('underline') },
+              { type: 'color', id: 'fontcolor', icon: 'textColor', label: t('office.fontColor'), palette: PALETTE, noneLabel: t('office.automatic'), enabled: canFormat, value: () => activeStyle()?.color ?? null, onPick: (hex) => formatSelection({ color: hex }) },
+              { type: 'color', id: 'fillcolor', icon: 'fill', label: t('office.fillColor'), palette: PALETTE, noneLabel: t('office.noFill'), enabled: canFormat, value: () => activeStyle()?.fill ?? null, onPick: (hex) => formatSelection({ fill: hex }) },
+              {
+                type: 'menu', id: 'borders', icon: 'borders', label: t('office.borders'), enabled: canFormat, items: () => [
+                  { label: t('office.bordersAll'), run: () => setBorders('all') },
+                  { label: t('office.bordersOuter'), run: () => setBorders('outer') },
+                  { label: t('office.bordersBottom'), run: () => setBorders('bottom') },
+                  { label: t('office.bordersTop'), run: () => setBorders('top') },
+                  'sep',
+                  { label: t('office.bordersNone'), run: () => setBorders('none') },
+                ],
+              },
+            ],
+          },
+          {
+            label: t('office.groupAlignment'), controls: [
+              { type: 'button', id: 'alignleft', icon: 'alignLeft', label: t('office.alignLeft'), enabled: canFormat, pressed: () => alignOf() === 'left', run: () => formatSelection({ hAlign: alignOf() === 'left' ? null : 'left' }) },
+              { type: 'button', id: 'aligncenter', icon: 'alignCenter', label: t('office.alignCenter'), enabled: canFormat, pressed: () => alignOf() === 'center', run: () => formatSelection({ hAlign: alignOf() === 'center' ? null : 'center' }) },
+              { type: 'button', id: 'alignright', icon: 'alignRight', label: t('office.alignRight'), enabled: canFormat, pressed: () => alignOf() === 'right', run: () => formatSelection({ hAlign: alignOf() === 'right' ? null : 'right' }) },
+              {
+                type: 'menu', id: 'valign', icon: 'layout', label: t('office.verticalAlign'), enabled: canFormat, items: () => [
+                  { label: t('office.alignTop'), checked: activeStyle()?.vAlign === 'top', run: () => formatSelection({ vAlign: 'top' }) },
+                  { label: t('office.alignMiddle'), checked: activeStyle()?.vAlign === 'center', run: () => formatSelection({ vAlign: 'center' }) },
+                  { label: t('office.alignBottom'), checked: !activeStyle()?.vAlign || activeStyle()?.vAlign === 'bottom', run: () => formatSelection({ vAlign: 'bottom' }) },
+                ],
+              },
+              { type: 'button', id: 'wrap', icon: 'wrap', label: t('office.wrapText'), enabled: canFormat, pressed: () => !!activeStyle()?.wrap, run: () => toggleStyle('wrap') },
+              { type: 'button', id: 'decadd', icon: 'decimalAdd', label: t('office.decimalAdd'), enabled: enabledSheet, run: () => changeDecimals(1) },
+              { type: 'button', id: 'decremove', icon: 'decimalRemove', label: t('office.decimalRemove'), enabled: enabledSheet, run: () => changeDecimals(-1) },
+            ],
+          },
+          {
             label: t('office.groupCells'), controls: [
+              {
+                type: 'menu', id: 'cellsize', icon: 'columns', label: t('office.cellSize'), showLabel: true, enabled: canFormat, items: () => [
+                  { label: t('office.autoFitColumns'), run: fitSelectedColumns },
+                  { label: t('office.columnWidth'), run: () => askSize('col') },
+                  { label: t('office.rowHeight'), run: () => askSize('row') },
+                ],
+              },
               { type: 'button', id: 'addrow', icon: 'rowAdd', label: t('office.addRow'), showLabel: true, phone: true, enabled: enabledSheet, run: addRow },
               { type: 'button', id: 'addcol', icon: 'colAdd', label: t('office.addColumn'), showLabel: true, enabled: enabledSheet, run: addColumn },
               { type: 'button', id: 'delrow', icon: 'rowDelete', label: t('office.deleteRow'), showLabel: true, enabled: () => enabledSheet() && canDeleteRow(sheets() as OfficeModel, sheets()?.active ?? 0), run: deleteRow },
@@ -1202,6 +1700,12 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
             label: t('office.groupSortFilter'), controls: [
               { type: 'button', id: 'sort', icon: 'sortAsc', label: t('office.sortTitle'), showLabel: true, phone: true, enabled: enabledSheet, run: openSortPanel },
               { type: 'button', id: 'filter', icon: 'filter', label: t('office.filterTitle', { name: columnName(active.col) }), showLabel: true, phone: true, pressed: () => isFiltered(sheetView), enabled: enabledSheet, run: () => openFilterPanel(active.col) },
+              {
+                type: 'menu', id: 'validation', icon: 'check', label: t('office.dataValidation'), showLabel: true, enabled: canFormat, items: () => [
+                  { label: t('office.dataValidation'), run: validationDialog },
+                  { label: t('office.clearValidation'), run: clearValidation, disabled: !validationsOf().length },
+                ],
+              },
               { type: 'button', id: 'unfilter', icon: 'close', label: t('office.filterClearAll'), showLabel: true, enabled: () => isFiltered(sheetView), run: () => { sheetView = clearFilters(sheetView); renderGrid(); ctx.refresh(); } },
             ],
           },

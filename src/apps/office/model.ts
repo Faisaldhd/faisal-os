@@ -13,6 +13,9 @@ import type { Deck } from './impress/deck';
 import { MAX_COLS, extensionOf } from '../viewer/formats';
 import type { DocBlock } from './writer/types';
 import { diffText, replaceText } from './writer/docops';
+import { shiftSheetFormat, type SheetFormat } from './grid/sheetfmt';
+import { shiftFormula } from './formula/index';
+import type { StructOp } from './grid/structure';
 
 /**
  * How many rows one sheet holds in this app (سعة الورقة).
@@ -108,6 +111,16 @@ export interface SheetsModel {
    * column only grows the sheet and does not count. Absent when zero.
    */
   moved?: number;
+  /**
+   * The owner's formatting per sheet (column widths, row heights, cell formats) —
+   * a delta over the file's own look, written by the save (`grid/sheetfmt.ts`).
+   */
+  sheetFormats?: Record<number, SheetFormat>;
+  /**
+   * The row/column insertions and deletions behind `moved`, in order, so the save
+   * can move the file's own cells instead of rebuilding it (`grid/structure.ts`).
+   */
+  structure?: StructOp[];
 }
 export interface DeckModel {
   kind: 'pptx';
@@ -314,15 +327,42 @@ function sheetsEdit(
 }
 
 /** A structural edit: the change, plus the `moved` counter going up (apply) or down (revert). */
-function structural(model: OfficeModel, delta: 1 | -1, change: (m: SheetsModel) => SheetsModel): OfficeModel {
+function structural(model: OfficeModel, delta: 1 | -1, change: (m: SheetsModel) => SheetsModel, op?: StructOp): OfficeModel {
   return sheetsEdit(model, (s) => {
     const next = change(s);
     const moved = (s.moved ?? 0) + delta;
     const out: SheetsModel = { ...next };
     if (moved) out.moved = moved;
     else delete out.moved;
+    const ops = (s.structure ?? []).slice();
+    if (delta > 0 && op) ops.push(op);
+    else if (delta < 0) ops.pop();
+    if (ops.length) out.structure = ops;
+    else delete out.structure;
     return out;
   });
+}
+
+/**
+ * A structural edit whose undo is exact: formulas (their text moved or turned to
+ * #REF!) and the owner's formatting are put back as they were before it.
+ */
+function exactStructural(op: StructOp, apply: (s: SheetsModel) => SheetsModel, revertGrid: (s: SheetsModel) => SheetsModel): Edit {
+  let kept: { formulas?: Record<string, string>; sheetFormats?: Record<number, SheetFormat> } | null = null;
+  return {
+    apply: (m) => {
+      if (m.kind === 'xlsx' || m.kind === 'csv') kept = { formulas: m.formulas, sheetFormats: m.sheetFormats };
+      return structural(m, 1, apply, op);
+    },
+    revert: (m) => structural(m, -1, (s) => {
+      const out: SheetsModel = { ...revertGrid(s) };
+      if (kept) {
+        if (kept.formulas) out.formulas = kept.formulas; else delete out.formulas;
+        if (kept.sheetFormats) out.sheetFormats = kept.sheetFormats; else delete out.sheetFormats;
+      }
+      return out;
+    }),
+  };
 }
 
 /** An edit that sets one cell, remembering the value it replaced. */
@@ -336,53 +376,57 @@ export function cellEdit(sheet: number, row: number, col: number, before: string
 
 /** An edit that inserts a row, capturing the index so undo removes exactly it. */
 export function addRowEdit(sheet: number, at: number): Edit {
-  return {
-    apply: (m) => structural(m, 1, (s) => insertRow(s, sheet, at)),
-    revert: (m) => structural(m, -1, (s) => removeRow(s, sheet, at)),
-  };
+  return exactStructural({ sheet, axis: 'row', at, delta: 1 }, (s) => insertRow(s, sheet, at), (s) => removeRowOnly(s, sheet, at));
 }
 
 /** An edit that removes a row, keeping its cells so undo restores them exactly. */
 export function deleteRowEdit(sheet: number, at: number, row: string[]): Edit {
   const value = row.slice();
-  return {
-    apply: (m) => structural(m, 1, (s) => removeRow(s, sheet, at)),
-    revert: (m) => structural(m, -1, (s) => {
-      const grid = s.grids[sheet];
-      if (!grid) return s;
-      const rows = grid.rows.slice();
-      rows.splice(Math.min(at, rows.length), 0, value.slice());
-      return replaceGrid(s, sheet, { ...grid, rows });
-    }),
-  };
+  return exactStructural({ sheet, axis: 'row', at, delta: -1 }, (s) => removeRow(s, sheet, at), (s) => {
+    const grid = s.grids[sheet];
+    if (!grid) return s;
+    const rows = grid.rows.slice();
+    rows.splice(Math.min(at, rows.length), 0, value.slice());
+    return replaceGrid(s, sheet, { ...grid, rows });
+  });
 }
 
 /** An edit that inserts a column. */
 export function addColumnEdit(sheet: number, at: number): Edit {
-  return {
-    apply: (m) => structural(m, 1, (s) => insertColumn(s, sheet, at)),
-    revert: (m) => structural(m, -1, (s) => removeColumn(s, sheet, at)),
-  };
+  return exactStructural({ sheet, axis: 'col', at, delta: 1 }, (s) => insertColumn(s, sheet, at), (s) => removeColumnOnly(s, sheet, at));
+}
+
+/** Undo of an insertion: the grid only (formulas and formats are restored by the caller). */
+function removeRowOnly(model: SheetsModel, sheet: number, at: number): SheetsModel {
+  const grid = model.grids[sheet];
+  if (!grid || at < 0 || at >= grid.rows.length) return model;
+  const rows = grid.rows.slice();
+  rows.splice(at, 1);
+  return replaceGrid(model, sheet, { ...grid, rows });
+}
+function removeColumnOnly(model: SheetsModel, sheet: number, at: number): SheetsModel {
+  const grid = model.grids[sheet];
+  if (!grid) return model;
+  return replaceGrid(model, sheet, { ...grid, rows: grid.rows.map((r) => { const line = r.slice(); if (line.length > at) line.splice(at, 1); return line; }) });
 }
 
 /** An edit that removes a column, keeping its cells so undo restores them. */
 export function deleteColumnEdit(sheet: number, at: number, values: string[]): Edit {
   const kept = values.slice();
-  return {
-    apply: (m) => structural(m, 1, (s) => removeColumn(s, sheet, at)),
-    revert: (m) => structural(m, -1, (s) => {
-      const grid = s.grids[sheet];
-      if (!grid) return s;
-      const rows = grid.rows.map((r, i) => {
-        const line = r.slice();
-        while (line.length < at) line.push('');
-        line.splice(at, 0, kept[i] ?? '');
-        return line;
-      });
-      if (!rows.length) rows.push([kept[0] ?? '']);
-      return replaceGrid(s, sheet, { ...grid, rows });
-    }),
-  };
+  return exactStructural({ sheet, axis: 'col', at, delta: -1 }, (s) => removeColumn(s, sheet, at), (s) => restoreColumn(s, sheet, at, kept));
+}
+
+function restoreColumn(s: SheetsModel, sheet: number, at: number, kept: string[]): SheetsModel {
+  const grid = s.grids[sheet];
+  if (!grid) return s;
+  const rows = grid.rows.map((r, i) => {
+    const line = r.slice();
+    while (line.length < at) line.push('');
+    line.splice(at, 0, kept[i] ?? '');
+    return line;
+  });
+  if (!rows.length) rows.push([kept[0] ?? '']);
+  return replaceGrid(s, sheet, { ...grid, rows });
 }
 
 /** An edit that replaces one paragraph of a Word document (tab/newline text kept as-is). */
@@ -493,6 +537,7 @@ function shiftFormulas(
   at: number,
   delta: 1 | -1,
 ): SheetsModel {
+  model = shiftFormats(model, sheet, axis, at, delta);
   if (!model.formulas) return model;
   const formulas: Record<string, string> = {};
   for (const [key, formula] of Object.entries(model.formulas)) {
@@ -508,7 +553,29 @@ function shiftFormulas(
     const moved = line >= at ? line + delta : line;
     formulas[formulaKey(sheet, axis === 'row' ? moved : row, axis === 'col' ? moved : col)] = formula;
   }
+  // References follow their cells, in every sheet (a deleted cell becomes #REF!, as in Excel).
+  const target = model.grids[sheet]?.name;
+  if (target !== undefined) {
+    for (const [key, formula] of Object.entries(formulas)) {
+      const own = model.grids[Number(key.split(':')[0])]?.name ?? target;
+      formulas[key] = shiftFormula(formula, own, { sheet: target, axis, at, count: delta });
+    }
+  }
   return { ...model, formulas: Object.keys(formulas).length ? formulas : undefined };
+}
+
+/** The owner's formatting of one sheet moves with its rows or columns. */
+function shiftFormats(model: SheetsModel, sheet: number, axis: 'row' | 'col', at: number, delta: 1 | -1): SheetsModel {
+  const fmt = model.sheetFormats?.[sheet];
+  if (!fmt) return model;
+  const all: Record<number, SheetFormat> = { ...model.sheetFormats };
+  const next = shiftSheetFormat(fmt, axis, at, delta);
+  if (next) all[sheet] = next;
+  else delete all[sheet];
+  const out: SheetsModel = { ...model };
+  if (Object.keys(all).length) out.sheetFormats = all;
+  else delete out.sheetFormats;
+  return out;
 }
 
 /** An edit that replaces one paragraph of a PowerPoint slide. */

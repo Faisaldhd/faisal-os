@@ -466,7 +466,7 @@ function docxFixture(): Uint8Array {
 }
 
 /** A two-sheet .xlsx with shared strings, a styled cell and an image part. */
-function xlsxFixture(): Uint8Array {
+function xlsxFixture(opts: { definedName?: boolean } = {}): Uint8Array {
   const sheet1 =
     `${DECL}<worksheet xmlns="${S_NS}"><sheetData>` +
     '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1"><v>10</v></c></row>' +
@@ -494,7 +494,7 @@ function xlsxFixture(): Uint8Array {
       name: 'xl/workbook.xml',
       data: utf8(`${DECL}<workbook xmlns="${S_NS}" xmlns:r="${DOC_REL}"><sheets>` +
         '<sheet name="First" sheetId="1" r:id="rId1"/><sheet name="Second" sheetId="2" r:id="rId2"/>' +
-        '</sheets></workbook>'),
+        `</sheets>${opts.definedName ? '<definedNames><definedName name="Total">First!$B$1:$B$3</definedName></definedNames>' : ''}</workbook>`),
     },
     {
       name: 'xl/_rels/workbook.xml.rels',
@@ -670,14 +670,36 @@ describe('the office surgical save', () => {
     expect(deckTexts(deck)).toEqual([['Opening', 'Subtitle'], ['Opening', 'Subtitle']]);
   });
 
-  it('warns before a structural edit rebuilds the file, and keeps the original in the .bak', async () => {
+  it('adds a row inside the file itself: no rebuild, the other parts kept', async () => {
     const fixture = xlsxFixture();
+    const store = memVfs({ '/home/user/rows.xlsx': fixture });
+    const { content, launch } = harness(store.vfs);
+    launch('/home/user/rows.xlsx');
+    await settle();
+    vi.mocked(shellConfirm).mockClear();
+    button(content, t('office.addRow'))?.click();
+    await settle();
+    button(content, t('office.save'))?.click();
+    await until(() => store.files.has('/home/user/rows.xlsx.bak'));
+    await settle();
+    expect(vi.mocked(shellConfirm).mock.calls.find(([options]) => options.title === t('office.rebuildTitle'))).toBeUndefined();
+    const saved = store.files.get('/home/user/rows.xlsx') ?? new Uint8Array();
+    expect(zipEntries(saved).map((entry) => entry.name)).toContain('xl/media/image1.png');
+    expect(zipEntries(saved).map((entry) => entry.name)).toContain('xl/sharedStrings.xml');
+    const sheets = await readXlsx(saved);
+    expect(sheets[0].rows.map((r) => r[1] ?? '')).toEqual(['', '10', '20', '30']); // inserted above the active A1
+    expect(sheets[0].rows[2]?.[0]).toBe('Beta');
+  });
+
+  it('warns before a structural edit rebuilds the file, and keeps the original in the .bak', async () => {
+    // A defined name holds references the surgical row move does not rewrite: this one rebuilds.
+    const fixture = xlsxFixture({ definedName: true });
     const store = memVfs({ '/home/user/table.xlsx': fixture });
     const { content, launch } = harness(store.vfs);
     launch('/home/user/table.xlsx');
     await settle();
 
-    button(content, t('office.addRow'))?.click(); // a row added: not expressible surgically
+    button(content, t('office.addRow'))?.click(); // a row added: not expressible surgically here
     await settle();
     button(content, t('office.save'))?.click();
     await until(() => store.files.has('/home/user/table.xlsx.bak'));
@@ -696,13 +718,16 @@ describe('the office surgical save', () => {
     expect(store.files.get('/home/user/table.xlsx.bak')).toEqual(fixture);
 
     // Cancelling the warning writes nothing at all.
-    const beforeCancel = store.files.get('/home/user/table.xlsx');
+    const other = memVfs({ '/home/user/cancel.xlsx': fixture });
+    const second = harness(other.vfs);
+    second.launch('/home/user/cancel.xlsx');
+    await settle();
     vi.mocked(shellConfirm).mockResolvedValueOnce(false);
-    button(content, t('office.addRow'))?.click();
+    button(second.content, t('office.addRow'))?.click();
     await settle();
-    button(content, t('office.save'))?.click();
+    button(second.content, t('office.save'))?.click();
     await settle();
-    expect(store.files.get('/home/user/table.xlsx')).toEqual(beforeCancel);
+    expect(other.files.get('/home/user/cancel.xlsx')).toEqual(fixture);
   });
 
   it('writes paragraph formatting into the .docx from the toolbar, and reads it back on reopen', async () => {
@@ -782,7 +807,7 @@ describe('the office surgical save', () => {
   });
 
   it('keeps a formula when a structural edit takes the rebuild path', async () => {
-    const store = memVfs({ '/home/user/calc.xlsx': xlsxFixture() });
+    const store = memVfs({ '/home/user/calc.xlsx': xlsxFixture({ definedName: true }) });
     const { content, launch } = harness(store.vfs);
     launch('/home/user/calc.xlsx');
     await settle();
@@ -791,7 +816,7 @@ describe('the office surgical save', () => {
     if (!target) return;
     typeValue(target, '=AVERAGE(B1:B2)'); // 15
     await settle();
-    button(content, t('office.addRow'))?.click(); // a row added: the rebuild path
+    button(content, t('office.addRow'))?.click(); // a row added above B3 (a defined name: the rebuild path)
     await settle();
     button(content, t('office.save'))?.click();
     await until(() => store.files.has('/home/user/calc.xlsx.bak'));
@@ -800,6 +825,6 @@ describe('the office surgical save', () => {
     const saved = store.files.get('/home/user/calc.xlsx') ?? new Uint8Array();
     // The rebuilt package writes the formula and the value this app computed.
     expect(await partText(saved, 'xl/worksheets/sheet1.xml')).toContain('<f>AVERAGE(B1:B2)</f><v>15</v>');
-    expect((await readXlsx(saved))[0]?.rows[2]?.[1]).toBe('15');
+    expect((await readXlsx(saved))[0]?.rows[3]?.[1]).toBe('15'); // the formula moved down with its cell
   });
 });

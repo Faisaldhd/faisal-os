@@ -514,6 +514,31 @@
 .fo-sheettabs { flex: none; display: flex; gap: 4px; padding: 4px 8px; overflow-x: auto; border-block-start: 1px solid var(--app-hairline); direction: ltr; }
 .fo-sheettab { appearance: none; flex: none; min-height: 32px; padding: 0 16px; border: 0; border-radius: 6px; background: transparent; color: var(--app-text-2); font: inherit; cursor: pointer; }
 .fo-sheettab[aria-selected="true"] { background: rgba(200, 137, 75, .16); color: var(--app-text); box-shadow: inset 0 -2px 0 var(--app-copper); font-weight: 600; }
+/* Column and row borders: a grab band on the trailing edge (wider for touch). */
+.fo-colgrip, .fo-rowgrip { position: absolute; z-index: 4; touch-action: none; }
+.fo-colgrip { top: 0; bottom: 0; inset-inline-end: -4px; width: 8px; cursor: col-resize; }
+.fo-rowgrip { inset-inline: 0; bottom: -4px; height: 8px; cursor: row-resize; }
+.fo-colgrip:hover, .fo-rowgrip:hover { background: rgba(91, 141, 239, .45); }
+.fo-calc.is-resizing { cursor: col-resize; user-select: none; }
+@media (pointer: coarse) {
+  .fo-colgrip { inset-inline-end: -12px; width: 24px; }
+  .fo-rowgrip { bottom: -12px; height: 24px; }
+}
+/* Fill handle, validation list button, rejected entries. */
+.fo-fillhandle { position: absolute; z-index: 3; right: -1px; bottom: -1px; width: 8px; height: 8px; background: #2f67e6; border: 1px solid #fff; cursor: crosshair; touch-action: none; box-sizing: border-box; }
+.fo-fillhandle::after { content: ""; position: absolute; inset: -6px; }
+@media (pointer: coarse) { .fo-fillhandle { width: 16px; height: 16px; border-radius: 50%; } .fo-fillhandle::after { inset: -8px; } }
+.fo-td.is-fillpreview { box-shadow: inset 0 0 0 1px #2f67e6; background-image: linear-gradient(rgba(91, 141, 239, .10), rgba(91, 141, 239, .10)); }
+.fo-listbtn { position: absolute; z-index: 2; inset-block: 2px; inset-inline-end: 2px; width: 20px; display: grid; place-items: center; padding: 0; border: 1px solid #c5ccd8; border-radius: 6px; background: #f6f8fb; color: #3a4252; cursor: pointer; }
+.fo-listbtn:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+@media (pointer: coarse) { .fo-listbtn { width: 44px; inset-block: 0; inset-inline-end: 0; } }
+@container office (max-width: 700px) { .fo-listbtn { width: 44px; inset-block: 0; inset-inline-end: 0; } }
+.fo-td.is-invalid { box-shadow: inset 0 0 0 2px var(--app-danger); }
+.fo-validdlg { display: flex; flex-direction: column; gap: 12px; }
+.fo-validdlg .fo-select { width: 100%; }
+.fo-check { display: flex; align-items: center; gap: 8px; min-height: 32px; cursor: pointer; }
+.fo-check input { width: 16px; height: 16px; accent-color: var(--app-blue); flex: none; }
+@media (pointer: coarse) { .fo-check { min-height: 44px; } }
 .fo-gridnote { padding: 4px 12px; font-size: 12px; color: var(--app-text-3); }
 .fo-gridnote[hidden] { display: none; }
 
