@@ -204,17 +204,22 @@ export function convolve3x3(src: Img, kernel: readonly number[], divisor = 1, bi
   const s = src.data;
   const d = out.data;
   const inv = 1 / (divisor || 1);
+  // Clamped neighbour offsets, computed once: no per-pixel arrays on a 12 MP image.
+  const xs = new Int32Array(w * 3);
+  for (let x = 0; x < w; x++) {
+    xs[x * 3] = x > 0 ? x - 1 : 0; xs[x * 3 + 1] = x; xs[x * 3 + 2] = x < w - 1 ? x + 1 : w - 1;
+  }
+  const ys = new Int32Array(3);
   for (let y = 0; y < h; y++) {
-    const ys = [y > 0 ? y - 1 : 0, y, y < h - 1 ? y + 1 : h - 1];
+    ys[0] = (y > 0 ? y - 1 : 0) * w; ys[1] = y * w; ys[2] = (y < h - 1 ? y + 1 : h - 1) * w;
     for (let x = 0; x < w; x++) {
-      const xs = [x > 0 ? x - 1 : 0, x, x < w - 1 ? x + 1 : w - 1];
       let r = 0, g = 0, b = 0;
       for (let ky = 0; ky < 3; ky++) {
-        const row = ys[ky] * w;
+        const row = ys[ky];
         for (let kx = 0; kx < 3; kx++) {
           const k = kernel[ky * 3 + kx];
           if (k === 0) continue;
-          const i = (row + xs[kx]) * 4;
+          const i = (row + xs[x * 3 + kx]) * 4;
           r += s[i] * k; g += s[i + 1] * k; b += s[i + 2] * k;
         }
       }
