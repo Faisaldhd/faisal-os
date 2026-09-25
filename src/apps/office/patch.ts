@@ -59,8 +59,12 @@ import { entryData, readRawZip, rebuildZip, utf8, type RawZip } from './zip';
 import type { OpaqueRun } from './writer/types';
 import { patchDocxRich } from './writer/docxpatch';
 import { patchDeck } from './impress/deckpatch';
+import { addRelationship, ensureOverride } from './pkg';
+import { sameCellFormat, type CellFormat } from './grid/sheetfmt';
+import { addCellStyles, applySheetLook, cellStyleIds } from './grid/xlsxstyle';
+import { shiftFormulasIn, shiftSheetPart, workbookBlocks, type StructOp } from './grid/structure';
 import {
-  formulaAt, gridWidth, sameFormat, type DeckModel, type DocModel, type Grid, type OfficeKind, type OfficeModel,
+  formulaAt, gridWidth, insertColumn, insertRow, removeColumn, removeRow, sameFormat, type DeckModel, type DocModel, type Grid, type OfficeKind, type OfficeModel,
   type ParagraphFormat, type SheetsModel,
 } from './model';
 
@@ -106,6 +110,7 @@ export function snapshotModel(model: OfficeModel): OfficeModel {
       delimiter: model.delimiter,
       ...(model.formulas ? { formulas: { ...model.formulas } } : {}),
       ...(model.moved ? { moved: model.moved } : {}),
+      ...(model.sheetFormats ? { sheetFormats: JSON.parse(JSON.stringify(model.sheetFormats)) as typeof model.sheetFormats } : {}),
     };
   }
 }
@@ -704,9 +709,20 @@ function cellEditFor(xml: string, target: CellTarget, cell: CellEdit, shared: Sh
   return { start: target.start, end: target.end, xml: replacement };
 }
 
-async function patchXlsx(archive: RawZip, baseline: SheetsModel, current: SheetsModel): Promise<PatchResult | null> {
-  if (baseline.grids.length !== current.grids.length) return null; // a sheet added or removed
-  if (current.moved) return null; // rows or columns were inserted or removed: cells moved
+async function patchXlsx(archive: RawZip, onDisk: SheetsModel, current: SheetsModel): Promise<PatchResult | null> {
+  if (onDisk.grids.length !== current.grids.length) return null; // a sheet added or removed
+  // Rows or columns inserted or removed: the file's own cells are moved first
+  // (`grid/structure.ts`), and the rest of the save diffs against the moved baseline.
+  let baseline = onDisk;
+  const moved = new Map<string, string>();
+  if (current.moved) {
+    const ops = current.structure ?? [];
+    if (onDisk.moved || ops.length !== current.moved) return null;
+    const result = await moveStructure(archive, onDisk, ops);
+    if (!result) return null;
+    baseline = result.model;
+    for (const [path, xml] of result.parts) moved.set(path, xml);
+  }
   const edits = new Map<number, CellEdit[]>();
   for (let s = 0; s < baseline.grids.length; s++) {
     const before = baseline.grids[s];
@@ -737,8 +753,9 @@ async function patchXlsx(archive: RawZip, baseline: SheetsModel, current: Sheets
     if (cells.length) edits.set(s, cells);
   }
   const grew = current.grids.some((g, i) => g.rows.length !== baseline.grids[i]?.rows.length || gridWidth(g) !== gridWidth(baseline.grids[i] as Grid));
+  const looks = lookChanges(baseline, current);
   // Empty rows or columns past the end have nothing a patch could write: the rebuild owns them.
-  if (!edits.size) return grew ? null : { bytes: archive.bytes, changed: [] };
+  if (!edits.size && !looks.size && !moved.size) return grew ? null : { bytes: archive.bytes, changed: [] };
 
   const paths = await sheetPaths(archive);
   if (!paths) return null;
@@ -748,10 +765,11 @@ async function patchXlsx(archive: RawZip, baseline: SheetsModel, current: Sheets
     : null;
 
   const replacements = new Map<string, Uint8Array>();
+  for (const [path, xml] of moved) replacements.set(path, utf8(xml));
   for (const [sheet, cells] of edits) {
     const path = paths[sheet];
     if (!path) return null;
-    const part = await loadPart(archive, path);
+    const part = moved.has(path) ? { xml: moved.get(path) as string } : await loadPart(archive, path);
     if (!part) return null;
     const doc = parsePart(part.xml);
     const rows = rowsOf(part.xml, doc);
@@ -764,16 +782,24 @@ async function patchXlsx(archive: RawZip, baseline: SheetsModel, current: Sheets
   }
   if (shared && shared.appended.length) replacements.set('xl/sharedStrings.xml', utf8(appendSharedStrings(shared)));
 
-  const bytes = await rebuildZip(archive, replacements);
+  const additions = new Map<string, Uint8Array>();
+  if (looks.size && !(await writeLooks(archive, paths, looks, replacements, additions))) return null;
+
+  const bytes = await rebuildZip(archive, replacements, additions);
   try {
     const sheets = await readXlsx(bytes);
     if (sheets.length !== current.grids.length) return null;
     for (let s = 0; s < sheets.length; s++) {
       const grid: Grid | undefined = current.grids[s];
       const read = sheets[s];
-      if (!grid || !read || read.rows.length !== grid.rows.length) return null;
-      if (gridWidth({ ...grid, rows: read.rows }) !== gridWidth(grid)) return null;
-      for (let r = 0; r < grid.rows.length; r++) {
+      if (!grid || !read) return null;
+      // A styled empty cell or a row given only a height reads back as empty cells
+      // past the data: those are fine, a value that differs anywhere is not.
+      const exact = !looks.has(s);
+      if (exact && read.rows.length !== grid.rows.length) return null;
+      if (exact && gridWidth({ ...grid, rows: read.rows }) !== gridWidth(grid)) return null;
+      const height = Math.max(grid.rows.length, read.rows.length);
+      for (let r = 0; r < height; r++) {
         const width = Math.max(grid.rows[r]?.length ?? 0, read.rows[r]?.length ?? 0);
         for (let c = 0; c < width; c++) {
           if ((grid.rows[r]?.[c] ?? '') !== (read.rows[r]?.[c] ?? '')) return null;
@@ -781,7 +807,152 @@ async function patchXlsx(archive: RawZip, baseline: SheetsModel, current: Sheets
       }
     }
   } catch { return null; }
-  return { bytes, changed: [...replacements.keys()] };
+  return { bytes, changed: [...replacements.keys(), ...additions.keys()] };
+}
+
+/**
+ * The file's parts and the on-disk model after the owner's row/column insertions
+ * and deletions, in order. Null when a part holds something that cannot be moved
+ * exactly (the rebuild then takes over, after its warning).
+ */
+async function moveStructure(archive: RawZip, onDisk: SheetsModel, ops: readonly StructOp[]): Promise<{ model: SheetsModel; parts: Map<string, string> } | null> {
+  const paths = await sheetPaths(archive);
+  const workbook = await loadPart(archive, 'xl/workbook.xml');
+  if (!paths || !workbook || workbookBlocks(workbook.xml)) return null;
+  const parts = new Map<string, string>();
+  const textOf = async (path: string): Promise<string | null> => parts.get(path) ?? (await loadPart(archive, path))?.xml ?? null;
+  let model = onDisk;
+  for (const op of ops) {
+    const names = model.grids.map((g) => g.name);
+    const target = names[op.sheet];
+    if (target === undefined) return null;
+    for (let i = 0; i < paths.length; i++) {
+      const xml = await textOf(paths[i]);
+      if (xml === null) return null;
+      const next = i === op.sheet ? shiftSheetPart(xml, target, op) : shiftFormulasIn(xml, names[i] ?? target, target, op);
+      if (next === null) return null;
+      if (next !== xml) parts.set(paths[i], next);
+    }
+    if (op.axis === 'row') model = op.delta > 0 ? insertRow(model, op.sheet, op.at) : removeRow(model, op.sheet, op.at);
+    else model = op.delta > 0 ? insertColumn(model, op.sheet, op.at) : removeColumn(model, op.sheet, op.at);
+  }
+  return { model, parts };
+}
+
+/** What changed in one sheet's formatting between the file and the model. */
+interface LookChange {
+  cells: Map<string, CellFormat>;
+  rows: Map<number, number | null>;
+  cols: Map<number, number | null>;
+}
+
+/**
+ * The formatting the save has to write, per sheet. A format property the file
+ * had from an earlier save in this session but the model no longer names (an undo
+ * after the save) is written back as "off", the one state it can be set to.
+ */
+function lookChanges(baseline: SheetsModel, current: SheetsModel): Map<number, LookChange> {
+  const out = new Map<number, LookChange>();
+  const sheets = new Set([...Object.keys(baseline.sheetFormats ?? {}), ...Object.keys(current.sheetFormats ?? {})].map(Number));
+  for (const s of sheets) {
+    const before = baseline.sheetFormats?.[s];
+    const after = current.sheetFormats?.[s];
+    const change: LookChange = { cells: new Map(), rows: new Map(), cols: new Map() };
+    const keys = new Set([...Object.keys(before?.cells ?? {}), ...Object.keys(after?.cells ?? {})]);
+    for (const key of keys) {
+      const b = before?.cells?.[key];
+      const a = after?.cells?.[key];
+      if (sameCellFormat(a, b)) continue;
+      change.cells.set(key, { ...resetFor(b, a), ...(a ?? {}) });
+    }
+    for (const [axis, target] of [['rows', change.rows], ['cols', change.cols]] as const) {
+      const b = before?.[axis] ?? {};
+      const a = after?.[axis] ?? {};
+      for (const k of new Set([...Object.keys(b), ...Object.keys(a)].map(Number))) {
+        if (b[k] === a[k]) continue;
+        target.set(k, a[k] ?? null);
+      }
+    }
+    if (change.cells.size || change.rows.size || change.cols.size) out.set(s, change);
+  }
+  return out;
+}
+
+/** "Off" for every property `before` named that `after` does not. */
+function resetFor(before: CellFormat | undefined, after: CellFormat | undefined): CellFormat {
+  const out: CellFormat = {};
+  if (!before) return out;
+  if (before.bold !== undefined && after?.bold === undefined) out.bold = false;
+  if (before.italic !== undefined && after?.italic === undefined) out.italic = false;
+  if (before.underline !== undefined && after?.underline === undefined) out.underline = false;
+  if (before.color !== undefined && after?.color === undefined) out.color = null;
+  if (before.fill !== undefined && after?.fill === undefined) out.fill = null;
+  if (before.hAlign !== undefined && after?.hAlign === undefined) out.hAlign = null;
+  if (before.vAlign !== undefined && after?.vAlign === undefined) out.vAlign = null;
+  if (before.wrap !== undefined && after?.wrap === undefined) out.wrap = false;
+  if (before.numFmt !== undefined && after?.numFmt === undefined) out.numFmt = null;
+  if (before.borders) {
+    const sides: NonNullable<CellFormat['borders']> = {};
+    for (const side of ['top', 'bottom', 'left', 'right'] as const) {
+      if (before.borders[side] !== undefined && after?.borders?.[side] === undefined) sides[side] = false;
+    }
+    if (Object.keys(sides).length) out.borders = sides;
+  }
+  return out;
+}
+
+/** Writes cell styles, row heights and column widths; adds `styles.xml` when the package has none. */
+async function writeLooks(
+  archive: RawZip, paths: string[], looks: Map<number, LookChange>,
+  replacements: Map<string, Uint8Array>, additions: Map<string, Uint8Array>,
+): Promise<boolean> {
+  const decode = (b: Uint8Array): string => new TextDecoder().decode(b);
+  const stylesPath = await stylesPartPath(archive);
+  const stylesPart = await loadPart(archive, stylesPath);
+  let stylesXml: string | null = stylesPart?.xml ?? null;
+  for (const [sheet, change] of looks) {
+    const path = paths[sheet];
+    if (!path) return false;
+    const pending = replacements.get(path);
+    const xml = pending ? decode(pending) : (await loadPart(archive, path))?.xml;
+    if (!xml) return false;
+    const cells = new Map<string, number>();
+    if (change.cells.size) {
+      const own = cellStyleIds(xml);
+      const keys = [...change.cells.keys()];
+      const added = addCellStyles(stylesXml, keys.map((key) => ({ base: own.get(key) ?? 0, format: change.cells.get(key) as CellFormat })));
+      stylesXml = added.xml;
+      keys.forEach((key, i) => cells.set(key, added.ids[i]));
+    }
+    replacements.set(path, utf8(applySheetLook(xml, { cells, rows: change.rows, cols: change.cols })));
+  }
+  if (stylesXml !== null && stylesXml !== (stylesPart?.xml ?? null)) {
+    (stylesPart ? replacements : additions).set(stylesPath, utf8(stylesXml));
+    if (!stylesPart) {
+      // A package written without styles (an older new-sheet): register the part.
+      const types = await loadPart(archive, '[Content_Types].xml');
+      if (!types) return false;
+      replacements.set('[Content_Types].xml', utf8(ensureOverride(types.xml, `/${stylesPath}`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml')));
+      const rels = await loadPart(archive, 'xl/_rels/workbook.xml.rels');
+      (rels ? replacements : additions).set('xl/_rels/workbook.xml.rels', utf8(addRelationship(rels?.xml ?? null, 'styles', 'styles.xml').xml));
+    }
+  }
+  return true;
+}
+
+/** Where the workbook keeps its styles (its relationship), else the usual place. */
+async function stylesPartPath(archive: RawZip): Promise<string> {
+  const rels = await loadPart(archive, 'xl/_rels/workbook.xml.rels');
+  if (rels) {
+    const doc = parsePart(rels.xml);
+    for (const r of elements(doc, 'Relationship')) {
+      if ((attr(rels.xml, r, 'Type') ?? '').endsWith('/styles')) {
+        const target = attr(rels.xml, r, 'Target');
+        if (target) return resolveTarget('xl', target);
+      }
+    }
+  }
+  return 'xl/styles.xml';
 }
 
 /* ───────────────────────────────── PowerPoint ───────────────────────────────── */

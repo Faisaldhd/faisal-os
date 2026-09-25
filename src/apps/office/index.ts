@@ -748,7 +748,7 @@ function launch(ctx: AppContext): void {
         bookLook = await readBookLook(data).catch(() => null);
       }
       // The file now holds this structure: nothing has moved relative to it any more.
-      if ((model.kind === 'xlsx' || model.kind === 'csv') && model.moved) { model = { ...model }; delete (model as SheetsModel).moved; }
+      if ((model.kind === 'xlsx' || model.kind === 'csv') && (model.moved || model.structure)) { model = { ...model }; delete (model as SheetsModel).moved; delete (model as SheetsModel).structure; }
       onDiskBytes = data;
       onDiskModel = snapshotModel(model);
       showSaved = true;
