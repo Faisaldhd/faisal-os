@@ -97,3 +97,56 @@ export function progressOf(done: number | null, total: number | null): number {
 
 /** ffmpeg.wasm runs in 32-bit memory: input + output must fit in it. */
 export const CONVERT_LIMIT = 1024 * 1024 * 1024;
+
+/**
+ * How long the converter may take to answer after its wasm has been downloaded (~31 MB, already
+ * reported as its own progress phase) before the app stops waiting and says so.
+ *
+ * The guard exists because of a silent hang seen in the wild: `@ffmpeg/ffmpeg` creates its
+ * worker as a module worker and registers NO `onerror` handler on it (`dist/esm/classes.js`), so
+ * a worker that fails to load leaves `load()` pending — forever, with no rejection and no log.
+ * A dev server that will not serve the worker file (a Vite fs allow-list, a proxy, a blocked
+ * CDN) is exactly such a case: the dialog sat at «downloading the converter… 100%» with nothing
+ * to click. The timeout turns that into a plain message and a working retry.
+ */
+export const CONVERT_START_TIMEOUT_MS = 20_000;
+
+/** The converter never answered: its worker did not boot (see CONVERT_START_TIMEOUT_MS). */
+export class ConvertTimeout extends Error {
+  constructor() {
+    super('converter did not start');
+    this.name = 'ConvertTimeout';
+  }
+}
+
+/**
+ * Resolves with `work`, or rejects with `ConvertTimeout` once `ms` has passed.
+ *
+ * The work itself is left alone (the caller terminates ffmpeg in its own `finally`): this only
+ * decides how long the user is kept waiting in silence. A late settlement is ignored, because a
+ * rejection nobody listens to is how a hang turns into an unhandled rejection.
+ */
+export function withTimeout<T>(work: Promise<T>, ms: number = CONVERT_START_TIMEOUT_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new ConvertTimeout());
+    }, ms);
+    work.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
