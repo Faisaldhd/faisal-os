@@ -9,6 +9,7 @@ import {
   addShape, addSlide, deleteShape, deleteSlide, duplicateSlide, moveSlide, newPicture, newShape, setAnim, setBounds,
   setShapeText, setTransition,
 } from './ops';
+import { formatClock, stepBack, stepForward } from './show';
 
 const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const decode = (b: Uint8Array | null): string => new TextDecoder().decode(b ?? new Uint8Array());
@@ -197,6 +198,23 @@ describe('the rich deck', () => {
     // Taking the transition away removes the element.
     const again = await save(saved, read, setTransition(read, 0, 'none'));
     expect(await part(again, 'ppt/slides/slide1.xml')).not.toContain('<p:transition');
+  });
+});
+
+describe('the slideshow steps', () => {
+  it('reveals animated shapes one click at a time, then moves on; back shows the previous slide complete', async () => {
+    const bytes = newDeckPptx('T', 'S');
+    let deck = await readDeck(bytes);
+    deck = setAnim(deck, 0, deck.slides[0].shapes[0].uid, 'fade');
+    deck = setAnim(deck, 0, deck.slides[0].shapes[1].uid, 'appear');
+    deck = addSlide(deck, 0, 'blank');
+    expect(stepForward(deck, { at: 0, step: 0 })).toEqual({ at: 0, step: 1 });
+    expect(stepForward(deck, { at: 0, step: 2 })).toEqual({ at: 1, step: 0 });
+    expect(stepForward(deck, { at: 1, step: 0 })).toBeNull();
+    expect(stepBack(deck, { at: 1, step: 0 })).toEqual({ at: 0, step: 2 });
+    expect(stepBack(deck, { at: 0, step: 0 })).toBeNull();
+    expect(formatClock(65_000)).toBe('01:05');
+    expect(formatClock(3_725_000)).toBe('1:02:05');
   });
 });
 
