@@ -812,3 +812,47 @@ defineStrings('office', {
     vLengthPrefix: 'Text length: ',
   },
 });
+
+/*
+ * Writer slice 2 — tracked changes (تتبّع التعديلات).
+ */
+defineStrings('office', {
+  ar: {
+    groupTracking: 'التتبّع',
+    groupVerdicts: 'القبول والرفض',
+    revToggle: 'تتبّع التعديلات',
+    revPanel: 'التغييرات',
+    revInsert: 'إدراج',
+    revDelete: 'حذف',
+    revAccept: 'قبول',
+    revReject: 'رفض',
+    revAcceptAll: 'قبول الكل',
+    revRejectAll: 'رفض الكل',
+    revClear: 'امسح السجل',
+    revAcceptAllBody: 'سيُثبَّت {n} تغييرًا في المستند. يمكن التراجع بعدها بخطوة واحدة.',
+    revRejectAllBody: 'سيُلغى {n} تغييرًا ويعود المستند كما كان قبلها. يمكن التراجع بعدها بخطوة واحدة.',
+    revOnCount: 'تتبّع التعديلات: مفعّل · {n} تغييرًا',
+    revOff: 'تتبّع التعديلات: متوقف',
+    revNone: 'لا تغييرات معلّقة.',
+    revNotSaved: 'التتبّع يعمل داخل هذه الجلسة فقط، والعلامات لا تُكتب في ملف .docx بعد.',
+  },
+  en: {
+    groupTracking: 'Tracking',
+    groupVerdicts: 'Accept & reject',
+    revToggle: 'Track changes',
+    revPanel: 'Changes',
+    revInsert: 'Inserted',
+    revDelete: 'Deleted',
+    revAccept: 'Accept',
+    revReject: 'Reject',
+    revAcceptAll: 'Accept all',
+    revRejectAll: 'Reject all',
+    revClear: 'Clear the log',
+    revAcceptAllBody: '{n} changes will be kept in the document. One undo takes it all back.',
+    revRejectAllBody: '{n} changes will be undone and the document returns to what it was before them. One undo takes that back.',
+    revOnCount: 'Track changes: on · {n} changes',
+    revOff: 'Track changes: off',
+    revNone: 'No pending changes.',
+    revNotSaved: 'Tracking lives in this session only; the marks are not written into the .docx yet.',
+  },
+});

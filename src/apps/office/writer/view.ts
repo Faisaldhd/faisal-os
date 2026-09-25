@@ -32,6 +32,11 @@ import { galleryStyles, resolveStyle, type DocLook, type ParaLook, type TextLook
 import { toHtml, toMarkdown } from './export';
 import { findAll, type Match } from './find';
 import { paginate, PX } from './paginate';
+import {
+  applyChangeToText, authorStamp, counts as revisionCounts, decide, decideAll, emptyLog, pending as pendingRevisions, shiftAfter,
+  planPieces, record, revisionsOf, type Change, type Revision, type RevisionLog,
+} from './revisions';
+import { shellConfirm } from '../../../shell/dialog';
 import { blockText, type DocBlock, type OpaqueRun, type Run, type RunProps } from './types';
 
 interface Pos { b: number; o: number }
@@ -293,6 +298,52 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       if (view.text.color) marker.style.color = `#${view.text.color}`;
       p.append(marker);
     }
+    // A paragraph with pending revisions is drawn from the plan: signed insertions marked, and the
+    // text of a pending deletion put back in place, struck through. That deleted text is NOT part
+    // of the paragraph any more, so it is rendered `data-skip` (the caret and the text reader both
+    // skip it) — the model keeps saying exactly what the deletion produced.
+    const marks = pendingRevisions(revLog).filter((r) => r.block === block.id);
+    if (marks.length) {
+      const text = blockText(block);
+      const first = block.runs.find((r) => r.t === 'text' && r.text) as Extract<Run, { t: 'text' }> | undefined;
+      for (const piece of planPieces(text, marks, block.id)) {
+        if (piece.mark === 'none') {
+          const span = el('span', 'fo-r');
+          if (first) runCss(span, view.text, { ...first.styled, ...first.props }, view.dir === 'rtl');
+          span.textContent = piece.text;
+          p.append(span);
+          continue;
+        }
+        const rev = piece.revision as Revision;
+        const span = el('span', `fo-rev is-${piece.mark}`);
+        span.dataset.rev = String(rev.id);
+        span.title = `${t(rev.kind === 'insert' ? 'office.revInsert' : 'office.revDelete')} — ${authorStamp(rev)}`;
+        // The sign is what makes the mark readable without relying on colour: + inserted, − deleted.
+        const sign = el('span', 'fo-rev-sign', piece.mark === 'insert' ? '+' : '−');
+        sign.dataset.skip = '1';
+        sign.contentEditable = 'false';
+        sign.setAttribute('aria-hidden', 'true');
+        span.append(sign);
+        const body = el('span', 'fo-rev-text');
+        if (first) runCss(body, view.text, { ...first.styled, ...first.props }, view.dir === 'rtl');
+        body.textContent = piece.text;
+        span.append(body);
+        if (piece.mark === 'delete') {
+          // Visible, but not part of the paragraph: skipped by the caret and by the text reader.
+          span.dataset.skip = '1';
+          span.contentEditable = 'false';
+          span.setAttribute('aria-label', `${t('office.revDelete')} — ${authorStamp(rev)}: ${piece.text}`);
+        }
+        p.append(span);
+      }
+      const shown = text;
+      if (!shown || shown.endsWith('\n')) {
+        const fill = el('br');
+        fill.dataset.skip = '1';
+        p.append(fill);
+      }
+      return p;
+    }
     block.runs.forEach((run, index) => {
       if (run.t === 'opaque') { p.append(opaqueEl(run, i, index, view.text, view.dir === 'rtl')); return; }
       if (!run.text) return;
@@ -409,9 +460,143 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     return wrap;
   }
 
-  let paraEls: HTMLElement[] = [];
-  let units: HTMLElement[] = [];
+  let paraEls: HTMLElement[] = [];  let units: HTMLElement[] = [];
   let unitOfPara: number[] = [];
+
+  /* ───────────────────────── tracked changes ───────────────────────── */
+
+  /** Tracking is a per-document toggle; the log records every change made while it is on. */
+  let tracking = false;
+  let revLog: RevisionLog = emptyLog();
+  /** The review panel, when it is open. */
+  let reviewPanel: HTMLElement | null = null;
+
+  /** Records what an edit changed, in the paragraph's own coordinates. */
+  function track(before: string, after: string, blockId: number): void {
+    if (!tracking) return;
+    for (const change of revisionsOf(before, after)) revLog = record(revLog, { ...change, block: blockId });
+  }
+
+  /** The index of the paragraph with this stable id, or -1. */
+  function indexOfBlock(id: number): number {
+    const blocks = (doc()?.blocks ?? []) as DocBlock[];
+    return blocks.findIndex((b) => b.id === id);
+  }
+
+  /**
+   * A verdict on one revision: the log moves in memory, and rejecting turns into a REAL paragraph
+   * edit (remove what was inserted, restore what was deleted) so undo takes it back in one step.
+   */
+  function applyDecision(id: number, action: 'accept' | 'reject'): void {
+    const done = decide(revLog, id, action);
+    revLog = done.log;
+    if (done.change) commitChanges([done.change]);
+    else renderFlow();
+    renderReview();
+    ctx.refresh();
+  }
+
+  function applyAllDecisions(action: 'accept' | 'reject'): void {
+    const done = decideAll(revLog, action);
+    revLog = done.log;
+    commitChanges(done.changes);
+    renderReview();
+    ctx.refresh();
+  }
+
+  /** All the paragraph changes of one verdict as a SINGLE undoable edit. */
+  function commitChanges(changes: readonly Change[]): void {
+    const m = doc();
+    if (!m) return;
+    const edits = changes
+      .filter((c) => c.op !== 'none')
+      .map((c) => {
+        const index = indexOfBlock(c.block);
+        if (index < 0) return null;
+        const before = m.paragraphs[index] ?? '';
+        const after = applyChangeToText(before, c);
+        if (after === before) return null;
+        return { index, edit: paragraphEdit(index, before, after) };
+      })
+      .filter((e): e is { index: number; edit: ReturnType<typeof paragraphEdit> } => e !== null);
+    if (!edits.length) { renderFlow(); return; }
+    if (edits.length === 1) ctx.commit(edits[0].edit);
+    else {
+      // Chained in order, and undone in reverse: one step in the history, exactly like one edit.
+      ctx.commit({
+        key: 'revisions',
+        apply: (model) => edits.reduce((acc, e) => e.edit.apply(acc), model),
+        revert: (model) => [...edits].reverse().reduce((acc, e) => e.edit.revert(acc), model),
+      });
+    }
+    renderFlow();
+  }
+
+  /** The review panel: every pending change, with a real button for each verdict. */
+  function renderReview(): void {
+    if (!reviewPanel) return;
+    const body = reviewPanel.querySelector<HTMLElement>('.fo-review-list');
+    if (!body) return;
+    const items = pendingRevisions(revLog);
+    body.replaceChildren();
+    if (!items.length) {
+      body.append(el('div', 'fo-review-empty', t('office.revNone')));
+      return;
+    }
+    for (const rev of items) {
+      const row = el('div', 'fo-review-row');
+      const what = el('div', 'fo-review-what');
+      const label = el('span', `fo-review-kind is-${rev.kind}`, t(rev.kind === 'insert' ? 'office.revInsert' : 'office.revDelete'));
+      const text = el('span', 'fo-review-text', rev.text.length > 40 ? `${rev.text.slice(0, 40)}…` : rev.text);
+      const meta = el('span', 'fo-review-meta', authorStamp(rev));
+      what.append(label, text, meta);
+      const accept = el('button', 'fo-review-btn is-accept', t('office.revAccept'));
+      accept.type = 'button';
+      accept.setAttribute('aria-label', `${t('office.revAccept')} — ${rev.text.slice(0, 20)}`);
+      accept.addEventListener('click', () => applyDecision(rev.id, 'accept'));
+      const reject = el('button', 'fo-review-btn is-reject', t('office.revReject'));
+      reject.type = 'button';
+      reject.setAttribute('aria-label', `${t('office.revReject')} — ${rev.text.slice(0, 20)}`);
+      reject.addEventListener('click', () => applyDecision(rev.id, 'reject'));
+      row.append(what, accept, reject);
+      body.append(row);
+    }
+  }
+
+  function toggleReviewPanel(force?: boolean): void {
+    if (reviewPanel && force !== true) { reviewPanel.remove(); reviewPanel = null; return; }
+    if (reviewPanel) return;
+    const panel = el('div', 'fo-review');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', t('office.revPanel'));
+    const head = el('div', 'fo-review-head');
+    head.append(el('span', 'fo-review-title', t('office.revPanel')));
+    const close = el('button', 'fo-review-close', '✕');
+    close.type = 'button';
+    close.setAttribute('aria-label', t('office.cancel'));
+    close.addEventListener('click', () => toggleReviewPanel(false));
+    head.append(close);
+    const list = el('div', 'fo-review-list');
+    panel.append(head, list);
+    panel.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); toggleReviewPanel(false); } });
+    root.append(panel);
+    reviewPanel = panel;
+    renderReview();
+    panel.querySelector<HTMLElement>('.fo-review-btn')?.focus();
+  }
+
+  async function confirmBulk(action: 'accept' | 'reject'): Promise<void> {
+    const n = pendingRevisions(revLog).length;
+    if (!n) return;
+    const ok = await shellConfirm({
+      title: t(action === 'accept' ? 'office.revAcceptAll' : 'office.revRejectAll'),
+      message: t(action === 'accept' ? 'office.revAcceptAllBody' : 'office.revRejectAllBody', { n }),
+      okLabel: t(action === 'accept' ? 'office.revAccept' : 'office.revReject'),
+      cancelLabel: t('office.cancel'),
+      danger: action === 'reject',
+    });
+    if (ok) applyAllDecisions(action);
+  }
 
   function renderFlow(): void {
     const m = doc();
@@ -731,6 +916,8 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     const first = blocks[sel.from.b];
     const last = blocks[sel.to.b];
     if (!first || !last || first.locked) return;
+    const beforeText = blockText(first);
+    const removedInside = sel.from.b === sel.to.b ? beforeText.slice(sel.from.o, sel.to.o) : beforeText.slice(sel.from.o);
     let merged: DocBlock;
     if (sel.from.b === sel.to.b) {
       merged = { ...first, runs: replaceText(first.runs, sel.from.o, sel.to.o, text, pending ?? undefined) };
@@ -750,6 +937,16 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       format = { ...(format ?? {}), dir: 'rtl' };
     }
     if (/\s/.test(text)) wordToken++;
+    // Tracked: the deletion (what the edit removed) and the insertion (what it typed), in the
+    // paragraph's own coordinates. A burst of typing merges into one revision inside the log.
+    if (tracking) {
+      const deleted = removedInside + (sel.from.b === sel.to.b ? '' : blockText(last).slice(0, sel.to.o));
+      // Older marks first: this edit moves the text they point at by the net length change.
+      revLog = shiftAfter(revLog, first.id, sel.from.o, text.length - deleted.length);
+      if (deleted) revLog = record(revLog, { kind: 'delete', block: first.id, at: sel.from.o, text: deleted });
+      if (text) revLog = record(revLog, { kind: 'insert', block: first.id, at: sel.from.o, text });
+      renderReview();
+    }
     const key = sel.collapsed && sel.from.b === sel.to.b ? `type:${first.id}:${wordToken}` : undefined;
     pending = null;
     commitSplice(sel.from.b, sel.to.b - sel.from.b + 1, [merged], [format], { b: sel.from.b, o: sel.from.o + text.length }, key);
@@ -851,6 +1048,16 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     }
     const start = back ? charBefore(text, o, word) : o;
     const end = back ? o : charAfter(text, o, word);
+    // Tracked: this path removes characters without going through `insertText`, so the deletion
+    // is recorded here, at the offset the paragraph keeps after the removal.
+    const removed = text.slice(start, end);
+    if (tracking && removed) {
+      // The paragraph shrinks: older marks after the cut move back with their text, then the
+      // deletion itself is recorded at the offset the paragraph keeps.
+      revLog = shiftAfter(revLog, block.id, start, -removed.length);
+      revLog = record(revLog, { kind: 'delete', block: block.id, at: start, text: removed });
+      renderReview();
+    }
     const runs = replaceText(block.runs, start, end, '');
     commitSplice(sel.from.b, 1, [{ ...block, runs }], [formatAt(sel.from.b)], { b: sel.from.b, o: start }, `del:${block.id}`);
   }
@@ -1433,6 +1640,29 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
         ],
       },
       {
+        // Review: tracking on/off, the change list, and the verdicts. Everything is a real button
+        // in the ribbon or in the panel, so nothing here depends on a hover or a right-click.
+        id: 'review', label: t('office.tabReview'), groups: [
+          {
+            label: t('office.groupTracking'), controls: [
+              {
+                type: 'button', id: 'tracking', icon: 'check', label: t('office.revToggle'), showLabel: true, phone: true,
+                pressed: () => tracking,
+                run: () => { tracking = !tracking; ctx.refresh(); renderFlow(); },
+              },
+              { type: 'button', id: 'revpanel', icon: 'comment', label: t('office.revPanel'), showLabel: true, phone: true, enabled: () => revLog.items.length > 0, run: () => toggleReviewPanel(true) },
+            ],
+          },
+          {
+            label: t('office.groupVerdicts'), controls: [
+              { type: 'button', id: 'revacceptall', icon: 'check', label: t('office.revAcceptAll'), showLabel: true, enabled: () => pendingRevisions(revLog).length > 0, run: () => { void confirmBulk('accept'); } },
+              { type: 'button', id: 'revrejectall', icon: 'close', label: t('office.revRejectAll'), showLabel: true, enabled: () => pendingRevisions(revLog).length > 0, run: () => { void confirmBulk('reject'); } },
+              { type: 'button', id: 'revclear', icon: 'trash', label: t('office.revClear'), showLabel: true, enabled: () => revLog.items.length > 0, run: () => { revLog = emptyLog(); renderReview(); renderFlow(); ctx.refresh(); } },
+            ],
+          },
+        ],
+      },
+      {
         id: 'insert', label: t('office.tabInsert'), groups: [
           {
             label: t('office.groupTables'), controls: [
@@ -1550,6 +1780,10 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
         t('office.statusChars', { n: c.chars }),
         currentFormat().dir === 'rtl' ? t('office.statusRtl') : t('office.statusLtr'),
       ];
+      // The tracking state is never a guess: off says off, on says on and how many changes wait.
+      parts.push(tracking
+        ? t('office.revOnCount', { n: revisionCounts(revLog).pending })
+        : t('office.revOff'));
       return { parts, zoom: mode === 'page' && !fluid ? { value: zoom, set: setZoom } : undefined };
     },
     onKey(ev: KeyboardEvent): boolean {
