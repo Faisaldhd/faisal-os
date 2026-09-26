@@ -13,7 +13,7 @@ import {
 
 /** 1 pt = 12700 EMU; 100 pt shapes keep the arithmetic readable. */
 const PT = 12700;
-const deck = (): Deck => ({ cx: 12192000, cy: 6858000, slides: [], layouts: [], scheme: { accent1: '#4472C4' } });
+const deck = (): Deck => ({ cx: 12192000, cy: 6858000, slides: [], layouts: [], masters: [], scheme: { accent1: '#4472C4' } });
 
 function rect(d: Deck, x: number, y: number, w: number, h: number): DeckShape {
   const s = newShape(d, 'rect');

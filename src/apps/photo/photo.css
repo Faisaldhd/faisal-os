@@ -1251,6 +1251,91 @@
   text-align: center;
 }
 
+/* my presets — saved locally, applied through the same engine as the looks above */
+.fp-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-block-start: 12px;
+  padding-block-start: 10px;
+  border-block-start: 1px solid var(--app-hairline);
+  min-width: 0;
+}
+
+.fp-preset-name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fp-preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.fp-preset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fp-preset-apply {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-block-size: 44px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--app-text-2);
+  font: inherit;
+  font-size: 12px;
+  text-align: start;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.fp-preset-apply:hover,
+.fp-preset-apply:focus-visible {
+  background: var(--app-blue-soft);
+}
+
+.fp-preset-apply .fp-filter-thumb {
+  inline-size: 56px;
+  block-size: 42px;
+  flex: 0 0 auto;
+}
+
+.fp-preset-name,
+.fp-preset .fp-preset-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fp-preset-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.fp-preset-rename {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.fp-hidden-file {
+  display: none;
+}
+
 /* history */
 .fp-history {
   list-style: none;
@@ -2344,6 +2429,16 @@
 
   .faisal-photo[data-compact='1'] .fp-card-hint {
     flex: 1 1 100%;
+  }
+
+  /* Saved presets are touched, not hovered: every control keeps a 44px target. */
+  .fp-preset-tools .fp-icon-btn {
+    min-inline-size: 44px;
+    min-block-size: 44px;
+  }
+
+  .fp-preset-apply {
+    min-block-size: 44px;
   }
 }
 

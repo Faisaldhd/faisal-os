@@ -56,7 +56,11 @@ describe('content tokenizer', () => {
 });
 
 describe('applyRedactions — true removal', () => {
-  it('removes the text inside the area; pdf.js cannot find it any more; the rest stays put', async () => {
+  // A pdf.js decrypt + parse of this document measured past the suite's 20 s default while three
+  // gates ran together on the shared machine (the same load that made the formula and photo budgets
+  // swing 15x). The allowance is for the clock only: every claim below is still asserted, once.
+  const HEAVY = { timeout: 60_000 } as const;
+  it('removes the text inside the area; pdf.js cannot find it any more; the rest stays put', HEAVY, async () => {
     const { bytes, secretX, secretW } = await sample();
     expect((await pdfjsText(bytes))[0]).toContain('SECRET42');
     const area = { page: 0, x: secretX + 0.5, y: 295, width: secretW, height: 20 };
@@ -95,7 +99,7 @@ describe('applyRedactions — true removal', () => {
     expect(after[0]).toBeGreaterThan(secretX + secretW - 2);
   });
 
-  it('paints the box and removes a vector shape and an image that lie inside the area', async () => {
+  it('paints the box and removes a vector shape and an image that lie inside the area', HEAVY, async () => {
     const doc = await PDFDocument.create();
     const page = doc.addPage([400, 400]);
     page.drawRectangle({ x: 100, y: 100, width: 20, height: 20, color: rgb(0, 0, 1) });
@@ -141,7 +145,7 @@ describe('applyRedactions — true removal', () => {
     expect([...decodePDFRawStream(images[0] as never).decode()]).toEqual([0, 0, 200, 200]);
   });
 
-  it('removes Arabic text drawn with an embedded (Type0) font, and its /ActualText', async () => {
+  it('removes Arabic text drawn with an embedded (Type0) font, and its /ActualText', HEAVY, async () => {
     const base = await blankPdf(1, [400, 400]);
     const withText = okBytes(await addUnicodeText(base, { page: 0, text: 'الرقم السري ٤٢', x: 40, y: 300, size: 18, color: '#000000' }, arabicFontBytes()));
     const lower = okBytes(await addUnicodeText(withText, { page: 0, text: 'Keep me', x: 40, y: 200, size: 18, color: '#000000' }, arabicFontBytes()));

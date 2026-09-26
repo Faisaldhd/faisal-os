@@ -17,6 +17,7 @@ import { diffText, replaceText } from './writer/docops';
 import { shiftSheetFormat, type SheetFormat } from './grid/sheetfmt';
 import type { AutoFilterColumn } from './grid/autofilter';
 import type { CondRule } from './calc/index';
+import type { ChartObject } from './grid/sheetview';
 import { shiftFormula } from './formula/index';
 import type { StructOp } from './grid/structure';
 
@@ -143,6 +144,11 @@ export interface SheetsModel {
    * (`grid/condfmt-xml.ts`). A rule the file cannot carry exactly is left out of the file.
    */
   condRules?: Record<number, readonly CondRule[]>;
+  /**
+   * The floating charts the owner added, per sheet: the save writes each one as a drawing anchor
+   * plus a `c:chartSpace` part, and the reader puts them back at open (`grid/chart-xml.ts`).
+   */
+  charts?: Record<number, readonly ChartObject[]>;
 }
 export interface DeckModel {
   kind: 'pptx';
@@ -432,6 +438,28 @@ export function condRulesEdit(sheet: number, before: readonly CondRule[], after:
   };
   return {
     key: `condrules:${sheet}`,
+    apply: (m) => put(m, after),
+    revert: (m) => put(m, before),
+  };
+}
+
+/**
+ * An edit that sets one sheet's floating charts, so a chart the owner adds reaches the file and
+ * one Ctrl+Z takes it back.
+ */
+export function chartsEdit(sheet: number, before: readonly ChartObject[], after: readonly ChartObject[]): Edit {
+  const put = (m: OfficeModel, list: readonly ChartObject[]): OfficeModel => {
+    if (m.kind !== 'xlsx' && m.kind !== 'csv') return m;
+    const all: Record<number, readonly ChartObject[]> = { ...(m.charts ?? {}) };
+    if (list.length) all[sheet] = list;
+    else delete all[sheet];
+    const out: SheetsModel = { ...m };
+    if (Object.keys(all).length) out.charts = all;
+    else delete out.charts;
+    return out;
+  };
+  return {
+    key: 'charts:' + sheet,
     apply: (m) => put(m, after),
     revert: (m) => put(m, before),
   };

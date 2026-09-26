@@ -24,6 +24,7 @@ import {
   type Anim, type Deck, type DeckCxn, type DeckPara, type DeckShape, type DeckSlide,
 } from './deck';
 import { cxnHolderXml, shapeXml, slideXml, timingXml, transitionXml } from './deckxml';
+import { layoutBgEdits, masterEdits } from './master';
 import { targetOf } from './connectors';
 import { sameParaStyle, styleParagraphXml } from './parafmt';
 
@@ -454,6 +455,7 @@ export async function patchDeck(archive: RawZip, base: Deck, cur: Deck): Promise
   if (presOut !== presXml) replacements.set(presPart, utf8(presOut));
   if (presRels !== (await textOf(archive, presRelsPart))) replacements.set(presRelsPart, utf8(presRels));
   if (ctx.ct !== ctXml) replacements.set('[Content_Types].xml', utf8(ctx.ct));
+  if (!await patchMasters(archive, base, cur, replacements)) return null;
 
   if (!replacements.size && !ctx.additions.size && !removals.size) return { bytes: archive.bytes, changed: [] };
   const bytes = await rebuildZip(archive, replacements, ctx.additions, removals);
@@ -463,6 +465,8 @@ export async function patchDeck(archive: RawZip, base: Deck, cur: Deck): Promise
   if (read.slides.length !== cur.slides.length) return null;
   if (JSON.stringify(deckTexts(read)) !== JSON.stringify(deckTexts(cur))) return null;
   if (connectorKeys(read) !== connectorKeys(cur)) return null;
+  // The master is the design: if the file does not say what the model says, nothing is written.
+  if (JSON.stringify(read.masters) !== JSON.stringify(cur.masters)) return null;
   for (let i = 0; i < cur.slides.length; i++) {
     const want = cur.slides[i].transition;
     if (want !== 'other' && read.slides[i].transition !== want) return null;
@@ -487,4 +491,31 @@ function connectorKeys(deck: Deck): string {
     };
     return `${at(s.stCxn)}>${at(s.endCxn)}`;
   })));
+}
+
+/**
+ * The masters this deck changed, and the layouts that override them.
+ *
+ * A layout with a `<p:bg>` of its own hides the master's background, so the same colour is
+ * written there too — the file then shows what the canvas showed. A master the model cannot
+ * express (no `txStyles`, say) refuses the whole save instead of writing half a design.
+ */
+async function patchMasters(archive: RawZip, base: Deck, cur: Deck, replacements: Map<string, Uint8Array>): Promise<boolean> {
+  for (const master of cur.masters) {
+    const before = base.masters.find((m) => m.part === master.part);
+    if (!before) return false;
+    const xml = await textOf(archive, master.part);
+    if (xml === null) return false;
+    const edits = masterEdits(xml, before, master);
+    if (edits === null) return false;
+    if (edits.length) replacements.set(master.part, utf8(applyEdits(xml, edits)));
+    if (before.bg === master.bg) continue;
+    for (const layout of cur.layouts) {
+      const lx = await textOf(archive, layout.part);
+      if (lx === null) continue;
+      const layoutEdits = layoutBgEdits(lx, master.bg);
+      if (layoutEdits.length) replacements.set(layout.part, utf8(applyEdits(lx, layoutEdits)));
+    }
+  }
+  return true;
 }

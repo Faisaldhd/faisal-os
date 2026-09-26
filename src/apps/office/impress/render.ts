@@ -9,7 +9,7 @@
  */
 import { t } from '../../../kernel/i18n';
 import { el } from '../ui/dom';
-import { EMU_PER_PT, type Deck, type DeckShape, type DeckSlide } from './deck';
+import { EMU_PER_PT, type Deck, type DeckMaster, type DeckShape, type DeckSlide, type MasterText } from './deck';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const pt = (emu: number): number => emu / EMU_PER_PT;
@@ -55,6 +55,14 @@ export interface DrawOptions {
   prompts?: boolean;
   /** Shapes with an entrance animation start hidden (the slideshow). */
   hideAnimated?: boolean;
+  /** The master this slide inherits from: its font and colour fill in what a paragraph leaves open. */
+  master?: DeckMaster | null;
+}
+
+/** The master text class a shape belongs to: a title, or body text. */
+function masterText(s: DeckShape, master: DeckMaster | null | undefined): MasterText | null {
+  if (!master || !s.ph) return null;
+  return s.ph === 'title' || s.ph === 'ctrTitle' ? master.title : master.body;
 }
 
 function drawText(deck: Deck, s: DeckShape, opts: DrawOptions): HTMLElement | null {
@@ -70,14 +78,16 @@ function drawText(deck: Deck, s: DeckShape, opts: DrawOptions): HTMLElement | nu
     box.append(line);
     return box;
   }
+  const inherited = masterText(s, opts.master);
   for (const p of s.paras) {
     const line = el('div', 'fo-sh-p', `${p.bullet ? '• ' : ''}${p.text || ' '}`);
     line.dir = 'auto';
-    line.style.fontSize = `${(p.size ?? 18) * s.fontScale}px`;
+    line.style.fontSize = `${(p.size ?? inherited?.size ?? 18) * s.fontScale}px`;
     if (p.bold) line.style.fontWeight = '700';
     if (p.italic) line.style.fontStyle = 'italic';
     if (p.underline) line.style.textDecoration = 'underline';
-    line.style.color = p.color ?? s.ink ?? deck.scheme.dk1 ?? '#000';
+    line.style.color = p.color ?? s.ink ?? inherited?.color ?? deck.scheme.dk1 ?? '#000';
+    if (inherited?.font) line.style.fontFamily = `"${inherited.font}", var(--fo-doc-font)`;
     if (p.align) line.style.textAlign = p.align === 'ctr' ? 'center' : p.align === 'r' ? 'right' : p.align === 'just' ? 'justify' : 'left';
     box.append(line);
   }
@@ -158,11 +168,14 @@ function drawShape(deck: Deck, s: DeckShape, opts: DrawOptions, ox = 0, oy = 0, 
 /** The slide at its real size in points (scale it with `fitSlide`). */
 export function drawSlide(deck: Deck, slide: DeckSlide, opts: DrawOptions = {}): HTMLElement {
   const canvas = el('div', 'fo-canvas');
+  const master = opts.master ?? deck.masters.find((m) => m.part === slide.master) ?? null;
   canvas.style.width = `${pt(deck.cx)}px`;
   canvas.style.height = `${pt(deck.cy)}px`;
-  canvas.style.background = slide.bg ?? deck.scheme.lt1 ?? '#fff';
+  // The background the slide really has: its own, else its layout's, else its master's — read
+  // from the master as it is *now*, so editing the master paints the slides immediately.
+  canvas.style.background = slide.bgOwn ?? slide.bgLayout ?? master?.bg ?? deck.scheme.lt1 ?? '#fff';
   for (const s of slide.shapes) {
-    const node = drawShape(deck, s, opts);
+    const node = drawShape(deck, s, { ...opts, master });
     node.dataset.uid = String(s.uid);
     if (opts.hideAnimated && s.anim) node.classList.add('is-pending');
     canvas.append(node);
