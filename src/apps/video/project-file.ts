@@ -12,6 +12,7 @@
  * an error: it is shown "offline" with a Relink action (the caller decides).
  */
 import { normalize } from '../../kernel/path';
+import { normalizeEffects } from './effects';
 import { clampCrop, resetTransform, type Rotation, type VideoTransform } from './clips';
 import { clamp } from './time';
 import {
@@ -194,6 +195,7 @@ function readClip(value: unknown): Clip | null {
     start: num(c.start, 0, 0),
     in: type === 'image' ? 0 : inPoint,
     out,
+    effects: normalizeEffects(c.effects),
     speed: type === 'image' ? 1 : num(c.speed, 1, MIN_SPEED, MAX_SPEED),
     volume: num(c.volume, 1, 0, MAX_VOLUME),
     muted: bool(c.muted, false),
