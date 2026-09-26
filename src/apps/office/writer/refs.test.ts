@@ -22,6 +22,8 @@ import {
   parseRefInstruction, readRefField, refFieldMarkup, refInstruction, refLabel, refTargets, usedBookmarks,
 } from './refs';
 import { blockText, type DocBlock } from './types';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -156,8 +158,8 @@ describe('cross-references — reading real bytes', () => {
     // The paragraph still reads as its text: the field contributes its cached result.
     expect(read.blocks.map(blockText).join('|')).toContain('see Section One for details.');
     // Evidence for the owner's Word check: leave a copy of this real package on disk.
-    const dir = `${process.env.TEMP ?? '.'}\\faisal-verify`;
+    const dir = join(tmpdir(), 'faisal-verify');
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(`${dir}\\ref-read-sample.docx`, bytes);
+    fs.writeFileSync(join(dir, 'ref-read-sample.docx'), bytes);
   });
 });

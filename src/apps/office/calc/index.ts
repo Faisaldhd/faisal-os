@@ -2,6 +2,7 @@
  * Office Calc helpers — public API (أدوات الجداول). All pure and DOM-free.
  *
  *   sort.ts        sortPermutation(rows, keys, { header }) · sortRows · compareCells
+ *                  sortRange(rows, rect, keys, { header, footer }) · sortFormulas · totalsRows
  *   filter.ts      distinctValues(rows, col) · filterRows / visibleRows(rows, filters) · matchesCondition
  *   condfmt.ts     evaluateConditionalFormats(values, rules) → CellStyle | null per cell · interpolateColor
  *   validation.ts  validateEntry(input, rule) → ok | { reason, message: { ar, en } } · listOptions · parseListSource
@@ -9,7 +10,10 @@
  *   numfmt.ts      formatValue(value, pattern, { locale, digits }) · makeFormat(spec) · parseEntry(text)
  *                  isDateFormat · BUILTIN_FORMATS
  */
-export { compareCells, sortPermutation, sortRows, type CellInput, type SortKey, type SortOptions } from './sort';
+export {
+  compareCells, sortFormulas, sortPermutation, sortRange, sortRows, totalsRows,
+  type CellInput, type RangeSortOptions, type RowMove, type SortKey, type SortOptions, type SortRect,
+} from './sort';
 export {
   columnStats, distinctValues, filterRows, matchesCondition, valueKey, visibleRows,
   type ColumnStats, type DistinctValue, type FilterCondition,

@@ -29,7 +29,7 @@ import { saveAsDialog } from '../../shell/save-as';
 import { MAX_COLS, MAX_ROWS, readDocx } from '../viewer/formats';
 import {
   History, VERIFIED_FORMATS, clearTruncated, emptyModel, isTruncated, planFor, textEdit,
-  type Edit, type FormatPlan, type OfficeModel, type SheetsModel, type SupportLevel,
+  type DocModel, type Edit, type FormatPlan, type OfficeModel, type SheetsModel, type SupportLevel,
 } from './model';
 import { computeSheets, parseFormula } from './formula/index';
 import { loadOfficeFile, serializeModel, type LoadRefusal } from './file';
@@ -57,7 +57,7 @@ import { closePopovers } from './ui/popover';
 import { Ribbon, type RibbonTab } from './ui/ribbon';
 import { printNodes } from './ui/print';
 import { readDocxDocument, type DocLook } from './writer/docxread';
-import { emptyDocxPackage, rebuildDocxRich } from './writer/docxpatch';
+import { emptyDocxPackage, isPristineDocx, plainTextCopy, rebuildDocxRich } from './writer/docxpatch';
 import { blockText } from './writer/types';
 import { createWriter } from './writer/view';
 import {
@@ -827,7 +827,17 @@ function launch(ctx: AppContext): void {
     const kind = packageKind(plan.kind);
     let patched: PatchResult | null = null;
     if (kind && onDiskBytes && onDiskModel) patched = await patchPackage(kind, onDiskBytes, onDiskModel, model, pendingTracked());
-    if (kind && !patched) {
+    // A Word document the surgical save refused is rebuilt from its rich model — never from its
+    // plain text behind the owner's back. If even that does not read back as the document, NOTHING
+    // is written: the owner is told, and may save a separate plain-text copy on purpose.
+    let rebuilt: Uint8Array | null = null;
+    if (!patched && !plan.odf && model.kind === 'docx' && model.blocks) {
+      rebuilt = await rebuildDocxRich(model, pendingTracked(), onDiskBytes);
+      if (!rebuilt) { await richSaveFailed(model); return; }
+    }
+    // A brand-new document (still the empty package it was created as) holds nothing a rebuild
+    // could lose: no warning is owed for it.
+    if (kind && !patched && !(rebuilt && isPristineDocx(onDiskBytes))) {
       const proceed = await shellConfirm({
         title: t('office.rebuildTitle'),
         message: t('office.rebuildBody', { name: basename(backupPathFor(filePath)) }),
@@ -861,7 +871,7 @@ function launch(ctx: AppContext): void {
       // A document opened from an `.odt` is written back as OpenDocument: OOXML bytes inside a
       // `.odt` path would be a file no reader opens.
       else if (plan.odf && model.kind === 'docx') data = toOdt(model, { title: odtTitleOf(model, basename(filePath)), created: new Date().toISOString() });
-      else if (model.kind === 'docx' && model.blocks) data = (await rebuildDocxRich(model, pendingTracked())) ?? serializeModel(model);
+      else if (rebuilt) data = rebuilt;
       else data = serializeModel(model);
       attempt = data.length;
       const result = await saveWithBackup(vfs, filePath, data);
@@ -872,7 +882,9 @@ function launch(ctx: AppContext): void {
       history.markSaved();
       // New pictures now live in the file: the model adopts the markup the save generated.
       for (const m of patched?.materialized ?? []) { m.run.xml = m.xml; delete m.run.newImage; }
-      if (!patched) {
+      // New pictures now point at parts of the file: the document is re-read like a rebuild, so
+      // the editor draws them from the file and the next save (or rebuild) finds their bytes.
+      if (!patched || (model.kind === 'docx' && patched.materialized?.length)) {
         model = clearTruncated(model);
         // A rebuilt file is re-read, so what the editor shows is what the file now holds.
         model = recompute(await enrich(model, data));
@@ -904,6 +916,33 @@ function launch(ctx: AppContext): void {
     }
   }
 
+  /**
+   * The rich save of a Word document failed: nothing was written. The owner is told so, and may
+   * ask — explicitly — for a separate plain-text copy; the document itself is never overwritten.
+   */
+  async function richSaveFailed(source: DocModel): Promise<void> {
+    const name = filePath ? basename(filePath) : t('office.untitled');
+    setStatus(t('office.richFailedStatus', { name }));
+    const copy = await shellConfirm({
+      title: t('office.richFailedTitle'),
+      message: t('office.richFailedBody', { name }),
+      okLabel: t('office.richFailedOk'),
+      cancelLabel: t('office.cancel'),
+      danger: true,
+    });
+    if (!copy || closed) return;
+    const data = plainTextCopy(source);
+    try {
+      const dir = filePath ? dirname(filePath) : '/home/user/Documents';
+      const base = `${filePath ? basename(filePath).replace(/\.[^.]+$/, '') : t('office.untitled')} (${t('office.plainCopySuffix')})`;
+      const target = await uniquePath(dir, base, 'txt');
+      await vfs.writeFile(target, data);
+      setStatus(t('office.plainCopySaved', { name: basename(target) }));
+    } catch (err) {
+      setStatus(t('office.saveFailed', { message: errorMessage(err, data.length) }));
+    }
+  }
+
   /* ──────────────────────────── autosave (Writer) ──────────────────────────── */
 
   /**
@@ -911,7 +950,12 @@ function launch(ctx: AppContext): void {
    * owner is looking at, so it is serialised the same way.
    */
   async function currentBytes(source: OfficeModel): Promise<Uint8Array> {
-    if (source.kind === 'docx' && source.blocks) return (await rebuildDocxRich(source, pendingTracked())) ?? serializeModel(source);
+    if (source.kind === 'docx' && source.blocks) {
+      const bytes = await rebuildDocxRich(source, pendingTracked(), onDiskBytes);
+      // A recovery copy in plain text would restore a document stripped of its formatting.
+      if (!bytes) throw new Error(t('office.richFailedError'));
+      return bytes;
+    }
     return serializeModel(source);
   }
 
@@ -1065,7 +1109,10 @@ function launch(ctx: AppContext): void {
         written = format;
         // A rich Word document is rebuilt (runs, images, tables), exactly like the in-place save.
         if (format === 'docx' && source.kind === 'docx' && source.blocks) {
-          return (await rebuildDocxRich(source, source.tracked?.items ?? pendingTracked())) ?? serializeAs(source, 'docx');
+          const bytes = await rebuildDocxRich(source, source.tracked?.items ?? pendingTracked(), onDiskBytes);
+          // Never a plain-text file under a .docx name: the dialog says it failed, and writes nothing.
+          if (!bytes) throw new Error(t('office.richFailedError'));
+          return bytes;
         }
         // A slide deck is patched from the file it came from, so nothing is lost.
         if (format === 'pptx' && source.kind === 'pptx' && source.deck && onDiskBytes && onDiskModel) {
