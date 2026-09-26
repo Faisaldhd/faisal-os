@@ -17,9 +17,10 @@ import { menuList, openPopover, type MenuItem } from '../ui/popover';
 import { PALETTE, type RibbonTab } from '../ui/ribbon';
 import { EMU_PER_PT, type Anim, type Deck, type DeckShape, type Transition } from './deck';
 import {
-  addShape, addSlide, deckEdit, deleteShape, deleteSlide, duplicateSlide, moveSlide, newPicture, newShape, setAnim, setBounds,
+  addShape, addSlide, connectShapes, deckEdit, deleteShape, deleteSlide, duplicateSlide, moveSlide, newPicture, newShape, setAnim, setBounds,
   setParaStyle, setShapeText, setTransition, SLIDE_LAYOUTS, type NewShapeKind, type SlideLayoutKind,
 } from './ops';
+import { connectable } from './connectors';
 import { controlColor, paraStyleOf, type ParaStyle, type ParaStylePatch } from './parafmt';
 import { drawSlide, fitSlide, fitWidth } from './render';
 import { startShow } from './show';
@@ -55,6 +56,11 @@ export function createSlideEditor(ctx: EditorContext): Editor {
   let scale = 1;
   let stageWidth = 0;
   let railDragging = false;
+  /** The connector gesture: `connecting` false = not drawing one, `connectFrom` null = waiting for
+   *  the first shape, a uid = waiting for the second. Escape, a tap on nothing, or a slide change
+   *  ends it, so a half-finished gesture can never surprise anyone later. */
+  let connecting = false;
+  let connectFrom: number | null = null;
 
   const root = el('div', 'fo-impress is-rich');
   const rail = el('nav', 'fo-rail');
@@ -79,6 +85,8 @@ export function createSlideEditor(ctx: EditorContext): Editor {
   function goTo(index: number): void {
     const d = deck();
     if (!d) return;
+    connecting = false;
+    connectFrom = null;
     current = Math.max(0, Math.min(d.slides.length - 1, index));
     selected = null;
     [...list.children].forEach((c, i) => c.setAttribute('aria-current', String(i === current)));
@@ -265,6 +273,8 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     });
     stage.append(frame);
     drawSelection();
+    frame.classList.toggle('is-connecting', connecting);
+    if (connecting && connectFrom !== null) canvas.querySelector(`[data-uid="${connectFrom}"]`)?.classList.add('is-cxn-from');
   }
 
   function drawSelection(bounds?: { x: number; y: number; w: number; h: number }): void {
@@ -291,8 +301,62 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     overlay.append(box);
   }
 
+  /* ─────────────────────────────── connectors ─────────────────────────────── */
+
+  /**
+   * Two taps: the shape the connector starts from, then the shape it ends at. The line is
+   * attached to the closest pair of sides and stays attached, so moving either box afterwards
+   * carries the line with it — on the canvas and in the saved file at once.
+   */
+  function startConnect(): void {
+    connecting = true;
+    connectFrom = null;
+    selected = null;
+    drawStage();
+    ctx.setStatus(t('impress.connectFirst'));
+    ctx.refresh();
+  }
+
+  function cancelConnect(): void {
+    if (!connecting) return;
+    connecting = false;
+    connectFrom = null;
+    drawStage();
+    ctx.setStatus(t('impress.connectCancelled'));
+    ctx.refresh();
+  }
+
+  function onConnectPick(ev: PointerEvent): void {
+    const d = deck();
+    const slide = d?.slides[current];
+    const node = (ev.target as Element | null)?.closest<HTMLElement>('[data-uid]') ?? null;
+    if (!slide || !node) { cancelConnect(); return; }
+    const uid = Number(node.dataset.uid);
+    const shape = slide.shapes.find((s) => s.uid === uid) ?? null;
+    if (!connectable(shape)) { ctx.setStatus(t('impress.connectNotShape')); return; }
+    if (connectFrom === null) {
+      connectFrom = uid;
+      canvas?.querySelector(`[data-uid="${uid}"]`)?.classList.add('is-cxn-from');
+      ctx.setStatus(t('impress.connectSecond'));
+      return;
+    }
+    if (connectFrom === uid) { ctx.setStatus(t('impress.connectSame')); return; }
+    const next = connectShapes(d as Deck, current, connectFrom, uid);
+    if (next === d) { ctx.setStatus(t('impress.connectNotShape')); return; }
+    const added = next.slides[current]?.shapes.slice(-1)[0] ?? null;
+    connecting = false;
+    connectFrom = null;
+    apply(next);
+    selected = added?.uid ?? null;
+    drawStage();
+    refreshThumb(current);
+    ctx.setStatus(t('impress.connectDone'));
+    ctx.refresh();
+  }
+
   function onPointerDown(ev: PointerEvent): void {
     if (editing || ev.button !== 0) return;
+    if (connecting) { onConnectPick(ev); return; }
     const target = ev.target as HTMLElement;
     const handle = target.closest<HTMLElement>('[data-handle]')?.dataset.handle ?? null;
     let s: DeckShape | null;
@@ -560,6 +624,8 @@ export function createSlideEditor(ctx: EditorContext): Editor {
             { type: 'button', id: 'picture', icon: 'image', label: t('office.insertImage'), enabled: can, run: insertPicture },
             { type: 'menu', id: 'shapes', icon: 'shape', label: t('office.impShapes'), phone: true, enabled: can,
               items: () => SHAPES.map((s) => ({ label: t(s.label), icon: icon(s.icon), run: () => { const d = deck(); if (d) insert(newShape(d, s.kind)); } })) },
+            { type: 'button', id: 'connector', icon: 'line', label: t('impress.connector'), showLabel: true, phone: true, enabled: can,
+              pressed: () => connecting, run: () => { if (connecting) cancelConnect(); else startConnect(); } },
             { type: 'button', id: 'delShape', icon: 'trash', label: t('office.impDeleteObject'), enabled: () => can() && !!sel(), run: deleteSelected },
           ] },
           // Type into a text box (double-click) and shape what you typed; the whole box takes
@@ -613,6 +679,9 @@ export function createSlideEditor(ctx: EditorContext): Editor {
 
   function render(): void {
     const d = deck();
+    // A slide change ends a half-finished connector: the shape it started from is not on screen.
+    connecting = false;
+    connectFrom = null;
     if (!d) { list.replaceChildren(); stage.replaceChildren(); return; }
     current = Math.max(0, Math.min(d.slides.length - 1, current));
     if (selected !== null && !shapeOf(selected)) selected = null;
@@ -636,6 +705,7 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     },
     onKey(ev: KeyboardEvent): boolean {
       if (ev.key === 'F5') { present(ev.shiftKey ? current : 0, false); return true; }
+      if (connecting && ev.key === 'Escape') { ev.preventDefault(); cancelConnect(); return true; }
       const target = ev.target as HTMLElement;
       if (editing || target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.tagName === 'SELECT') return false;
       if ((ev.key === 'Delete' || ev.key === 'Backspace') && selected !== null) { deleteSelected(); return true; }
