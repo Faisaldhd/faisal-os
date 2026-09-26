@@ -14,8 +14,32 @@
  * source the plan says `none` instead of starting an export that cannot finish.
  */
 import type { CapabilityProbe } from './capabilities';
+import { ExportCancelled } from './engine-port';
 
 export type ExportEngine = 'webcodecs' | 'mediarecorder' | 'none';
+
+/**
+ * Both export paths failed. The UI turns this one case into a single honest sentence, instead of
+ * showing whichever raw error the last encoder happened to throw.
+ */
+export class ExportBothFailed extends Error {
+  constructor(readonly mp4: unknown, readonly recorder: unknown) {
+    super('both export paths failed');
+    this.name = 'ExportBothFailed';
+  }
+}
+
+/**
+ * Should a failed faster-than-real-time (WebCodecs) export be retried on the recorder path?
+ *
+ * Yes for any real failure — the recorder is the path this app shipped before, and a browser
+ * whose encoder claims support and then gives up should not cost the user their export. No after
+ * a cancellation: that was the user's own decision, not a failure to work around.
+ */
+export function shouldFallBackFromMp4(error: unknown, aborted: boolean): boolean {
+  if (aborted) return false;
+  return !(error instanceof ExportCancelled);
+}
 
 /** Which pieces of the WebCodecs path the browser exposes. */
 export interface WebCodecsEnv {
