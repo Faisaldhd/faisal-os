@@ -714,7 +714,7 @@ defineStrings('office', {
     chartRemove: 'احذف المخطط',
     chartEmpty: 'حدّد نطاقًا فيه أرقام أولًا، ثم أدرج المخطط.',
     chartHint: 'اسحب شريط المخطط لتحريكه.',
-    chartViewOnly: 'المخططات عرض فقط ولا تُحفظ في ملف .xlsx بعد.',
+    chartSaved: 'يُحفظ المخطط في الملف (drawing + chart) ويُقرأ عند الفتح.',
     chartSeries: 'المخطط من النطاق {range}',
 
     /* Copied from the engine's VALIDATION_MESSAGES so the app's own strings.ts holds every
@@ -799,7 +799,7 @@ defineStrings('office', {
     chartRemove: 'Remove the chart',
     chartEmpty: 'Select a range with numbers first, then insert the chart.',
     chartHint: 'Drag the chart’s bar to move it.',
-    chartViewOnly: 'Charts are view-level only and are not written to the .xlsx yet.',
+    chartSaved: 'The chart is written to the file (drawing + chart) and read back at open.',
     chartSeries: 'Chart from range {range}',
 
     vNotInList: 'Choose a value from the list.',

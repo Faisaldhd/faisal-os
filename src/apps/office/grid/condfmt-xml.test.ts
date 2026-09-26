@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { columnName } from '../xml';
 import { colorScaleRule, dataBarRule, topRule } from './sheetview';
 import type { CellStyle, CondRule } from '../calc/index';
@@ -17,7 +17,7 @@ const cellIsRule = (op: 'gt' | 'lt' | 'gte' | 'lte' | 'eq' | 'neq' | 'between' |
 
 /**
  * Conditional formatting as the file keeps it: a `<cfRule>` per rule inside one
- * `<conditionalFormatting sqref="Ã¢â‚¬Â¦">`, pointing at a `<dxf>` in styles.xml by index, in the
+ * `<conditionalFormatting sqref="…">`, pointing at a `<dxf>` in styles.xml by index, in the
  * element order the schema fixes. A rule the file cannot carry exactly is not written at all.
  */
 const range = { r0: 1, c0: 0, r1: 39, c1: 3 };
@@ -73,7 +73,7 @@ describe('one cfRule', () => {
   });
 
   it('escapes a text rule and writes the formula Excel expects beside it', () => {
-    const rule: CondRule = { type: 'text', op: 'contains', text: 'Ã˜Â´Ã™â€¡Ã˜Â±Ã™Å  & "Ã˜Â«Ã˜Â§Ã˜Â¨Ã˜Âª"', style: { bold: true } };
+    const rule: CondRule = { type: 'text', op: 'contains', text: 'شهري & "ثابت"', style: { bold: true } };
     const xml = cfRuleXml(rule, 0, 1) as string;
     expect(xml).toContain('type="containsText"');
     expect(xml).toContain('&amp;');
@@ -135,7 +135,7 @@ describe('the dxfs in styles.xml', () => {  it('reads every dxf body back, in fi
   });
 });
 describe('round trip: rules written into the file and read back', () => {
-  const grid = { name: 'S', rows: [['Cat', 'Qty'], ['Ã˜Â£Ã™â€žÃ™Â', '2'], ['Ã˜Â¨Ã˜Â§Ã˜Â¡', '300']], truncated: false };
+  const grid = { name: 'S', rows: [['Cat', 'Qty'], ['ألف', '2'], ['باء', '300']], truncated: false };
   const rules: CondRule[] = [
     cellIsRule('gte', 100, { bold: true, fill: 'FFC000' }),
     colorScaleRule(),
@@ -193,7 +193,7 @@ describe('the Data tab conditional-format buttons save what they set', () => {
     const rules = (model as SheetsModel).condRules?.[0] ?? [];
     expect(rules).toHaveLength(1);
     expect(rules[0].type).toBe('colorScale');
-    // Ã¢â‚¬Â¦and clearing them takes the model entry away again, so nothing false is saved.
+    // …and clearing them takes the model entry away again, so nothing false is saved.
     const clear = editor.tabs().find((t) => t.id === 'data')?.groups.flatMap((g) => g.controls).find((c) => c.id === 'condclear') as unknown as { run: () => void };
     clear.run();
     expect((model as SheetsModel).condRules).toBeUndefined();
