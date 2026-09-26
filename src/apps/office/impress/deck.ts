@@ -114,19 +114,57 @@ export interface DeckSlide {
   from: string | null;
   /** The layout part a new slide references. */
   layout: string | null;
+  /** The master part this slide's layout belongs to (what the master editor edits). */
+  master: string | null;
   shapes: DeckShape[];
+  /** The background this slide ends up with: its own, else its layout's, else its master's. */
   bg: string | null;
+  /** The background the slide itself sets, or null when it inherits one. */
+  bgOwn: string | null;
+  /** The background the slide's layout sets, or null when the master decides. */
+  bgLayout: string | null;
   notes: string;
   transition: Transition;
 }
 
 export interface DeckLayout { part: string; type: string; name: string }
 
+/** The look a master gives one class of text: its font, colour and size at level 1. */
+export interface MasterText {
+  /** The Latin typeface (`a:latin/@typeface`), null when the master leaves it to the theme. */
+  font: string | null;
+  /** #RRGGBB, null when the master sets no colour. */
+  color: string | null;
+  /** Points, null when the master sets no size. */
+  size: number | null;
+}
+
+/**
+ * A slide master: the design every slide of it inherits.
+ *
+ * Only what this editor can change and keep is here — the background, the title and body text
+ * look, the footer text and whether the master carries a slide-number placeholder. Everything
+ * else in the part is left exactly as it was: the patch edits these elements and nothing more.
+ */
+export interface DeckMaster {
+  /** `ppt/slideMasters/slideMaster1.xml`. */
+  part: string;
+  bg: string | null;
+  title: MasterText;
+  body: MasterText;
+  /** The text of the master's footer placeholder, null when it has none. */
+  footer: string | null;
+  /** Whether the master carries a slide-number placeholder. */
+  slideNumber: boolean;
+}
+
 export interface Deck {
   cx: number;
   cy: number;
   slides: DeckSlide[];
   layouts: DeckLayout[];
+  /** Every master of the presentation, in the order `presentation.xml` lists them. */
+  masters: DeckMaster[];
   /** Theme colours by scheme name (dk1, lt1, accent1, …) as #RRGGBB. */
   scheme: Record<string, string>;
 }
@@ -317,7 +355,7 @@ export function readScheme(xml: string | null): Record<string, string> {
 
 /* ────────────────────────────── inheritance ────────────────────────────── */
 
-interface PhInfo { type: string; idx: string | null; xfrm: Xfrm | null; size: number | null; anchor: 't' | 'ctr' | 'b' | null }
+interface PhInfo { type: string; idx: string | null; xfrm: Xfrm | null; size: number | null; anchor: 't' | 'ctr' | 'b' | null; text?: string }
 interface Xfrm { x: number; y: number; w: number; h: number; rot: number; flipH: boolean; flipV: boolean }
 
 /** What a layout or master says about placeholders, backgrounds and default sizes. */
@@ -329,6 +367,12 @@ interface Template {
   bodySize?: number | null;
   otherSize?: number | null;
   bodyBullet?: boolean;
+  /** titleStyle / bodyStyle lvl1 look (font, colour, size) — masters only. */
+  titleText?: MasterText;
+  bodyText?: MasterText;
+  /** The footer placeholder's text, when the part has one. */
+  footer?: string;
+  slideNumber?: boolean;
 }
 
 function readXfrm(xml: string, x: XmlElement | null): Xfrm | null {
@@ -346,6 +390,21 @@ function lvl1Size(xml: string, style: XmlElement | null): number | null {
   const defRPr = childPath(style, 'lvl1pPr', 'defRPr');
   const sz = defRPr ? Number(attr(xml, defRPr, 'sz')) : NaN;
   return Number.isFinite(sz) && sz > 0 ? sz / 100 : null;
+}
+
+/** The font, colour and size a `txStyles` entry asks for at level 1 — one master text class. */
+function lvl1Text(xml: string, style: XmlElement | null, scheme: Record<string, string>): MasterText {
+  const defRPr = childPath(style, 'lvl1pPr', 'defRPr');
+  const sz = defRPr ? Number(attr(xml, defRPr, 'sz')) : NaN;
+  const latin = childPath(defRPr, 'latin');
+  const typeface = latin ? attr(xml, latin, 'typeface') : null;
+  return {
+    // `+mj-lt` / `+mn-lt` mean "the theme's font": the theme is not editable here, so it is
+    // reported as "no choice" rather than as a family name the user never picked.
+    font: typeface && !typeface.startsWith('+') ? decodeXml(typeface) : null,
+    color: defRPr ? colorOf(xml, child(defRPr, 'solidFill'), scheme) : null,
+    size: Number.isFinite(sz) && sz > 0 ? sz / 100 : null,
+  };
 }
 
 function bgOf(xml: string, cSld: XmlElement | null, scheme: Record<string, string>): string | null {
@@ -369,11 +428,16 @@ function readTemplate(xml: string | null, scheme: Record<string, string>): Templ
     const defRPr = childPath(sp, 'txBody', 'lstStyle', 'lvl1pPr', 'defRPr');
     const sz = defRPr ? Number(attr(xml, defRPr, 'sz')) : NaN;
     const anchor = attr(xml, childPath(sp, 'txBody', 'bodyPr') ?? sp, 'anchor');
+    const type = attr(xml, ph, 'type') ?? 'body';
     phs.push({
-      type: attr(xml, ph, 'type') ?? 'body', idx: attr(xml, ph, 'idx'),
+      type, idx: attr(xml, ph, 'idx'),
       xfrm: readXfrm(xml, childPath(sp, 'spPr', 'xfrm')),
       size: Number.isFinite(sz) && sz > 0 ? sz / 100 : null,
       anchor: anchor === 'ctr' || anchor === 'b' || anchor === 't' ? anchor : null,
+      // The footer's own words live in the placeholder; the master is where they are kept.
+      ...(type === 'ftr'
+        ? { text: (child(sp, 'txBody')?.children ?? []).filter((c) => localName(c.name) === 'p').map((p) => paraText(xml, p)).join('\n').trim() }
+        : {}),
     });
   }
   const out: Template = { phs, bg: bgOf(xml, cSld, scheme) };
@@ -384,8 +448,26 @@ function readTemplate(xml: string | null, scheme: Record<string, string>): Templ
     out.otherSize = lvl1Size(xml, child(tx, 'otherStyle'));
     const lvl1 = childPath(tx, 'bodyStyle', 'lvl1pPr');
     out.bodyBullet = !!lvl1 && !!(child(lvl1, 'buChar') || child(lvl1, 'buAutoNum')) && !child(lvl1, 'buNone');
+    out.titleText = lvl1Text(xml, child(tx, 'titleStyle'), scheme);
+    out.bodyText = lvl1Text(xml, child(tx, 'bodyStyle'), scheme);
   }
+  const ftr = phs.find((p) => p.type === 'ftr');
+  if (ftr) out.footer = ftr.text ?? '';
+  out.slideNumber = phs.some((p) => p.type === 'sldNum');
   return out;
+}
+
+/** The master part of a presentation read into the editable model. */
+function readMaster(xml: string, part: string, scheme: Record<string, string>): DeckMaster {
+  const t = readTemplate(xml, scheme);
+  return {
+    part,
+    bg: t.bg,
+    title: t.titleText ?? { font: null, color: null, size: null },
+    body: t.bodyText ?? { font: null, color: null, size: null },
+    footer: t.footer ?? null,
+    slideNumber: !!t.slideNumber,
+  };
 }
 
 const TITLE_TYPES = new Set(['title', 'ctrTitle']);
@@ -706,9 +788,17 @@ export async function readDeck(bytes: Uint8Array): Promise<Deck> {
     return t;
   };
 
+  // The masters, in the order presentation.xml lists them: what the master editor edits.
+  const masters: DeckMaster[] = [];
+  const masterParts = presRels.filter((r) => r.type === 'slideMaster');
+  for (const masterRel of masterParts) {
+    const mx = await text(archive, masterRel.target);
+    if (mx) masters.push(readMaster(mx, masterRel.target, scheme));
+  }
+
   // Layouts, through the masters, in the masters' order.
   const layouts: DeckLayout[] = [];
-  for (const masterRel of presRels.filter((r) => r.type === 'slideMaster')) {
+  for (const masterRel of masterParts) {
     for (const lr of (await relsOf(masterRel.target)).filter((r) => r.type === 'slideLayout')) {
       if (layouts.some((l) => l.part === lr.target)) continue;
       const lx = await text(archive, lr.target);
@@ -755,14 +845,17 @@ export async function readDeck(bytes: Uint8Array): Promise<Deck> {
     const resolveCxn = (r: DeckCxn | null): DeckCxn | null => (r ? { ...r, uid: idToUid.get(r.id) ?? null } : null);
     for (const s of shapes) { s.stCxn = resolveCxn(s.stCxn); s.endCxn = resolveCxn(s.endCxn); }
     const notesRel = rels.find((r) => r.type === 'notesSlide');
+    const ownBg = bgOf(xml, cSld, scheme);
     slides.push({
-      uid: nextUid(), part, from: null, layout: layoutPart ?? null, shapes,
-      bg: bgOf(xml, cSld, scheme) ?? layout?.bg ?? master?.bg ?? null,
+      uid: nextUid(), part, from: null, layout: layoutPart ?? null, master: masterPart ?? null, shapes,
+      bg: ownBg ?? layout?.bg ?? master?.bg ?? null,
+      bgOwn: ownBg,
+      bgLayout: layout?.bg ?? null,
       notes: readNotes(notesRel ? await text(archive, notesRel.target) : null),
       transition: readTransition(xml, root),
     });
   }
-  return { cx, cy, slides, layouts, scheme };
+  return { cx, cy, slides, layouts, masters, scheme };
 }
 
 /** The plain paragraphs of every slide (non-blank, in shape order), for the text model. */
