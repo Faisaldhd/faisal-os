@@ -10,9 +10,17 @@
 import { formulaKey, type Grid, type ParagraphFormat } from './model';
 import { cellName, isNumericText, paragraphPropertiesMarkup, runPropertiesMarkup, sheetName, xmlText } from './xml';
 import { utf8, writeZip, type ZipInput } from './zip';
-import { addCellStyles, applySheetLook, MINIMAL_STYLES } from './grid/xlsxstyle';
+import { addCellStyles, addDxfs, applySheetLook, MINIMAL_STYLES } from './grid/xlsxstyle';
 import type { SheetFormat } from './grid/sheetfmt';
 import { autoFilterRef, autoFilterXml, type AutoFilterColumn } from './grid/autofilter';
+import { conditionalFormattingXml, dxfBody, sqrefOf } from './grid/condfmt-xml';
+import type { CellStyle, CondRule } from './calc/index';
+import { columnName } from './xml';
+
+/** The style a rule paints with, whatever kind of rule it is (`''` for the ones without one). */
+function ruleStyleOf(rule: CondRule): Partial<CellStyle> | undefined {
+  return 'style' in rule ? rule.style : undefined;
+}
 
 const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
@@ -120,7 +128,7 @@ export function writeDocx(paragraphs: readonly string[], formats?: Record<number
  * `<v>` the value this app computed, which is what Excel shows without
  * recalculating and what every other reader sees.
  */
-export function xlsxSheet(grid: Grid, sheet = 0, formulas?: Record<string, string>, filters?: readonly AutoFilterColumn[]): string {
+export function xlsxSheet(grid: Grid, sheet = 0, formulas?: Record<string, string>, filters?: readonly AutoFilterColumn[], conditional?: string | null): string {
   const rows = grid.rows.map((row, r) => {
     const cells = row.map((value, c) => {
       const formula = formulas?.[formulaKey(sheet, r, c)];
@@ -137,12 +145,13 @@ export function xlsxSheet(grid: Grid, sheet = 0, formulas?: Record<string, strin
     }).join('');
     return `<row r="${r + 1}">${cells}</row>`;
   }).join('');
-  // The AutoFilter sits right after `</sheetData>`: that is the place the schema gives it, and it
-  // is what makes the saved sheet open filtered — and clearable again — in Excel and LibreOffice.
+  // The AutoFilter sits right after `</sheetData>`, and the conditional formatting after it: that is
+  // the order the schema fixes, and it is what makes the saved sheet open — filtered, coloured and
+  // clearable again — in Excel and LibreOffice instead of being repaired.
   const width = grid.rows.reduce((w, row) => Math.max(w, row.length), 0);
   const ref = autoFilterRef(grid.rows.length, width);
   const filter = filters?.length && ref ? autoFilterXml(filters, ref) : null;
-  return `${DECL}<worksheet xmlns="${S_NS}"><sheetData>${rows}</sheetData>${filter ?? ''}</worksheet>`;
+  return `${DECL}<worksheet xmlns="${S_NS}"><sheetData>${rows}</sheetData>${filter ?? ''}${conditional ?? ''}</worksheet>`;
 }
 
 /**
@@ -150,7 +159,13 @@ export function xlsxSheet(grid: Grid, sheet = 0, formulas?: Record<string, strin
  * styles part carrying the owner's formatting (column widths, row heights, cell
  * formats) when the model has any.
  */
-export function writeXlsx(grids: readonly Grid[], formulas?: Record<string, string>, formats?: Record<number, SheetFormat>, autoFilters?: Record<number, readonly AutoFilterColumn[]>): Uint8Array {
+export function writeXlsx(
+  grids: readonly Grid[],
+  formulas?: Record<string, string>,
+  formats?: Record<number, SheetFormat>,
+  autoFilters?: Record<number, readonly AutoFilterColumn[]>,
+  condRules?: Record<number, readonly CondRule[]>,
+): Uint8Array {
   const sheets: Grid[] = grids.length ? [...grids] : [{ name: 'Sheet1', rows: [], truncated: false }];
   const taken = new Set<string>();
   const names = sheets.map((grid, i) => {
@@ -162,7 +177,20 @@ export function writeXlsx(grids: readonly Grid[], formulas?: Record<string, stri
   // Formatting: every styled cell gets an xf built over the default one.
   let styles = MINIMAL_STYLES;
   const sheetXml = sheets.map((grid, i) => {
-    const xml = xlsxSheet(grid, i, formulas, autoFilters?.[i]);
+    // Conditional formatting: the rules first (they give the dxfs their indices), then the element
+    // that points at them, which belongs after the AutoFilter.
+    const rules = condRules?.[i] ?? [];
+    let conditional: string | null = null;
+    if (rules.length) {
+      const bodies = rules.map((rule) => dxfBody(ruleStyleOf(rule)));
+      const dxfs = addDxfs(styles, bodies.filter((b): b is string => b !== null));
+      styles = dxfs.xml;
+      let next = 0;
+      const ids = bodies.map((b) => (b === null ? null : dxfs.ids[next++]));
+      const width = grid.rows.reduce((w, row) => Math.max(w, row.length), 0);
+      conditional = conditionalFormattingXml(rules, sqrefOf({ r0: 0, c0: 0, r1: Math.max(0, grid.rows.length - 1), c1: Math.max(0, width - 1) }, columnName), ids);
+    }
+    const xml = xlsxSheet(grid, i, formulas, autoFilters?.[i], conditional);
     const fmt = formats?.[i];
     if (!fmt) return xml;
     const keys = Object.keys(fmt.cells ?? {});
