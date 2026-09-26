@@ -21,9 +21,10 @@ import { elements, localName, parsePart, applyEdits, attr, type XmlEdit, type Xm
 import { entryData, rebuildZip, utf8, type RawZip } from '../zip';
 import {
   child, deckTexts, parseRels, readDeck, relativeTarget, relsPath, resolveTarget, shapeElements, slideOrder, transitionElement,
-  type Anim, type Deck, type DeckPara, type DeckShape, type DeckSlide,
+  type Anim, type Deck, type DeckCxn, type DeckPara, type DeckShape, type DeckSlide,
 } from './deck';
-import { shapeXml, slideXml, timingXml, transitionXml } from './deckxml';
+import { cxnHolderXml, shapeXml, slideXml, timingXml, transitionXml } from './deckxml';
+import { targetOf } from './connectors';
 import { sameParaStyle, styleParagraphXml } from './parafmt';
 
 const SLIDE_CT = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
@@ -158,6 +159,28 @@ function addImage(ctx: Ctx, part: string, rels: string, s: DeckShape): { rels: s
 }
 
 /**
+ * The attachments of a connector that already exists in the file, rewritten from the model.
+ *
+ * `<a:stCxn>`/`<a:endCxn>` live in `<p:cNvCxnSpPr>`, which no other edit touches, so this is the
+ * one place a connector that was read from the file can change who it holds on to — when the
+ * shape it pointed at is deleted, or when the user drags the line away from both.
+ */
+function attachmentEdits(
+  el: XmlElement, before: DeckShape, after: DeckShape, ids: ReadonlyMap<number, number>,
+): XmlEdit[] | null {
+  if (localName(el.name) !== 'cxnSp') return [];
+  const same = (a: DeckCxn | null, b: DeckCxn | null): boolean =>
+    (a?.idx ?? -1) === (b?.idx ?? -1) && (a?.uid ?? null) === (b?.uid ?? null) && (a?.id ?? 0) === (b?.id ?? 0);
+  if (same(before.stCxn, after.stCxn) && same(before.endCxn, after.endCxn)) return [];
+  const holder = child(child(el, 'nvCxnSpPr'), 'cNvCxnSpPr');
+  const xml = cxnHolderXml(after.stCxn, after.endCxn, ids);
+  if (holder) return [{ start: holder.start, end: holder.end, xml }];
+  const nv = child(el, 'nvCxnSpPr');
+  if (!nv || nv.selfClosing) return null;
+  return [{ start: nv.openEnd, end: nv.openEnd, xml }];
+}
+
+/**
  * The slide part `part` holding `after`, starting from `xml` (the part `before` was
  * read from). Returns null when something cannot be expressed.
  */
@@ -171,6 +194,16 @@ function editSlide(ctx: Ctx, part: string, xml: string, rels: string, before: De
   const edits: XmlEdit[] = [];
   const byOrigin = new Map(after.shapes.filter((s) => s.origin !== null).map((s) => [s.origin as number, s]));
   let animChanged = false;
+
+  // The ids come first, because a change to a connector's attachments names the shape it holds
+  // on to — including a shape drawn in this same edit, whose id does not exist until now.
+  let maxId = 1;
+  for (const c of elements(doc, 'cNvPr')) maxId = Math.max(maxId, Number(attr(xml, c, 'id')) || 0);
+  const spids = new Map<number, number>();
+  for (const s of after.shapes) {
+    if (s.origin !== null) spids.set(s.uid, s.spid);
+    else spids.set(s.uid, ++maxId);
+  }
 
   for (const b of before.shapes) {
     if (b.origin === null) continue;
@@ -194,17 +227,16 @@ function editSlide(ctx: Ctx, part: string, xml: string, rels: string, before: De
       if (!e) return null;
       edits.push(...e);
     }
+    const a = attachmentEdits(el, b, c, spids);
+    if (!a) return null;
+    edits.push(...a);
   }
 
-  let maxId = 1;
-  for (const c of elements(doc, 'cNvPr')) maxId = Math.max(maxId, Number(attr(xml, c, 'id')) || 0);
-  const spids = new Map<number, number>();
   let markup = '';
   let relsXml = rels;
   for (const s of after.shapes) {
-    if (s.origin !== null) { spids.set(s.uid, s.spid); continue; }
-    const id = ++maxId;
-    spids.set(s.uid, id);
+    if (s.origin !== null) continue;
+    const id = spids.get(s.uid) as number;
     if (s.anim) animChanged = true;
     let embed: string | null = null;
     if (s.kind === 'pic') {
@@ -213,7 +245,7 @@ function editSlide(ctx: Ctx, part: string, xml: string, rels: string, before: De
       relsXml = added.rels;
       embed = added.id;
     }
-    markup += shapeXml(s, id, embed);
+    markup += shapeXml(s, id, embed, spids);
   }
   const inserts: XmlEdit[] = [];
   if (markup) {
@@ -250,11 +282,15 @@ function editSlide(ctx: Ctx, part: string, xml: string, rels: string, before: De
 function newSlide(ctx: Ctx, part: string, slide: DeckSlide): { xml: string; rels: string } | null {
   let rels = emptyRels();
   if (slide.layout) rels = addRelationship(rels, 'slideLayout', relativeTarget(part, slide.layout)).xml;
+  // The ids come first so a connector can point at a shape made in the same breath.
+  const ids = new Map<number, number>();
   let id = 1;
+  for (const s of slide.shapes) ids.set(s.uid, ++id);
   const anims: Array<{ spid: number; anim: Exclude<Anim, null> }> = [];
   let shapes = '';
   for (const s of slide.shapes) {
-    const spid = ++id;
+    if (s.kind === 'group' || s.kind === 'frame') return null; // never created here
+    const spid = ids.get(s.uid) as number;
     let embed: string | null = null;
     if (s.kind === 'pic') {
       const added = addImage(ctx, part, rels, s);
@@ -262,8 +298,7 @@ function newSlide(ctx: Ctx, part: string, slide: DeckSlide): { xml: string; rels
       rels = added.rels;
       embed = added.id;
     }
-    if (s.kind === 'group' || s.kind === 'frame') return null; // never created here
-    shapes += shapeXml(s, spid, embed);
+    shapes += shapeXml(s, spid, embed, ids);
     if (s.anim) anims.push({ spid, anim: s.anim });
   }
   return { xml: slideXml(shapes, null, slide.transition === 'other' ? 'none' : slide.transition, timingXml(anims)), rels };
@@ -427,9 +462,29 @@ export async function patchDeck(archive: RawZip, base: Deck, cur: Deck): Promise
   const read = await readDeck(bytes);
   if (read.slides.length !== cur.slides.length) return null;
   if (JSON.stringify(deckTexts(read)) !== JSON.stringify(deckTexts(cur))) return null;
+  if (connectorKeys(read) !== connectorKeys(cur)) return null;
   for (let i = 0; i < cur.slides.length; i++) {
     const want = cur.slides[i].transition;
     if (want !== 'other' && read.slides[i].transition !== want) return null;
   }
   return { bytes, changed: [...replacements.keys(), ...ctx.additions.keys(), ...removals] };
+}
+
+/**
+ * Every connector end of the deck as "which shape of this slide, which site".
+ *
+ * Comparing the resolved shape rather than the raw `cNvPr id` is what makes the check work for a
+ * connector drawn in this session: it knows its target by uid, and the id only exists once the
+ * slide has been written. A save that loses an attachment, or writes it onto the wrong shape,
+ * fails this and is refused instead of producing a deck that draws differently from the model.
+ */
+function connectorKeys(deck: Deck): string {
+  return JSON.stringify(deck.slides.map((slide) => slide.shapes.map((s) => {
+    if (s.kind !== 'line') return '';
+    const at = (r: DeckCxn | null): string => {
+      const target = targetOf(r, slide.shapes);
+      return `${target ? slide.shapes.indexOf(target) : -1}:${r?.idx ?? -1}`;
+    };
+    return `${at(s.stCxn)}>${at(s.endCxn)}`;
+  })));
 }

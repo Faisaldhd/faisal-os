@@ -45,6 +45,23 @@ export interface DeckImage {
   ext: string;
 }
 
+/**
+ * One end of a connector: the shape it holds on to and the connection site it holds on at.
+ *
+ * The shape is named by its session `uid` — the only identity that exists for a shape drawn
+ * in this session — with the `cNvPr id` the file had as a fallback for a reference this reader
+ * could not resolve (a shape inside `mc:AlternateContent`, say), so that a file the model does
+ * not fully understand is still written back with its own reference intact.
+ */
+export interface DeckCxn {
+  /** The connected shape's session uid, or null when only a file id is known. */
+  uid: number | null;
+  /** The `cNvPr id` the file stored (0 when the shape has no file id yet). */
+  id: number;
+  /** The connection site: 0 top, 1 left, 2 bottom, 3 right (see `connectors.ts`). */
+  idx: number;
+}
+
 export interface DeckShape {
   /** Unique in the session (selection, undo); never written. */
   uid: number;
@@ -68,6 +85,10 @@ export interface DeckShape {
   strokeW: number;
   /** A line with an arrow head at its end. */
   arrow: boolean;
+  /** Where a connector's first end is attached (`a:stCxn`), null for a free line. */
+  stCxn: DeckCxn | null;
+  /** Where a connector's second end is attached (`a:endCxn`), null for a free line. */
+  endCxn: DeckCxn | null;
   paras: DeckPara[];
   /** Default text colour of the shape (a shape style's font colour), null = the theme's. */
   ink: string | null;
@@ -429,8 +450,18 @@ function blank(kind: ShapeKind, origin: number | null): DeckShape {
   return {
     uid: nextUid(), kind, origin, spid: 0, name: '', ph: null, phIdx: null, geom: 'rect',
     x: 0, y: 0, w: 0, h: 0, rot: 0, flipH: false, flipV: false, fill: null, stroke: null, strokeW: 12700, arrow: false,
+    stCxn: null, endCxn: null,
     paras: [], ink: null, anchor: 't', fontScale: 1, image: null, children: [], box: null, table: null, anim: null, locked: false,
   };
+}
+
+/** `a:stCxn`/`a:endCxn`: the shape a connector end holds on to. `uid` is filled in later, once
+ *  the whole slide is read and the referenced `cNvPr id` can be matched to a shape. */
+function readCxn(xml: string, el: XmlElement | null): DeckCxn | null {
+  if (!el) return null;
+  const id = num(xml, el, 'id');
+  if (!(id > 0)) return null;
+  return { uid: null, id, idx: Math.max(0, Math.round(num(xml, el, 'idx'))) };
 }
 
 function applyXfrm(shape: DeckShape, x: Xfrm | null): void {
@@ -465,6 +496,7 @@ function readShape(ctx: Ctx, el: XmlElement, origin: number | null): DeckShape |
   if (name === 'sp' || name === 'cxnSp') {
     const nv = child(el, name === 'sp' ? 'nvSpPr' : 'nvCxnSpPr');
     const cNvPr = child(nv, 'cNvPr');
+    const cxnPr = child(nv, 'cNvCxnSpPr');
     const ph = childPath(nv, 'nvPr', 'ph');
     const spPr = child(el, 'spPr');
     const style = child(el, 'style');
@@ -473,6 +505,8 @@ function readShape(ctx: Ctx, el: XmlElement, origin: number | null): DeckShape |
     const txBox = attr(xml, child(nv, 'cNvSpPr') ?? el, 'txBox') === '1';
     const shape = blank(isLine ? 'line' : 'text', origin);
     shape.spid = num(xml, cNvPr, 'id');
+    shape.stCxn = readCxn(xml, child(cxnPr, 'stCxn'));
+    shape.endCxn = readCxn(xml, child(cxnPr, 'endCxn'));
     shape.name = cNvPr ? decodeXml(attr(xml, cNvPr, 'name') ?? '') : '';
     shape.geom = isLine ? 'line' : geom;
     if (ph) { shape.ph = attr(xml, ph, 'type') ?? 'body'; shape.phIdx = attr(xml, ph, 'idx'); }
@@ -714,6 +748,12 @@ export async function readDeck(bytes: Uint8Array): Promise<Deck> {
     }
     const anims = readTiming(xml, root);
     for (const s of shapes) s.anim = anims.get(s.spid) ?? null;
+    // A connector names the shapes it holds on to by `cNvPr id`; the session needs the uid, so
+    // the reference is resolved once, here, where every shape of the slide is known. A reference
+    // that resolves to nothing keeps its file id: it is written back exactly as it came in.
+    const idToUid = new Map(shapes.filter((s) => s.spid > 0).map((s) => [s.spid, s.uid]));
+    const resolveCxn = (r: DeckCxn | null): DeckCxn | null => (r ? { ...r, uid: idToUid.get(r.id) ?? null } : null);
+    for (const s of shapes) { s.stCxn = resolveCxn(s.stCxn); s.endCxn = resolveCxn(s.endCxn); }
     const notesRel = rels.find((r) => r.type === 'notesSlide');
     slides.push({
       uid: nextUid(), part, from: null, layout: layoutPart ?? null, shapes,
