@@ -16,7 +16,8 @@
  * is reached through `FrameProvider`, so tests pass fake images and this file
  * never creates or seeks a media element.
  */
-import { visualsAt, textAnimAt, type MediaClip, type Project, type TextClip } from '../project';
+import { clipLength, visualsAt, textAnimAt, type MediaClip, type Project, type TextClip } from '../project';
+import { blurAt, blurPixels, blackoutAt, darkAt, darkFrame, effectFilter } from '../effects';
 import { applyColorAdjust, colorFilter, isNeutral, type Rect } from '../render-math';
 import { layerAlpha, layerPlan, safeAreas, scaleAbout, textFont, textPlan, type LayerPlan, type Size, type View } from './layout';
 
@@ -138,7 +139,7 @@ export function composeFrame(
     if (!plan) continue;
     if (layer.trackKind === 'overlay') report.boxes.push({ id: layer.clip.id, kind: 'overlay', rect: plan.rect });
     if (alpha <= 0) continue;
-    drawLayer(ctx, picture, plan, alpha, layer.clip, frame, filterOk, options.scratch);
+    drawLayer(ctx, picture, plan, alpha, layer.clip, frame, filterOk, options.scratch, time);
     report.drawn.push(layer.clip.id);
   }
   veil();
@@ -164,8 +165,44 @@ function drawLayer(
   frame: Size,
   filterOk: boolean,
   scratchFor: ComposeOptions['scratch'],
+  time = 0,
 ): void {
   const neutral = isNeutral(clip.color);
+  /*
+   * The clip's effects are drawn HERE, next to the picture they belong to, because this is the
+   * one function both the preview and the frame-by-frame MP4 export reach — so what the editor
+   * shows is what the file gets, curve for curve.
+   */
+  const effects = clip.effects;
+  const total = clipLength(clip);
+  const local = time - clip.start;
+  const blur = filterOk ? blurPixels(blurAt(effects, local, total), frame) : 0;
+  const black = blackoutAt(effects, local, total);
+  const box = clipRect(plan.rect, frame);
+  const overlay = () => {
+    if (box.width <= 0 || box.height <= 0) return;
+    if (black > 0.001) {
+      ctx.save();
+      ctx.globalAlpha = alpha * black;
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(box.x, box.y, box.width, box.height);
+      ctx.restore();
+    }
+    const dark = darkAt(effects, local, total);
+    if (dark > 0.001) {
+      const { border, alpha: darkAlpha } = darkFrame(dark, box);
+      if (border > 0) {
+        ctx.save();
+        ctx.globalAlpha = alpha * darkAlpha;
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(box.x, box.y, box.width, border);
+        ctx.fillRect(box.x, box.y + box.height - border, box.width, border);
+        ctx.fillRect(box.x, box.y + border, border, Math.max(0, box.height - 2 * border));
+        ctx.fillRect(box.x + box.width - border, box.y + border, border, Math.max(0, box.height - 2 * border));
+        ctx.restore();
+      }
+    }
+  };
   if (!neutral && !filterOk && scratchFor) {
     // Per-pixel fallback: draw into the scratch at frame size, adjust the pixels, draw the result.
     const scratch = scratchFor(frame);
@@ -176,7 +213,6 @@ function drawLayer(
       s.clearRect(0, 0, frame.width, frame.height);
       paint(s, picture, plan);
       s.restore();
-      const box = clipRect(plan.rect, frame);
       if (box.width > 0 && box.height > 0) {
         try {
           const pixels = s.getImageData(box.x, box.y, box.width, box.height);
@@ -186,6 +222,7 @@ function drawLayer(
           ctx.globalAlpha = alpha;
           ctx.drawImage(scratch.canvas, box.x, box.y, box.width, box.height, box.x, box.y, box.width, box.height);
           ctx.restore();
+          overlay();
           return;
         } catch {
           // A tainted or failed read falls through to the unadjusted picture.
@@ -195,9 +232,14 @@ function drawLayer(
   }
   ctx.save();
   ctx.globalAlpha = alpha;
-  if (!neutral && filterOk) ctx.filter = colorFilter(clip.color);
+  if (filterOk) {
+    const grade = neutral ? 'none' : colorFilter(clip.color);
+    const combined = effectFilter(grade, blur);
+    if (combined !== 'none') ctx.filter = combined;
+  }
   paint(ctx, picture, plan);
   ctx.restore();
+  overlay();
 }
 
 /** Draws the picture with its crop, rotation and flip. */

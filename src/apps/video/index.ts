@@ -37,7 +37,7 @@ import './video.css';
 
 import { VIDEO_EXTENSIONS, type CapabilityProbe } from './capabilities';
 import { outputSize } from './clips';
-import { baseNameWithoutExtension } from './export';
+import { ExportBothFailed, baseNameWithoutExtension, shouldFallBackFromMp4 } from './export';
 import { History } from './history';
 import { icon } from './icons';
 import { Inspector, TEXT_PRESETS, type InspectorTab, type TextPreset } from './inspector';
@@ -1520,13 +1520,34 @@ function launch(ctx: AppContext): void {
         let ext: string;
         if (kind === 'video' && container === 'mp4' && mp4Plan) {
           const p = mp4Plan;
-          const out = await engine.exportVideo({
-            width: p.video.width, height: p.video.height, fps: p.fps, mime: 'video/mp4',
-            videoBitrate: p.video.bitrate, audioBitrate: p.audio?.bitrate ?? 0,
-            range, signal: controller.signal, onProgress, mp4: p,
-          });
-          blob = out.blob;
-          ext = '.mp4';
+          try {
+            const out = await engine.exportVideo({
+              width: p.video.width, height: p.video.height, fps: p.fps, mime: 'video/mp4',
+              videoBitrate: p.video.bitrate, audioBitrate: p.audio?.bitrate ?? 0,
+              range, signal: controller.signal, onProgress, mp4: p,
+            });
+            blob = out.blob;
+            ext = '.mp4';
+          } catch (err) {
+            // The fast (WebCodecs) path claimed support and then gave up. It writes nothing on
+            // failure, so the ordinary recorder gets the job — silently: the fallback is part of
+            // how the export works, not something the user has to hear about.
+            if (!shouldFallBackFromMp4(err, controller.signal.aborted)) throw err;
+            const st = settings();
+            if (!st) throw new ExportBothFailed(err, new Error(s('noRecorder')));
+            try {
+              const out = await engine.exportVideo({
+                width: st.width, height: st.height, fps: st.fps, mime: st.mime,
+                videoBitrate: st.videoBitrate, audioBitrate: st.audioBitrate,
+                range, signal: controller.signal, onProgress,
+              });
+              blob = out.blob;
+              ext = st.extension;
+            } catch (again) {
+              if (again instanceof ExportCancelled || controller.signal.aborted) throw again;
+              throw new ExportBothFailed(err, again);
+            }
+          }
         } else if (kind === 'video') {
           const st = settings();
           if (!st) throw new Error(s('noRecorder'));
@@ -1571,6 +1592,10 @@ function launch(ctx: AppContext): void {
         if (err instanceof ExportCancelled || controller.signal.aborted) {
           progressText.textContent = s('exportCancelled');
           status(s('exportCancelled'));
+        } else if (err instanceof ExportBothFailed) {
+          // The one case worth naming: the fast encoder and the ordinary recorder both failed.
+          progressText.textContent = s('exportBothFailed');
+          status(s('exportBothFailed'), true);
         } else {
           progressText.textContent = s('exportFailed', { reason: err instanceof Error ? err.message : '' });
         }
