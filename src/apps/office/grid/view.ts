@@ -15,9 +15,13 @@
 import { t, getLocale } from '../../../kernel/i18n';
 import type { Editor, EditorContext, StatusInfo } from '../editor';
 import {
-  addColumnEdit, addRowEdit, autoFilterEdit, canDeleteColumn, canDeleteRow, chartsEdit, condRulesEdit, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit,
-  gridAt, gridWidth, SHEET_ROWS, type CellState, type Edit, type OfficeModel, type SheetsModel,
+  addColumnEdit, addRowEdit, autoFilterEdit, canDeleteColumn, canDeleteRow, cellEdit, chartsEdit, condRulesEdit, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit,
+  gridAt, gridWidth, pivotsEdit, SHEET_ROWS, type CellState, type Edit, type OfficeModel, type SheetsModel,
 } from '../model';
+import {
+  PIVOT_AGGREGATES, pivotTable, pivotTarget, sourceSignature,
+  type PivotAggregate, type PivotPlacement, type PivotSpec,
+} from './pivot';
 import type { AutoFilterColumn } from './autofilter';
 import { evaluateInModel, formatFormula, parseFormula, translateFormula } from '../formula/index';
 import type { CondRule } from '../calc/index';
@@ -1738,6 +1742,202 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     showPanel(t('office.filterTitle', { name: columnLabel(col) }), body);
   }
 
+  /**
+   * The pivot panel (الجدول المحوري): pick a row field, an optional column field and what to
+   * measure, and the table lands in the sheet as ORDINARY CELLS — so it saves like every other
+   * cell, sorts and filters with them, and one Ctrl+Z takes the whole table back.
+   *
+   * Recalculation is a DECISION, declared here and in the panel: it is never automatic. The result
+   * is normal cells, so recomputing on every source keystroke would overwrite whatever the owner
+   * typed inside the table and flood the undo history with edits nobody asked for. Instead the
+   * panel says when the source has moved on (a fingerprint of the cells the pivot reads) and offers
+   * an explicit Refresh, which rewrites the same anchor from live data.
+   */
+  function pivotSourceRange(): { r0: number; c0: number; r1: number; c1: number } {
+    const g = range();
+    // Drawn rows are mapped through `modelRowOf`, the same rule sorting, filling and the charts
+    // use: a pivot never reads or writes a row an active filter hid.
+    const picked = { r0: modelRowOf(g.r0), c0: g.c0, r1: modelRowOf(g.r1), c1: g.c1 };
+    // One cell selected means "the table I am standing in": the whole used block, header included,
+    // which is what a person means by clicking inside their data. A wider selection is taken as-is.
+    if (picked.r0 !== picked.r1 || picked.c0 !== picked.c1) return picked;
+    const rows = sheets() ? gridAt(sheets() as SheetsModel, (sheets() as SheetsModel).active)?.rows ?? [] : [];
+    let lastCol = 0;
+    for (let r = 0; r <= lastUsedRow() && r < rows.length; r++) {
+      for (let c = 0; c < (rows[r]?.length ?? 0); c++) if ((rows[r][c] ?? '').trim() !== '') lastCol = Math.max(lastCol, c);
+    }
+    return { r0: 0, c0: 0, r1: lastUsedRow(), c1: lastCol };
+  }
+
+  function pivotSourceRows(source: { r0: number; c0: number; r1: number; c1: number }): string[][] {
+    const m = sheets();
+    const rows = m ? gridAt(m, m.active)?.rows ?? [] : [];
+    const out: string[][] = [];
+    for (let r = source.r0; r <= source.r1; r++) {
+      const line: string[] = [];
+      for (let c = source.c0; c <= source.c1; c++) line.push(rows[r]?.[c] ?? '');
+      out.push(line);
+    }
+    return out;
+  }
+
+  /** The last row of the sheet that holds anything — where a new pivot must not land on top of. */
+  function lastUsedRow(): number {
+    const rows = sheets() ? gridAt(sheets() as SheetsModel, (sheets() as SheetsModel).active)?.rows ?? [] : [];
+    for (let r = rows.length - 1; r >= 0; r--) {
+      if ((rows[r] ?? []).some((cell) => (cell ?? '').trim() !== '')) return r;
+    }
+    return 0;
+  }
+
+  /** The field choices for the current selection: the header row's names, or the column letters. */
+  function pivotFields(source: { r0: number; c0: number; r1: number; c1: number }): Array<{ col: number; name: string }> {
+    const rows = pivotSourceRows({ ...source, r1: source.r0 });
+    const out: Array<{ col: number; name: string }> = [];
+    for (let c = source.c0; c <= source.c1; c++) {
+      const header = (rows[0]?.[c - source.c0] ?? '').trim();
+      out.push({ col: c, name: header || t('office.pivotColumn', { name: columnName(c) }) });
+    }
+    return out;
+  }
+
+  function insertPivot(source: { r0: number; c0: number; r1: number; c1: number }, spec: PivotSpec): PivotPlacement | null {
+    const m = sheets();
+    if (!m) return null;
+    const table = pivotTable(pivotSourceRows(source), spec);
+    const target = pivotTarget({ r0: source.r0, c0: source.c0, r1: source.r1 }, lastUsedRow());
+    const edits: Edit[] = [];
+    for (const [dr, line] of table.cells.entries()) {
+      for (const [dc, value] of line.entries()) {
+        const row = target.row + dr;
+        const col = target.col + dc;
+        const before = gridAt(m, m.active)?.rows[row]?.[col] ?? '';
+        const after = value === '' ? '' : String(value);
+        if (before !== after) edits.push(cellEdit(m.active, row, col, before, after));
+      }
+    }
+    const placement: PivotPlacement = {
+      anchor: target, source, spec, signature: sourceSignature(pivotSourceRows(source), spec),
+      size: { rows: table.rows, cols: table.cols },
+    };
+    const before = pivotPlacements(m.active);
+    if (edits.length || before.length !== 1) edits.push(pivotsEdit(m.active, before, [placement]));
+    if (edits.length) ctx.commit(compositeEdit(edits));
+    refreshValues();
+    return placement;
+  }
+
+  const pivotPlacements = (sheet: number): readonly PivotPlacement[] => sheets()?.pivots?.[sheet] ?? [];
+
+  function openPivotPanel(): void {
+    const m = sheets();
+    if (!m || !enabledSheet()) return;
+    const source = pivotSourceRange();
+    const fields = pivotFields(source);
+    if (!fields.length) return;
+    const existing = pivotPlacements(m.active);
+    const body = el('div', 'fo-sheetpanel-body');
+    const rows = el('div', 'fo-sheetpanel-rows');
+
+    const picker = (label: string, choices: Array<{ col: number; name: string }>, none?: string): HTMLSelectElement => {
+      const select = el('select', 'fo-sheetpanel-select');
+      select.setAttribute('aria-label', label);
+      if (none) {
+        const option = el('option', undefined, none);
+        option.value = '';
+        select.append(option);
+      }
+      for (const field of choices) {
+        const option = el('option', undefined, field.name);
+        option.value = String(field.col);
+        select.append(option);
+      }
+      const row = el('div', 'fo-sheetpanel-row');
+      row.append(el('span', 'fo-sheetpanel-level', label), select);
+      rows.append(row);
+      return select;
+    };
+
+    const rowField = picker(t('office.pivotRows'), fields);
+    rowField.value = String(fields[0].col);
+    const colField = picker(t('office.pivotColumns'), fields, t('office.pivotNone'));
+    colField.value = '';
+    const valueField = picker(t('office.pivotValues'), fields);
+    valueField.value = String(fields[fields.length - 1].col);
+    const fn = el('select', 'fo-sheetpanel-select');
+    fn.setAttribute('aria-label', t('office.pivotFunction'));
+    for (const choice of PIVOT_AGGREGATES) {
+      const option = el('option', undefined, t(`office.pivotFn_${choice}`));
+      option.value = choice;
+      fn.append(option);
+    }
+    fn.value = 'sum';
+    const fnRow = el('div', 'fo-sheetpanel-row');
+    fnRow.append(el('span', 'fo-sheetpanel-level', t('office.pivotFunction')), fn);
+    rows.append(fnRow);
+    body.append(rows);
+
+    /** The spec the pickers currently describe. */
+    const specNow = (): PivotSpec => {
+      const row = Number(rowField.value);
+      const col = colField.value === '' ? null : Number(colField.value);
+      const valueCol = Number(valueField.value);
+      return {
+        rows: Number.isFinite(row) ? [row - source.c0] : [],
+        cols: col === null ? [] : [col - source.c0],
+        values: Number.isFinite(valueCol) ? [{ col: valueCol - source.c0, fn: fn.value as PivotAggregate }] : [],
+        header: true,
+      };
+    };
+
+    const target = pivotTarget({ r0: source.r0, c0: source.c0, r1: source.r1 }, lastUsedRow());
+    body.append(el('div', 'fo-sheetpanel-note', t('office.pivotWhere', {
+      range: `${columnName(source.c0)}${source.r0 + 1}:${columnName(source.c1)}${source.r1 + 1}`,
+      cell: `${columnName(target.col)}${target.row + 1}`,
+    })));
+
+    const actions = el('div', 'fo-sheetpanel-actions');
+    actions.append(panelButton(t('office.pivotInsert'), () => {
+      const placed = insertPivot(source, specNow());
+      closePanel();
+      if (placed) ctx.setStatus(t('office.pivotDone', { cell: `${columnName(placed.anchor.col)}${placed.anchor.row + 1}` }));
+    }, true));
+
+    // Refresh: an explicit button, never a background recompute (see the note above the panel).
+    const stale = existing.length
+      ? sourceSignature(pivotSourceRows(existing[0].source), existing[0].spec) !== existing[0].signature
+      : false;
+    if (existing.length) {
+      actions.append(panelButton(t('office.pivotRefresh'), () => {
+        const previous = existing[0];
+        const live = pivotSourceRows(previous.source);
+        const table = pivotTable(live, previous.spec);
+        const edits: Edit[] = [];
+        // Clear whatever the previous table occupied, then write the new one: rows can shrink.
+        for (let dr = 0; dr < Math.max(previous.size.rows, table.rows); dr++) {
+          for (let dc = 0; dc < Math.max(previous.size.cols, table.cols); dc++) {
+            const row = previous.anchor.row + dr;
+            const col = previous.anchor.col + dc;
+            const before = gridAt(m, m.active)?.rows[row]?.[col] ?? '';
+            const value = table.cells[dr]?.[dc];
+            const after = value === undefined || value === '' ? '' : String(value);
+            if (before !== after) edits.push(cellEdit(m.active, row, col, before, after));
+          }
+        }
+        const refreshed: PivotPlacement = { ...previous, signature: sourceSignature(live, previous.spec), size: { rows: table.rows, cols: table.cols } };
+        edits.push(pivotsEdit(m.active, [previous], [refreshed]));
+        ctx.commit(compositeEdit(edits));
+        refreshValues();
+        closePanel();
+        ctx.setStatus(t('office.pivotRefreshed'));
+      }));
+    }
+    body.append(actions);
+    if (stale) body.append(el('div', 'fo-sheetpanel-note is-stale', t('office.pivotStale')));
+    body.append(el('div', 'fo-sheetpanel-note', t('office.pivotSaved')));
+    showPanel(t('office.pivotTitle'), body);
+  }
+
   function openChartPanel(): void {
     const g = range();
     const body = el('div', 'fo-sheetpanel-body');
@@ -1877,6 +2077,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
           },
           {
             label: t('office.groupCharts'), controls: [
+              { type: 'button', id: 'pivot', icon: 'table', label: t('office.pivotInsert'), showLabel: true, phone: true, enabled: enabledSheet, run: openPivotPanel },
               { type: 'button', id: 'chart', icon: 'chart', label: t('office.chartInsert'), showLabel: true, phone: true, enabled: enabledSheet, run: openChartPanel },
               { type: 'button', id: 'chartclear', icon: 'close', label: t('office.chartRemove'), showLabel: true, enabled: () => sheetView.charts.length > 0, run: () => setChartsState([]) },
             ],
