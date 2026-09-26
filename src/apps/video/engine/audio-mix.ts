@@ -13,6 +13,7 @@
  */
 import { audibleAt, layoutTrack, isMedia, type MediaClip, type Project } from '../project';
 import { computePeaks } from '../render-math';
+import { stretchChannels, stretchResamples } from './stretch';
 
 /* ─────────────────────────────── pure helpers ─────────────────────────────── */
 
@@ -251,7 +252,11 @@ export interface OfflineMixOptions {
 
 export interface OfflineMixResult {
   buffer: AudioBuffer;
-  /** True when some clip ran at a speed other than 1: offline playback shifts its pitch. */
+  /**
+   * True when some clip ran at a speed other than 1 AND its pitch could not be kept. The mix
+   * stretches those clips (`stretch.ts`, WSOLA) instead of resampling them, so today this stays
+   * false for every speed in range; it is kept so a caller can still tell.
+   */
   pitchShifted: boolean;
   /** Media ids that could not be decoded (their clips are silent in the mix). */
   undecodable: string[];
@@ -302,6 +307,7 @@ export async function renderMixOffline(
   if (!OfflineCtor) throw new Error('OfflineAudioContext is unavailable');
   const ctx = new OfflineCtor(channelCount, length, sampleRate);
   const cache = new Map<string, AudioBuffer | null>();
+  const stretched = new Map<string, AudioBuffer>();
   const undecodable = new Set<string>();
   let pitchShifted = false;
   for (const item of audibleClips(project)) {
@@ -315,16 +321,37 @@ export async function renderMixOffline(
       continue;
     }
     const speed = item.clip.speed > 0 ? item.clip.speed : 1;
-    if (Math.abs(speed - 1) > 1e-3) pitchShifted = true;
     const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.playbackRate.value = speed;
     const gain = ctx.createGain();
     const envelope = gainEnvelope(project, item.clip.id, { start: slot.when + range.start, end: slot.stop + range.start });
     gain.gain.setValueAtTime(envelope[0]?.gain ?? 0, slot.when);
     for (const point of envelope.slice(1)) gain.gain.linearRampToValueAtTime(point.gain, point.time - range.start);
     source.connect(gain);
     gain.connect(ctx.destination);
+    if (Math.abs(speed - 1) > 1e-3) {
+      // A speed change must not move the pitch: the clip's own samples are time-stretched
+      // (waveform-similarity overlap-add, `stretch.ts`) and then played at rate 1. Resampling it
+      // with `playbackRate` — what this did before — is what turned speech into a chipmunk.
+      const key = `${item.clip.mediaId}@${speed.toFixed(4)}`;
+      let flat = stretched.get(key);
+      if (!flat) {
+        const channels: Float32Array[] = [];
+        for (let c = 0; c < buffer.numberOfChannels; c++) channels.push(buffer.getChannelData(c));
+        // A clip too short to frame (< ~0.1s) resamples instead; that one does move the pitch.
+        if (stretchResamples(buffer.length, speed, { sampleRate: buffer.sampleRate })) pitchShifted = true;
+        const out = stretchChannels(channels, speed, { sampleRate: buffer.sampleRate });
+        flat = ctx.createBuffer(Math.max(1, out.length), Math.max(1, out[0]?.length ?? 0), buffer.sampleRate);
+        for (let c = 0; c < out.length; c++) flat.getChannelData(c).set(out[c]);
+        stretched.set(key, flat);
+      }
+      source.buffer = flat;
+      // The stretched copy already runs at the clip's speed, so the read position moves back to
+      // the source axis and the stop time stays on the timeline clock.
+      source.start(slot.when, Math.min(Math.max(0, slot.offset / speed), Math.max(0, flat.duration - 1e-4)));
+      source.stop(slot.stop);
+      continue;
+    }
+    source.buffer = buffer;
     source.start(slot.when, slot.offset);
     source.stop(slot.stop);
   }
