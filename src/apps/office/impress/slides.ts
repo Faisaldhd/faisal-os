@@ -18,9 +18,10 @@ import { PALETTE, type RibbonTab } from '../ui/ribbon';
 import { EMU_PER_PT, type Anim, type Deck, type DeckShape, type MasterText, type Transition } from './deck';
 import {
   addShape, addSlide, connectShapes, deckEdit, deleteShape, deleteSlide, duplicateSlide, masterOf, moveSlide, newPicture, newShape,
-  setAnim, setBounds, setMaster, setParaStyle, setShapeText, setTransition, SLIDE_LAYOUTS, type NewShapeKind, type SlideLayoutKind,
+  setAnim, setBounds, setMaster, setParaStyle, setShapeText, setTransition, SLIDE_LAYOUTS, ungroup, type NewShapeKind, type SlideLayoutKind,
 } from './ops';
 import { connectable } from './connectors';
+import { DIAGRAM_KINDS, diagramShape, type DiagramKind } from './diagrams';
 import { controlColor, modelColor, paraStyleOf, type ParaStyle, type ParaStylePatch } from './parafmt';
 import { drawSlide, fitSlide, fitWidth } from './render';
 import { startShow } from './show';
@@ -41,6 +42,10 @@ const SHAPES: ReadonlyArray<{ kind: NewShapeKind; icon: IconName; label: string 
   { kind: 'arrow', icon: 'arrow', label: 'office.impArrow' },
   { kind: 'line', icon: 'line', label: 'office.impLine' },
 ];
+/** The three diagrams the Insert group offers, each one group of boxes joined by real arrows. */
+const DIAGRAM_LABEL: Record<DiagramKind, string> = {
+  list: 'impress.diagramList', process: 'impress.diagramProcess', cycle: 'impress.diagramCycle',
+};
 const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const;
 const pt = (emu: number): number => emu / EMU_PER_PT;
 
@@ -700,6 +705,32 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     ctx.refresh();
   }
 
+  /**
+   * One diagram: a whole group of boxes joined by arrows, added as a single undoable edit and
+   * selected as one shape — drag it, resize it, delete it.
+   */
+  function insertDiagram(kind: DiagramKind): void {
+    const d = deck();
+    if (!d) return;
+    insert(diagramShape(d, kind));
+    ctx.setStatus(t('impress.diagramAdded'));
+  }
+
+  /** Takes the selected group apart, so its boxes can be moved and typed in one by one. */
+  function ungroupSelected(): void {
+    const d = deck();
+    const s = shapeOf(selected);
+    if (!d || !s || s.kind !== 'group') return;
+    const next = ungroup(d, current, s.uid);
+    if (next === d) return;
+    apply(next);
+    selected = null;
+    drawStage();
+    refreshThumb(current);
+    ctx.setStatus(t('impress.ungrouped'));
+    ctx.refresh();
+  }
+
   /* ─────────────────────────────── ribbon ─────────────────────────────── */
 
   function present(from: number, presenter: boolean): void {
@@ -739,6 +770,9 @@ export function createSlideEditor(ctx: EditorContext): Editor {
               items: () => SHAPES.map((s) => ({ label: t(s.label), icon: icon(s.icon), run: () => { const d = deck(); if (d) insert(newShape(d, s.kind)); } })) },
             { type: 'button', id: 'connector', icon: 'line', label: t('impress.connector'), showLabel: true, phone: true, enabled: can,
               pressed: () => connecting, run: () => { if (connecting) cancelConnect(); else startConnect(); } },
+            { type: 'menu', id: 'diagrams', icon: 'chart', label: t('impress.diagrams'), phone: true, enabled: can,
+              items: () => DIAGRAM_KINDS.map((kind) => ({ label: t(DIAGRAM_LABEL[kind]), run: () => insertDiagram(kind) })) },
+            { type: 'button', id: 'ungroup', icon: 'cut', label: t('impress.ungroup'), enabled: () => can() && sel()?.kind === 'group', run: ungroupSelected },
             { type: 'button', id: 'delShape', icon: 'trash', label: t('office.impDeleteObject'), enabled: () => can() && !!sel(), run: deleteSelected },
           ] },
           // Type into a text box (double-click) and shape what you typed; the whole box takes

@@ -23,7 +23,7 @@ import {
   child, deckTexts, parseRels, readDeck, relativeTarget, relsPath, resolveTarget, shapeElements, slideOrder, transitionElement,
   type Anim, type Deck, type DeckCxn, type DeckPara, type DeckShape, type DeckSlide,
 } from './deck';
-import { cxnHolderXml, shapeXml, slideXml, timingXml, transitionXml } from './deckxml';
+import { cxnHolderXml, groupWritable, shapeXml, slideXml, timingXml, transitionXml } from './deckxml';
 import { layoutBgEdits, masterEdits } from './master';
 import { targetOf } from './connectors';
 import { sameParaStyle, styleParagraphXml } from './parafmt';
@@ -197,14 +197,21 @@ function editSlide(ctx: Ctx, part: string, xml: string, rels: string, before: De
   let animChanged = false;
 
   // The ids come first, because a change to a connector's attachments names the shape it holds
-  // on to — including a shape drawn in this same edit, whose id does not exist until now.
+  // on to — including a shape drawn in this same edit, whose id does not exist until now — and
+  // because the children of a new group need ids of their own on the slide.
   let maxId = 1;
   for (const c of elements(doc, 'cNvPr')) maxId = Math.max(maxId, Number(attr(xml, c, 'id')) || 0);
   const spids = new Map<number, number>();
-  for (const s of after.shapes) {
-    if (s.origin !== null) spids.set(s.uid, s.spid);
-    else spids.set(s.uid, ++maxId);
-  }
+  const assignIds = (list: readonly DeckShape[]): void => {
+    for (const s of list) {
+      if (s.origin !== null) spids.set(s.uid, s.spid);
+      else spids.set(s.uid, ++maxId);
+      assignIds(s.children);
+    }
+  };
+  assignIds(after.shapes);
+  // A new group holding something this writer cannot put in a group refuses the save.
+  for (const s of after.shapes) if (s.kind === 'group' && s.origin === null && !groupWritable(s)) return null;
 
   for (const b of before.shapes) {
     if (b.origin === null) continue;
@@ -290,7 +297,8 @@ function newSlide(ctx: Ctx, part: string, slide: DeckSlide): { xml: string; rels
   const anims: Array<{ spid: number; anim: Exclude<Anim, null> }> = [];
   let shapes = '';
   for (const s of slide.shapes) {
-    if (s.kind === 'group' || s.kind === 'frame') return null; // never created here
+    if (s.kind === 'frame') return null; // never created here
+    if (s.kind === 'group' && !groupWritable(s)) return null;
     const spid = ids.get(s.uid) as number;
     let embed: string | null = null;
     if (s.kind === 'pic') {

@@ -317,6 +317,42 @@ export function addShape(deck: Deck, at: number, shape: DeckShape): Deck {
   return mapSlide(deck, at, (slide) => ({ ...slide, shapes: [...slide.shapes, shape] }));
 }
 
+/**
+ * Takes a group apart: its children become shapes of the slide, where they can be selected,
+ * moved and typed in.
+ *
+ * A diagram arrives as one group so it can be dragged as a unit, but a group is a cage in this
+ * editor — its children are not addressable. Ungrouping lifts them into the slide's own
+ * coordinates (the group's box may scale its child space, so each child is mapped, not just
+ * moved), and the connectors are re-routed afterwards, which leaves the arrows still attached to
+ * the boxes they joined: from there a box can be dragged and its arrows follow it.
+ */
+export function ungroup(deck: Deck, at: number, uid: number): Deck {
+  return mapSlide(deck, at, (slide) => {
+    const group = slide.shapes.find((s) => s.uid === uid);
+    if (!group || group.kind !== 'group' || group.locked || !group.children.length) return slide;
+    const box = group.box ?? { x: 0, y: 0, w: group.w, h: group.h };
+    const sx = box.w ? group.w / box.w : 1;
+    const sy = box.h ? group.h / box.h : 1;
+    const lifted = group.children.map((c) => liftShape(c, group.x - box.x * sx, group.y - box.y * sy, sx, sy));
+    const index = slide.shapes.findIndex((s) => s.uid === uid);
+    const shapes = slide.shapes.slice();
+    shapes.splice(index, 1, ...lifted);
+    return { ...slide, shapes: followConnectors(shapes) };
+  });
+}
+
+/** A shape moved out of its group's child space into the slide's own coordinates. */
+function liftShape(s: DeckShape, dx: number, dy: number, sx: number, sy: number): DeckShape {
+  return {
+    ...s,
+    x: Math.round(s.x * sx + dx), y: Math.round(s.y * sy + dy),
+    w: Math.round(s.w * sx), h: Math.round(s.h * sy),
+    rot: s.rot, locked: false,
+    children: s.children.map((c) => liftShape(c, dx, dy, sx, sy)),
+  };
+}
+
 export function setTransition(deck: Deck, at: number, transition: Transition): Deck {
   return mapSlide(deck, at, (slide) => (slide.transition === transition ? slide : { ...slide, transition }));
 }
