@@ -42,12 +42,30 @@ export function paraXml(p: DeckPara): string {
   if (/[؀-ۿ]/.test(p.text)) pPr.push('rtl="1"');
   const rPr = runProps('a:rPr', p, p.text);
   let runs = '';
-  // A tab stays a tab character inside <a:t>: DrawingML has no <a:tab/> run.
-  for (const part of p.text.replace(/\r\n?/g, '\n').split(/(\n)/)) {
-    if (part === '\n') runs += `<a:br>${rPr}</a:br>`;
-    else if (part) runs += `<a:r>${rPr}<a:t>${xmlText(part)}</a:t></a:r>`;
+  if (p.field === 'slidenum') {
+    // A live slide number: PowerPoint recomputes `<a:t>` itself, and it changes when a slide is
+    // inserted before this one — which a literal run never would.
+    runs = `<a:fld id="${fieldId()}" type="slidenum">${rPr}<a:t>${xmlText(p.text)}</a:t></a:fld>`;
+  } else {
+    // A tab stays a tab character inside <a:t>: DrawingML has no <a:tab/> run.
+    for (const part of p.text.replace(/\r\n?/g, '\n').split(/(\n)/)) {
+      if (part === '\n') runs += `<a:br>${rPr}</a:br>`;
+      else if (part) runs += `<a:r>${rPr}<a:t>${xmlText(part)}</a:t></a:r>`;
+    }
   }
   return `<a:p>${pPr.length ? `<a:pPr ${pPr.join(' ')}/>` : ''}${runs}${runProps('a:endParaRPr', p, p.text)}</a:p>`;
+}
+
+/**
+ * The `id` a field run needs: PowerPoint's own shape is `{8-4-4-4-12}` uppercase GUID.
+ *
+ * It only has to be unique inside the part, and it is only generated when a field paragraph is
+ * written for the first time — an edited paragraph keeps the file's own id.
+ */
+let fieldCounter = 0;
+function fieldId(): string {
+  const n = (++fieldCounter).toString(16).toUpperCase().padStart(20, '0');
+  return `{${n.slice(0, 8)}-0000-4000-8000-${n.slice(8)}}`;
 }
 
 function xfrm(s: DeckShape): string {

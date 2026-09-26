@@ -16,7 +16,7 @@ const NS = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmln
 const PART = 'ppt/slideMasters/slideMaster1.xml';
 const text = (over: Partial<DeckMaster['title']> = {}): DeckMaster['title'] => ({ font: null, color: null, size: null, ...over });
 const master = (over: Partial<DeckMaster> = {}): DeckMaster => ({
-  part: PART, bg: null, title: text(), body: text(), footer: null, slideNumber: false, ...over,
+  part: PART, bg: null, title: text(), body: text(), footer: null, slideNumber: false, footerBox: null, numberBox: null, ...over,
 });
 
 /** A master part as PowerPoint writes one: a background, a colour map and a style sheet. */
