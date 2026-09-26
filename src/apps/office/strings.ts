@@ -99,6 +99,14 @@ defineStrings('office', {
     rebuildBody: 'هذا التعديل — صف أو عمود مضاف أو محذوف، أو تغيير لا يقدر عليه الحفظ الجزئي — يجعل الحفظ يعيد بناء «{name}» من النص المقروء وحده. الصور والتنسيق والترويسات وكل ما لم يقرأه القارئ لن تبقى إلا في النسخة الاحتياطية، وستختفي من الملف المحفوظ.',
     rebuildOk: 'أعد البناء واحفظ',
 
+    richFailedTitle: 'لم يُحفظ المستند',
+    richFailedBody: 'تعذّر حفظ «{name}» بتنسيقه (العناوين والخط العريض والقوائم والجداول والصور)، فلم يُكتب شيء وبقي الملف كما كان. يمكنك حفظ نسخة منفصلة كنص عادي — بلا أي تنسيق — دون المساس بالملف.',
+    richFailedOk: 'احفظ نسخة كنص عادي',
+    richFailedStatus: 'لم يُحفظ «{name}»: تعذّر حفظ التنسيق، والملف لم يتغيّر.',
+    richFailedError: 'تعذّر حفظ المستند بتنسيقه، ولم يُكتب شيء.',
+    plainCopySuffix: 'نص عادي',
+    plainCopySaved: 'حُفظت نسخة كنص عادي باسم «{name}»؛ والملف الأصلي لم يتغيّر.',
+
     limitsTitle: 'حدود صريحة',
     limitFormulas: 'المعادلات المدعومة تُحسب وتُكتب في الملف مع الصيغة نفسها؛ وما عداها يبقى كما قرأه القارئ — نصاً أو قيمة مخزّنة — ولا يُحسب أبداً.',
     limitFormulaEngine: 'المعادلات المدعومة: + - * / والأقواس ومراجع الخلايا والنطاقات (A1، A1:B5)، ودالتا SUM وAVERAGE (المتوسط) فقط. تُكتب الصيغة في <f> ويُكتب ناتجها في الورقة.',
@@ -443,6 +451,14 @@ defineStrings('office', {
     rebuildTitle: 'Saving will rebuild the file',
     rebuildBody: 'This edit — a row or a column added or removed, or a change the surgical save cannot express — makes saving rebuild “{name}” from the text that was read alone. Images, styling, headers and anything else the reader never saw will exist only in the backup and will be gone from the saved file.',
     rebuildOk: 'Rebuild and save',
+
+    richFailedTitle: 'The document was not saved',
+    richFailedBody: '“{name}” could not be saved with its formatting (headings, bold, lists, tables, pictures), so nothing was written and the file is unchanged. You can save a separate copy as plain text — with no formatting at all — without touching the file.',
+    richFailedOk: 'Save a copy as plain text',
+    richFailedStatus: '“{name}” was not saved: its formatting could not be written, and the file is unchanged.',
+    richFailedError: 'The document could not be saved with its formatting; nothing was written.',
+    plainCopySuffix: 'plain text',
+    plainCopySaved: 'A plain-text copy was saved as “{name}”; the original file is unchanged.',
 
     limitsTitle: 'Honest limits',
     limitFormulas: 'The supported formulas are calculated and written into the file together with the formula itself; anything else stays exactly as the reader saw it — text or the cached value — and is never calculated.',
