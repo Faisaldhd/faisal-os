@@ -96,7 +96,9 @@ describe('round trip: written into the file, read back at open', () => {
     Object.defineProperty(wrap, 'clientWidth', { value: 900, configurable: true });
     editor.render();
     // Drawn: the header plus the two rows whose Qty is 2 — the row '3' is hidden by the file's own filter.
-    const drawn = [...wrap.querySelectorAll<HTMLInputElement>('.fo-td[data-drawn] input[data-r][data-c="1"]')].map((i) => i.value);
+    const drawn = [...wrap.querySelectorAll<HTMLElement>('.fo-td[data-drawn][data-c="1"]')]
+      .filter((td) => td.dataset.r !== '')
+      .map((td) => td.querySelector('.fo-cellview')?.textContent ?? '');
     expect(drawn.slice(0, 3)).toEqual(['Qty', '2', '2']);   // the header and the two rows the file keeps
     expect(drawn).not.toContain('3');                       // the row the file's own filter hides is not drawn
   });

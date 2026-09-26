@@ -9,6 +9,8 @@
  * honest format list: the UI prints it and the tests assert it against what the
  * readers in `src/apps/viewer/formats.ts` actually do.
  */
+import { t } from '../../kernel/i18n';
+import './grid/strings';
 import type { Deck } from './impress/deck';
 import { MAX_COLS, extensionOf } from '../viewer/formats';
 import type { DocBlock } from './writer/types';
@@ -250,7 +252,8 @@ export function planFor(path: string): FormatPlan {
 export function emptyModel(plan: FormatPlan, name = 'Sheet1'): OfficeModel {
   switch (plan.kind) {
     case 'docx': return { kind: 'docx', paragraphs: [''] };
-    case 'xlsx': return { kind: 'xlsx', grids: [{ name: 'Sheet1', rows: [['']], truncated: false }], active: 0, delimiter: ',' };
+    // A new workbook's sheet is named in the UI's language: "ورقة1" or "Sheet1".
+    case 'xlsx': return { kind: 'xlsx', grids: [{ name: t('office.defaultSheetName', { n: 1 }), rows: [['']], truncated: false }], active: 0, delimiter: ',' };
     case 'csv': return { kind: 'csv', grids: [{ name, rows: [['']], truncated: false }], active: 0, delimiter: plan.delimiter };
     case 'pptx': return { kind: 'pptx', slides: [['']] };
     default: return { kind: 'text', text: '' };

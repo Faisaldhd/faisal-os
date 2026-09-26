@@ -27,6 +27,11 @@ export interface CellFormat {
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;
+  strike?: boolean;
+  /** Font family name; null = the file's own. */
+  font?: string | null;
+  /** Font size in points; null = the file's own. */
+  size?: number | null;
   /** Font colour as RRGGBB; null = automatic. */
   color?: string | null;
   /** Solid fill as RRGGBB; null = no fill. */
@@ -47,7 +52,14 @@ export interface SheetFormat {
   rows?: Record<number, number>;
   /** Cell formats by "row:col". */
   cells?: Record<string, CellFormat>;
+  /**
+   * The sheet's merged ranges, the WHOLE list, once the owner merged or unmerged anything (the
+   * file's own merges are copied in first). Absent: the file's own merges stand.
+   */
+  merges?: MergeRange[];
 }
+
+export interface MergeRange { r0: number; c0: number; r1: number; c1: number }
 
 /** The formatting of one sheet, or undefined when the owner changed nothing there. */
 export function sheetFormatOf(model: OfficeModel | null, sheet: number): SheetFormat | undefined {
@@ -59,7 +71,7 @@ export function cellFormatOf(fmt: SheetFormat | undefined, row: number, col: num
   return fmt?.cells?.[`${row}:${col}`];
 }
 
-const FORMAT_KEYS: ReadonlyArray<keyof CellFormat> = ['bold', 'italic', 'underline', 'color', 'fill', 'borders', 'hAlign', 'vAlign', 'wrap', 'numFmt'];
+const FORMAT_KEYS: ReadonlyArray<keyof CellFormat> = ['bold', 'italic', 'underline', 'strike', 'font', 'size', 'color', 'fill', 'borders', 'hAlign', 'vAlign', 'wrap', 'numFmt'];
 
 /** `patch` laid over `base`: named properties win, border sides merge. */
 export function mergeCellFormat(base: CellFormat | undefined, patch: CellFormat): CellFormat {
@@ -95,6 +107,7 @@ function cleanSheet(fmt: SheetFormat): SheetFormat | undefined {
   if (fmt.cols && Object.keys(fmt.cols).length) out.cols = fmt.cols;
   if (fmt.rows && Object.keys(fmt.rows).length) out.rows = fmt.rows;
   if (fmt.cells && Object.keys(fmt.cells).length) out.cells = fmt.cells;
+  if (fmt.merges) out.merges = fmt.merges;
   return Object.keys(out).length ? out : undefined;
 }
 
@@ -182,7 +195,55 @@ export function shiftSheetFormat(fmt: SheetFormat | undefined, axis: 'row' | 'co
     }
     out.cells = cells;
   }
+  if (fmt.merges) {
+    // A merge moves with its cells; one that loses its first line to a delete, or shrinks to a
+    // single cell, is dropped.
+    const next: MergeRange[] = [];
+    for (const m of fmt.merges) {
+      const a0 = axis === 'row' ? m.r0 : m.c0;
+      const a1 = axis === 'row' ? m.r1 : m.c1;
+      let b0 = a0;
+      let b1 = a1;
+      if (delta > 0) { if (at <= a0) { b0 += 1; b1 += 1; } else if (at <= a1) b1 += 1; }
+      else if (at < a0) { b0 -= 1; b1 -= 1; }
+      else if (at <= a1) { if (at === a0 && a0 === a1) continue; b1 -= 1; }
+      const moved = axis === 'row' ? { ...m, r0: b0, r1: b1 } : { ...m, c0: b0, c1: b1 };
+      if (moved.r1 > moved.r0 || moved.c1 > moved.c0) next.push(moved);
+    }
+    out.merges = next;
+  }
   return cleanSheet(out);
+}
+
+/* ─────────────────────────── merged cells ─────────────────────────── */
+
+/** The merges a sheet shows: the owner's list once there is one, else the file's own. */
+export function mergesOf(fmt: SheetFormat | undefined, fileMerges: readonly MergeRange[] = []): MergeRange[] {
+  return [...(fmt?.merges ?? fileMerges)];
+}
+
+const overlaps = (a: MergeRange, b: MergeRange): boolean => a.r0 <= b.r1 && b.r0 <= a.r1 && a.c0 <= b.c1 && b.c0 <= a.c1;
+
+/** Merges `rect` (a single cell merges nothing): any merge it overlaps is replaced by it. */
+export function withMerge(list: readonly MergeRange[], rect: MergeRange): MergeRange[] {
+  const rest = list.filter((m) => !overlaps(m, rect));
+  if (rect.r1 === rect.r0 && rect.c1 === rect.c0) return rest;
+  return [...rest, { r0: rect.r0, c0: rect.c0, r1: rect.r1, c1: rect.c1 }];
+}
+
+/** Unmerges every merge that touches `rect`. */
+export function withoutMerges(list: readonly MergeRange[], rect: MergeRange): MergeRange[] {
+  return list.filter((m) => !overlaps(m, rect));
+}
+
+/** The merge that covers a cell, if any. */
+export function mergeAtCell(list: readonly MergeRange[], row: number, col: number): MergeRange | undefined {
+  return list.find((m) => row >= m.r0 && row <= m.r1 && col >= m.c0 && col <= m.c1);
+}
+
+/** The sheet formatting with a new merge list (one undo step with `sheetFormatEdit`). */
+export function withMerges(fmt: SheetFormat | undefined, merges: readonly MergeRange[]): SheetFormat | undefined {
+  return cleanSheet({ ...(fmt ?? {}), merges: [...merges] });
 }
 
 /** The model with one sheet's formatting replaced. */
@@ -218,6 +279,9 @@ export function overlayStyle(base: CellStyle | undefined, f: CellFormat | undefi
   if (f.bold !== undefined) out.bold = f.bold;
   if (f.italic !== undefined) out.italic = f.italic;
   if (f.underline !== undefined) out.underline = f.underline;
+  if (f.strike !== undefined) out.strike = f.strike;
+  if (f.font !== undefined) { if (f.font) out.font = f.font; else delete out.font; }
+  if (f.size !== undefined) { if (f.size) out.size = f.size; else delete out.size; }
   if (f.color !== undefined) { if (f.color) out.color = f.color; else delete out.color; }
   if (f.fill !== undefined) { if (f.fill) out.fill = f.fill; else delete out.fill; }
   if (f.hAlign !== undefined) { if (f.hAlign) out.hAlign = f.hAlign; else delete out.hAlign; }

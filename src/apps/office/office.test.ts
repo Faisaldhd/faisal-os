@@ -24,6 +24,7 @@ import { readRawZip, utf8, writeZip } from './zip';
 import { newDeckPptx } from './pptx';
 import { deckTexts, readDeck } from './impress/deck';
 import './strings';
+import { cellEl, clickCell, rawAt, shownAt, typeInto } from './grid/cells.testkit';
 
 const HOME_FILE = '/home/user/test.csv';
 const CSV = 'name,qty,note\nwidget,12,<b>bold</b>\n';
@@ -100,17 +101,20 @@ async function settle(): Promise<void> {
 const buttons = (content: HTMLElement): HTMLButtonElement[] => [...content.querySelectorAll('button')];
 const button = (content: HTMLElement, label: string): HTMLButtonElement | undefined =>
   buttons(content).find((b) => b.textContent === label);
-const cells = (content: HTMLElement): HTMLInputElement[] =>
-  [...content.querySelectorAll<HTMLInputElement>('input.faisal-office-cell')];
-const cell = (content: HTMLElement, r: number, c: number): HTMLInputElement | undefined =>
-  cells(content).find((i) => i.dataset.r === String(r) && i.dataset.c === String(c));
+/** The sheet's data cells (one `td` each: the grid has a single floating editor, no field per cell). */
+const cells = (content: HTMLElement): HTMLElement[] =>
+  [...content.querySelectorAll<HTMLElement>('.fo-td.faisal-office-cell')];
+const cell = (content: HTMLElement, r: number, c: number): HTMLElement | undefined =>
+  cellEl(content, r, c) ?? undefined;
+/** What a cell holds (its formula, else its value), read from the formula bar the way a person does. */
+const cellValue = (content: HTMLElement, r: number, c: number): string | undefined => rawAt(content, r, c);
 const textareas = (content: HTMLElement): HTMLTextAreaElement[] =>
   [...content.querySelectorAll<HTMLTextAreaElement>('textarea')];
 const meta = (content: HTMLElement): string => content.querySelector('.faisal-office-meta')?.textContent ?? '';
 
-function typeValue(input: HTMLInputElement, value: string): void {
-  input.value = value;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
+/** Types into a sheet cell through the floating editor and presses Enter. */
+function typeValue(td: HTMLElement, value: string): void {
+  expect(typeInto(td, value)).toBe(true);
 }
 
 beforeEach(() => {
@@ -192,9 +196,10 @@ describe('the office window', () => {
     await settle();
 
     expect(title()).toContain('test.csv');
-    expect(cell(content, 0, 0)?.value).toBe('name');
-    expect(cell(content, 1, 0)?.value).toBe('widget');
-    expect(cell(content, 1, 2)?.value).toBe('<b>bold</b>');
+    expect(cellValue(content, 0, 0)).toBe('name');
+    expect(cellValue(content, 1, 0)).toBe('widget');
+    expect(cellValue(content, 1, 2)).toBe('<b>bold</b>');
+    expect(shownAt(content, 1, 2)).toBe('<b>bold</b>');
     // The cell text is a value, not markup: nothing from the file became an element.
     expect(content.querySelector('b')).toBeNull();
     expect(meta(content)).toContain(t('office.clean'));
@@ -226,7 +231,7 @@ describe('the office window', () => {
 
     button(content, t('office.undo'))?.click();
     await settle();
-    expect(cell(content, 1, 0)?.value).toBe('widget');
+    expect(cellValue(content, 1, 0)).toBe('widget');
     expect(meta(content)).toContain(t('office.dirty'));
   });
 
@@ -266,7 +271,7 @@ describe('the office window', () => {
     await settle();
 
     expect(vi.mocked(shellConfirm)).toHaveBeenCalledWith(expect.objectContaining({ title: t('office.revertTitle') }));
-    expect(cell(content, 0, 0)?.value).toBe('a');
+    expect(cellValue(content, 0, 0)).toBe('a');
     expect(meta(content)).toContain(t('office.clean'));
   });
 
@@ -279,7 +284,9 @@ describe('the office window', () => {
 
     expect(meta(content)).toContain(t('office.readOnlyBadge'));
     expect(content.textContent).toContain(t('office.macrosBody'));
-    expect(cell(content, 0, 0)?.readOnly).toBe(true);
+    expect(cell(content, 0, 0)?.getAttribute('aria-readonly')).toBe('true');
+    // …and no editor opens on it.
+    expect(typeInto(cell(content, 0, 0) as HTMLElement, 'x')).toBe(false);
     expect(button(content, t('office.save'))?.disabled).toBe(true);
   });
 
@@ -361,7 +368,7 @@ describe('the office window', () => {
     const deleteRow = button(content, t('office.deleteRow'));
     expect(deleteRow?.disabled).toBe(false);
     const target = cell(content, 1, 1);
-    target?.focus();
+    if (target) clickCell(target);
     expect(deleteRow?.disabled).toBe(false);
 
     button(content, t('office.addRow'))?.click();
@@ -589,7 +596,7 @@ describe('the office surgical save', () => {
     launch('/home/user/table.xlsx');
     await settle();
 
-    expect(cell(content, 1, 0)?.value).toBe('Beta');
+    expect(cellValue(content, 1, 0)).toBe('Beta');
     const text = cell(content, 1, 0);
     const number = cell(content, 1, 1);
     if (!text || !number) return;
@@ -796,7 +803,8 @@ describe('the office surgical save', () => {
     if (!target) return;
     typeValue(target, '=SUM(B1:B2)');
     await settle();
-    expect(target.value).toBe('=SUM(B1:B2)'); // the cell shows the formula
+    expect(cellValue(content, 2, 1)).toBe('=SUM(B1:B2)'); // the formula bar holds the formula
+    expect(shownAt(content, 2, 1)).toBe('30');                // and the cell shows its value
     expect(content.querySelector('.faisal-office-status')?.textContent).toContain('30'); // 10 + 20
 
     button(content, t('office.save'))?.click();
@@ -822,6 +830,7 @@ describe('the office surgical save', () => {
     if (!target) return;
     typeValue(target, '=AVERAGE(B1:B2)'); // 15
     await settle();
+    clickCell(cell(content, 2, 1) as HTMLElement);   // Enter moved on to B4: stand on B3 again
     button(content, t('office.addRow'))?.click(); // a row added above B3 (a defined name: the rebuild path)
     await settle();
     button(content, t('office.save'))?.click();
