@@ -124,6 +124,7 @@ describe('the fill handle and an active filter', () => {
     // Keep the rows whose Qty is 2 (model row 2) and 40 (model row 40): the filter now hides
     // every row between them, and the grid draws only the header plus those two.
     filterTo(h, ['2', '40']);
+    h.commits.length = 0;                                  // applying the filter is its own edit; the fill is the subject
     // Drawn: the header (drawn 0 = model 0), the row whose Qty is 2 (drawn 1 = model 2) and the
     // row whose Qty is 40 (drawn 2 = model 40). Everything between them is hidden.
     expect(drawnRows(h.wrap)).toEqual([0, 2, 40]);
@@ -150,6 +151,7 @@ describe('the fill handle and an active filter', () => {
     withViewport(h.wrap);
     h.editor.render();
     filterTo(h, ['2', '40']);
+    h.commits.length = 0;                                  // applying the filter is its own edit
     // The last row the filter kept is drawn 2 (model row 40); everything below it is a blank row
     // the grid draws to look like a sheet. A fill that starts there has nowhere real to go.
     nameBoxTo(h.editor, 'A41');

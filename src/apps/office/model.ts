@@ -15,6 +15,7 @@ import type { DocBlock } from './writer/types';
 import type { RevisionLog } from './writer/revisions';
 import { diffText, replaceText } from './writer/docops';
 import { shiftSheetFormat, type SheetFormat } from './grid/sheetfmt';
+import type { AutoFilterColumn } from './grid/autofilter';
 import { shiftFormula } from './formula/index';
 import type { StructOp } from './grid/structure';
 
@@ -128,6 +129,13 @@ export interface SheetsModel {
    * can move the file's own cells instead of rebuilding it (`grid/structure.ts`).
    */
   structure?: StructOp[];
+  /**
+   * The AutoFilter the owner set, per sheet, as the file spells it (`grid/autofilter.ts`): the
+   * save writes it as `<autoFilter>` after `</sheetData>`, and the reader fills it back at open.
+   * Only the checklist (values) kind is written; a condition this app cannot spell exactly is
+   * left out rather than written as something it is not.
+   */
+  autoFilters?: Record<number, readonly AutoFilterColumn[]>;
 }
 export interface DeckModel {
   kind: 'pptx';
@@ -375,6 +383,28 @@ function exactStructural(op: StructOp, apply: (s: SheetsModel) => SheetsModel, r
       }
       return out;
     }),
+  };
+}
+
+/**
+ * An edit that sets one sheet's AutoFilter, so the filter the owner applies is part of the model
+ * and therefore reaches the file (and one Ctrl+Z takes it back).
+ */
+export function autoFilterEdit(sheet: number, before: readonly AutoFilterColumn[], after: readonly AutoFilterColumn[]): Edit {
+  const put = (m: OfficeModel, columns: readonly AutoFilterColumn[]): OfficeModel => {
+    if (m.kind !== 'xlsx' && m.kind !== 'csv') return m;
+    const all: Record<number, readonly AutoFilterColumn[]> = { ...(m.autoFilters ?? {}) };
+    if (columns.length) all[sheet] = columns;
+    else delete all[sheet];
+    const out: SheetsModel = { ...m };
+    if (Object.keys(all).length) out.autoFilters = all;
+    else delete out.autoFilters;
+    return out;
+  };
+  return {
+    key: `autofilter:${sheet}`,
+    apply: (m) => put(m, after),
+    revert: (m) => put(m, before),
   };
 }
 
