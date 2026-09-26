@@ -17,6 +17,34 @@
  * Nothing here touches the DOM: the result is plain data, tested on its own.
  */
 import { entryData, readRawZip, type RawZip } from '../zip';
+import { FIRST_NOTE_ID, NOTES_PART, readNotesPart, type NoteKind } from './footnotes';
+import type { NoteInfo } from './types';
+
+/**
+ * The notes of the document being read, by `w:id`, filled before the body is parsed.
+ *
+ * A footnote's text lives in another part of the package, and the run builder is a plain
+ * function that only sees XML — so the map is handed to it here instead of threading a parameter
+ * through every call site. The body is parsed synchronously after this is filled, so no two reads
+ * can interleave.
+ */
+let noteLookup = new Map<string, NoteInfo>();
+
+/** The key a note is found by: the two kinds number their ids separately, so both are needed. */
+function noteKey(kind: NoteKind, id: number): string {
+  return `${kind}:${id}`;
+}
+
+/** The note a reference element points at, or undefined when the file has no such note. */
+function noteOfReference(xml: string, element: XmlElement): NoteInfo | undefined {
+  const footnote = child(element, 'footnoteReference');
+  const target = footnote ?? child(element, 'endnoteReference');
+  if (!target) return undefined;
+  const id = Number(attrLocal(xml, target, 'id'));
+  if (!Number.isFinite(id) || id < FIRST_NOTE_ID) return undefined;
+  const found = noteLookup.get(noteKey(footnote ? 'footnote' : 'endnote', id));
+  return found ? { ...found } : undefined;
+}
 import {
   attrLocal as rawAttr, elementText, elementsOf, localName, paragraphElements, paragraphSlots, parsePart,
   type XmlElement,
@@ -676,7 +704,8 @@ function runOf(xml: string, element: XmlElement, index: number, theme: Theme, st
     if (br) return { t: 'opaque', text, xml: raw, kind: 'break', src: index };
     if (child(element, 'fldChar') || child(element, 'instrText')) return { t: 'opaque', text, xml: raw, kind: 'field', src: index };
     if (child(element, 'footnoteReference') || child(element, 'endnoteReference') || child(element, 'commentReference')) {
-      return { t: 'opaque', text, xml: raw, kind: 'note', src: index };
+      const note = noteOfReference(xml, element);
+      return { t: 'opaque', text, xml: raw, kind: 'note', ...(note ? { note } : {}), src: index };
     }
     return { t: 'opaque', text, xml: raw, kind: 'object', src: index };
   }
@@ -748,6 +777,16 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<ReadDoc> {
   const theme = readTheme(await partText(archive, relOf('theme') ?? 'word/theme/theme1.xml'));
   const styles = readStyles(await partText(archive, relOf('styles') ?? 'word/styles.xml'), theme);
   const numbering = readNumbering(await partText(archive, relOf('numbering') ?? 'word/numbering.xml'));
+
+  // The notes live in their own parts, next to the body that points at them.
+  noteLookup = new Map<string, NoteInfo>();
+  for (const kind of ['footnote', 'endnote'] as const) {
+    const part = await partText(archive, relOf(kind === 'footnote' ? 'footnotes' : 'endnotes') ?? NOTES_PART[kind as NoteKind]);
+    if (!part) continue;
+    for (const packaged of readNotesPart(part, kind)) {
+      noteLookup.set(noteKey(kind, packaged.id), { kind, id: packaged.id, text: packaged.text, xml: packaged.xml });
+    }
+  }
 
   const doc = parsePart(xml);
   const body = doc.roots.flatMap((r) => (localName(r.name) === 'body' ? [r] : elementsOf(r, 'body')))[0];
