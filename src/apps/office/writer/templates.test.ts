@@ -13,6 +13,8 @@ import {
   templateLabel, templatePath, templatesIn, uniqueTemplateName,
 } from './templates';
 import { blockText, type DocBlock } from './types';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -95,13 +97,13 @@ describe('templates — the built-in template', () => {
     const { readDocxDocument } = await import('./docxread');
     const read = await readDocxDocument(bytes);
     expect(read.blocks.map(blockText)).toEqual(defaultTemplateLines());
-    const dir = `${process.env.TEMP ?? '.'}\\faisal-verify`;
+    const dir = join(tmpdir(), 'faisal-verify');
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(`${dir}\\template-default.docx`, bytes);
+    fs.writeFileSync(join(dir, 'template-default.docx'), bytes);
     // The document created FROM the template is a byte-for-byte independent copy.
-    const copy = `${dir}\\template-new-document.docx`;
+    const copy = join(dir, 'template-new-document.docx');
     fs.writeFileSync(copy, bytes);
-    expect(fs.readFileSync(copy).equals(fs.readFileSync(`${dir}\\template-default.docx`))).toBe(true);
+    expect(fs.readFileSync(copy).equals(fs.readFileSync(join(dir, 'template-default.docx')))).toBe(true);
   });
 });
 
