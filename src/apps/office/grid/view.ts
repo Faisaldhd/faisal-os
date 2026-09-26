@@ -15,8 +15,8 @@
 import { t, getLocale } from '../../../kernel/i18n';
 import type { Editor, EditorContext, StatusInfo } from '../editor';
 import {
-  addColumnEdit, addRowEdit, autoFilterEdit, canDeleteColumn, canDeleteRow, cellEdit, chartsEdit, condRulesEdit, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit,
-  gridAt, gridWidth, pivotsEdit, SHEET_ROWS, type CellState, type Edit, type OfficeModel, type SheetsModel,
+  addColumnEdit, addRowEdit, autoFilterEdit, canDeleteColumn, canDeleteRow, cellEdit, chartsEdit, condRulesEdit, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit, formulaKey,
+  gridAt, gridWidth, pivotsEdit, SHEET_ROWS, type CellState, type Edit, type Grid, type OfficeModel, type SheetsModel,
 } from '../model';
 import {
   PIVOT_AGGREGATES, pivotTable, pivotTarget, sourceSignature,
@@ -53,7 +53,9 @@ import {
   rangeToChartSpec, removeChart, removeSortLevel, setFilter, setSortOrder, shiftViewFor, topRule, visibleRowMap,
   type ChartObject, type SheetRange, type SheetView,
 } from './sheetview';
-import { distinctValues, sortRows, type CellStyle as CondCellStyle, type SortKey } from '../calc/index';
+import {
+  distinctValues, sortFormulas, sortRange, totalsRows, type CellStyle as CondCellStyle, type SortKey, type SortRect,
+} from '../calc/index';
 import { buildChart, renderSvg } from '../charts/index';
 import {
   DEFAULT_ROW_HEIGHT, OVERSCAN_ROWS, TOUCH_ROW_HEIGHT, rowOffsets, rowWindow, type RowWindow,
@@ -65,6 +67,9 @@ const PAD_ROWS = 30;
 const PAD_COLS = 12;
 /** Height of the column-letter header, which the rows scroll under. */
 const HEADER_HEIGHT = 26;
+
+/** What a sort changes, kept whole so its undo restores exactly. */
+interface SortState { rows: string[][]; formulas?: Record<string, string>; moved?: number }
 
 interface Cell { row: number; col: number }
 
@@ -1626,7 +1631,58 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     return b;
   }
 
-  function openSortPanel(): void {
+  /** The block the sort panel works on, fixed when the panel opens (the sort resets the selection). */
+  let sortRect: SortRect | null = null;
+  /** The owner's answer to "is the top row a header?" for that block; null means auto-detected. */
+  let sortHeader: boolean | null = null;
+  /**
+   * The panel's last sort: the model it produced and the state it started from. While the model is
+   * still exactly that one, changing a level or the header sorts the ORIGINAL rows again instead of
+   * stacking a second sort on the first (so a wrongly guessed header can still be put right).
+   */
+  let lastSort: { model: OfficeModel | null; sheet: number; base: SortState } | null = null;
+
+  /**
+   * The block to sort: the selection when it spans more than one row, else every data row; its
+   * columns when it spans more than one, else the whole width, so a row is never torn apart.
+   * Rows are MODEL rows (through `modelRowOf`), clamped to the data.
+   */
+  function sortBlockOf(grid: Grid): SortRect {
+    const g = range();
+    const width = Math.max(1, gridWidth(grid));
+    const last = Math.max(0, grid.rows.length - 1);
+    let r0 = 0;
+    let r1 = last;
+    if (g.r1 > g.r0) {
+      const a = modelRowOf(g.r0);
+      const b = modelRowOf(g.r1);
+      r0 = a < 0 ? 0 : Math.min(a, last);
+      r1 = b < 0 ? last : Math.min(b, last);
+      if (r1 < r0) [r0, r1] = [r1, r0];
+    }
+    const wide = g.c1 > g.c0;
+    return { r0, r1, c0: wide ? Math.min(g.c0, width - 1) : 0, c1: wide ? Math.min(g.c1, width - 1) : width - 1 };
+  }
+
+  /** The block widened to the whole width when a sort key lies outside its columns. */
+  function sortBlockFor(rect: SortRect, keys: readonly SortKey[], width: number): SortRect {
+    return keys.every((k) => k.col >= rect.c0 && k.col <= rect.c1) ? rect : { ...rect, c0: 0, c1: Math.max(width - 1, ...keys.map((k) => k.col)) };
+  }
+
+  /** Whether the top row of the block is a header: the owner's answer, else the auto-detection. */
+  function sortHeaderOf(rows: readonly string[][], rect: SortRect): boolean {
+    if (sortHeader !== null) return sortHeader;
+    return looksLikeHeader(rows.slice(rect.r0, rect.r1 + 1).map((row) => row.slice(rect.c0, rect.c1 + 1)));
+  }
+
+  function openSortPanel(keep = false): void {
+    if (!keep) {
+      const m = sheets();
+      const grid = m ? gridAt(m, m.active) : null;
+      sortRect = grid ? sortBlockOf(grid) : null;
+      sortHeader = null;
+      lastSort = null;
+    }
     const body = el('div', 'fo-sheetpanel-body');
     const columns = Math.max(1, Math.min(dataCols, cols));
     const levels = el('div', 'fo-sheetpanel-note', t('office.sortBody', {
@@ -1665,42 +1721,81 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
           ? addSortLevel(sheetView, col, dir.value === 'desc' ? 'desc' : 'asc')
           : { ...sheetView, sort: sheetView.sort.filter((k) => k.col !== (current?.col ?? -1)) };
         sheetView = next;
-        openSortPanel();
+        openSortPanel(true);
         applySort();
       });
       dir.addEventListener('change', () => {
         if (!current) return;
         sheetView = setSortOrder(sheetView, current.col, dir.value === 'desc' ? 'desc' : 'asc');
         applySort();
-        openSortPanel();
+        openSortPanel(true);
       });
       row.append(el('span', 'fo-sheetpanel-level', `${i + 1}`), pick, dir);
       grid2.append(row);
     }
     body.append(grid2);
+    // "The top row is a header": auto-detected for the block, and the owner can say otherwise.
+    const cur = sheets();
+    const g0 = cur ? gridAt(cur, cur.active) : null;
+    const headerBox = el('input', 'fo-sort-header');
+    headerBox.type = 'checkbox';
+    headerBox.checked = !!g0 && !!sortRect && sortHeaderOf(g0.rows, sortRect);
+    headerBox.addEventListener('change', () => {
+      sortHeader = headerBox.checked;
+      if (sheetView.sort.length) applySort();
+      openSortPanel(true);
+    });
+    const headerLabel = el('label', 'fo-sheetpanel-check');
+    headerLabel.append(headerBox, el('span', undefined, t('office.sortHeaderOn')));
+    body.append(headerLabel);
     const actions = el('div', 'fo-sheetpanel-actions');
     actions.append(
       panelButton(t('office.sortApply'), () => { applySort(); closePanel(); }, true),
       panelButton(t('office.sortClear'), () => { sheetView = clearSort(sheetView); renderGrid(); closePanel(); ctx.refresh(); }),
     );
-    body.append(actions, el('div', 'fo-sheetpanel-note', t('office.sortHeaderOn')));
+    body.append(actions);
     showPanel(t('office.sortTitle'), body);
   }
 
-  /** Applies the sort keys to the MODEL: it is an ordinary edit, so it is undoable and it saves. */
+  /**
+   * Applies the sort keys to the MODEL: it is an ordinary edit, so it is undoable and it saves.
+   *
+   * Only the block moves (see `sortBlockOf`), its header row and any totals row at its bottom stay
+   * put, and each formula travels with its cell. The grid holds a formula's RESULT while the
+   * formula itself is keyed by position in `model.formulas`, so permuting the values alone left
+   * every formula behind: a `=SUM` row sorted into the data, and the formula then overwrote
+   * whichever value landed in its old cell — a value silently lost.
+   */
   function applySort(): void {
     const m = sheets();
     const grid = m ? gridAt(m, m.active) : null;
     if (!m || !grid || !sheetView.sort.length) { renderGrid(); return; }
-    const before = grid.rows.map((row) => [...row]);
-    const after = sortRows(before, sheetView.sort as SortKey[], { header: headerRows });
-    const swap = (model: OfficeModel, rows: string[][]): OfficeModel =>
-      model.kind === 'xlsx' || model.kind === 'csv'
-        ? { ...model, moved: 1, grids: model.grids.map((g, i) => (i === m.active ? { ...g, rows } : g)) }
-        : model;
-    ctx.commit({ key: `sort:${m.active}`, apply: (model) => swap(model, after), revert: (model) => swap(model, before) });
-    active = { row: 0, col: active.col };
-    anchor = active;
+    const sheet = m.active;
+    const current: SortState = { rows: grid.rows, formulas: m.formulas, moved: m.moved };
+    const base = lastSort && lastSort.sheet === sheet && lastSort.model === ctx.model() ? lastSort.base : current;
+    const keys = sheetView.sort as SortKey[];
+    const rect = sortBlockFor(sortRect ?? sortBlockOf(grid), keys, Math.max(1, gridWidth({ ...grid, rows: base.rows })));
+    const header = sortHeaderOf(base.rows, rect) ? 1 : 0;
+    const look = lookOf();
+    const footer = totalsRows(rect, header, (r, c) => base.formulas?.[formulaKey(sheet, r, c)] ?? (base === current ? look?.formulas.get(`${r}:${c}`) : undefined));
+    const sorted = sortRange(base.rows, rect, keys, { header, footer });
+    const after: SortState = {
+      rows: sorted.rows,
+      formulas: sortFormulas(base.formulas, sheet, rect, sorted.moves),
+      moved: (base.moved ?? 0) + 1,
+    };
+    const put = (model: OfficeModel, state: SortState): OfficeModel => {
+      if (model.kind !== 'xlsx' && model.kind !== 'csv') return model;
+      const out: SheetsModel = { ...model, grids: model.grids.map((g, i) => (i === sheet ? { ...g, rows: state.rows } : g)) };
+      if (state.formulas) out.formulas = state.formulas; else delete out.formulas;
+      if (state.moved) out.moved = state.moved; else delete out.moved;
+      return out;
+    };
+    ctx.commit({ key: `sort:${sheet}`, apply: (model) => put(model, after), revert: (model) => put(model, current) });
+    lastSort = { model: ctx.model(), sheet, base };
+    sortRect = rect;
+    anchor = { row: drawnRowOf(rect.r0), col: rect.c0 };
+    active = { row: drawnRowOf(rect.r1), col: rect.c1 };
     renderGrid();
   }
 
@@ -2045,7 +2140,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
         id: 'data', label: t('office.tabData'), groups: [
           {
             label: t('office.groupSortFilter'), controls: [
-              { type: 'button', id: 'sort', icon: 'sortAsc', label: t('office.sortTitle'), showLabel: true, phone: true, enabled: enabledSheet, run: openSortPanel },
+              { type: 'button', id: 'sort', icon: 'sortAsc', label: t('office.sortTitle'), showLabel: true, phone: true, enabled: enabledSheet, run: () => openSortPanel() },
               { type: 'button', id: 'filter', icon: 'filter', label: t('office.filterTitle', { name: columnName(active.col) }), showLabel: true, phone: true, pressed: () => isFiltered(sheetView), enabled: enabledSheet, run: () => openFilterPanel(active.col) },
               {
                 type: 'menu', id: 'validation', icon: 'check', label: t('office.dataValidation'), showLabel: true, enabled: canFormat, items: () => [
