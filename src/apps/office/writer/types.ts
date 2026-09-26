@@ -72,7 +72,25 @@ export interface OpaqueRun {
   image?: ImageInfo;
   /** A picture inserted in this session: its bytes travel with the model until saved. */
   newImage?: NewImage;
+  /** A footnote or endnote reference: the note itself, read from `footnotes.xml`/`endnotes.xml`. */
+  note?: NoteInfo;
   src?: number;
+}
+
+/**
+ * A footnote or endnote: the reference lives in the paragraph as an opaque run, the note's own
+ * text lives beside it, exactly as Word splits them between `document.xml` and `footnotes.xml`.
+ */
+export interface NoteInfo {
+  kind: 'footnote' | 'endnote';
+  /** The `w:id` the package uses. 0 and 1 are Word's separator/continuationSeparator: never a note. */
+  id: number;
+  /** The note's text, as the editor shows and edits it. */
+  text: string;
+  /** The note's original `<w:footnote>`/`<w:endnote>` markup, written back when it was not edited. */
+  xml?: string;
+  /** True for a note added in this session (its reference markup is generated on save). */
+  fresh?: boolean;
 }
 
 export type Run = TextRun | OpaqueRun;
