@@ -457,8 +457,9 @@ function launch(ctx: AppContext): void {
     contentHost.replaceChildren(editor.element);
     const sameDocument = mountedPath !== null && mountedPath === filePath && ribbon.current !== 'file';
     mountedPath = filePath;
-    ribbon.setTabs(editor.tabs(), 'home', sameDocument);
+    // The kind first: the ribbon measures its groups as it lays them out, with the kind's own CSS.
     root.dataset.kind = model.kind;
+    ribbon.setTabs(editor.tabs(), 'home', sameDocument);
     editor.render();
   }
 
