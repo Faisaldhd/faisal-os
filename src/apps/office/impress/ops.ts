@@ -14,7 +14,14 @@ export const SLIDE_LAYOUTS: readonly SlideLayoutKind[] = ['title', 'content', 't
 /** The OOXML layout type each choice looks for in the file's masters. */
 const LAYOUT_TYPE: Record<SlideLayoutKind, string> = { title: 'title', content: 'obj', two: 'twoObj', blank: 'blank' };
 
-export type NewShapeKind = 'text' | 'rect' | 'ellipse' | 'arrow' | 'line';
+export type NewShapeKind = 'text' | 'rect' | 'ellipse' | 'arrow' | 'line'
+  | 'roundRect' | 'triangle' | 'rtTriangle' | 'diamond' | 'hexagon' | 'star5' | 'leftArrow' | 'upArrow' | 'downArrow';
+
+/** The preset geometry each gallery shape is written with (`<a:prstGeom prst>`). */
+const GEOM: Partial<Record<NewShapeKind, string>> = {
+  rect: 'rect', ellipse: 'ellipse', arrow: 'rightArrow', roundRect: 'roundRect', triangle: 'triangle', rtTriangle: 'rtTriangle',
+  diamond: 'diamond', hexagon: 'hexagon', star5: 'star5', leftArrow: 'leftArrow', upArrow: 'upArrow', downArrow: 'downArrow',
+};
 
 /** The model with this deck (and the plain paragraphs that follow from it). */
 export function withDeck(m: OfficeModel, deck: Deck): OfficeModel {
@@ -417,10 +424,12 @@ export function newShape(deck: Deck, kind: NewShapeKind): DeckShape {
     s.strokeW = 28575;
     return s;
   }
-  const w = kind === 'arrow' ? cx * 0.24 : cy * 0.3;
-  const h = kind === 'arrow' ? cy * 0.16 : cy * 0.3;
+  const flat = kind === 'arrow' || kind === 'leftArrow';
+  const tall = kind === 'upArrow' || kind === 'downArrow';
+  const w = flat ? cx * 0.24 : tall ? cy * 0.16 : cy * 0.3;
+  const h = flat ? cy * 0.16 : tall ? cy * 0.3 : cy * 0.3;
   const s = baseShape('shape', (cx - w) / 2, (cy - h) / 2, w, h);
-  s.geom = kind === 'ellipse' ? 'ellipse' : kind === 'arrow' ? 'rightArrow' : 'rect';
+  s.geom = GEOM[kind] ?? 'rect';
   s.fill = accent;
   s.stroke = shade(accent);
   s.anchor = 'ctr';
@@ -445,4 +454,116 @@ function shade(color: string): string {
   const n = parseInt(color.slice(1), 16);
   const f = (v: number): string => Math.round(v * 0.75).toString(16).padStart(2, '0');
   return `#${f((n >> 16) & 255)}${f((n >> 8) & 255)}${f(n & 255)}`.toUpperCase();
+}
+
+/* ──────────────────────────── the format pane and the ribbon ──────────────────────────── */
+
+/** A shape's fill and outline. `fill`/`stroke` null = none; `strokeW` in EMU. */
+export interface ShapeLook { fill?: string | null; stroke?: string | null; strokeW?: number }
+
+/** Only a box or a text box has a fill of its own; a line has only an outline. */
+export function canFill(s: DeckShape | null | undefined): boolean {
+  return !!s && !s.locked && (s.kind === 'shape' || s.kind === 'text');
+}
+export function canOutline(s: DeckShape | null | undefined): boolean {
+  return !!s && !s.locked && (s.kind === 'shape' || s.kind === 'text' || s.kind === 'line');
+}
+
+/** The fill and outline of one shape, as one undoable edit. */
+export function setShapeLook(deck: Deck, at: number, uid: number, look: ShapeLook): Deck {
+  return mapShape(deck, at, uid, (s) => {
+    if (s.locked) return s;
+    const fill = look.fill === undefined || !canFill(s) ? s.fill : look.fill ? modelColor(look.fill) : null;
+    const stroke = look.stroke === undefined || !canOutline(s) ? s.stroke : look.stroke ? modelColor(look.stroke) : null;
+    const strokeW = look.strokeW === undefined || !canOutline(s) ? s.strokeW : Math.max(3175, Math.min(254000, Math.round(look.strokeW)));
+    if (fill === s.fill && stroke === s.stroke && strokeW === s.strokeW) return s;
+    return { ...s, fill, stroke, strokeW };
+  });
+}
+
+export type ArrangeKind = 'front' | 'back' | 'forward' | 'backward';
+
+/** Moves one shape up or down the slide's stacking order (the order of the spTree). */
+export function arrangeShape(deck: Deck, at: number, uid: number, kind: ArrangeKind): Deck {
+  return mapSlide(deck, at, (slide) => {
+    const i = slide.shapes.findIndex((s) => s.uid === uid);
+    if (i < 0) return slide;
+    const last = slide.shapes.length - 1;
+    const to = kind === 'front' ? last : kind === 'back' ? 0 : kind === 'forward' ? Math.min(last, i + 1) : Math.max(0, i - 1);
+    if (to === i) return slide;
+    const shapes = slide.shapes.slice();
+    const [moved] = shapes.splice(i, 1);
+    shapes.splice(to, 0, moved!);
+    return { ...slide, shapes };
+  });
+}
+
+export type AlignKind = 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom';
+
+/** Aligns one shape to the slide (WPS's "Align to slide"). */
+export function alignShape(deck: Deck, at: number, uid: number, kind: AlignKind): Deck {
+  const s = deck.slides[at]?.shapes.find((x) => x.uid === uid);
+  if (!s || s.locked) return deck;
+  let { x, y } = s;
+  if (kind === 'left') x = 0;
+  else if (kind === 'center') x = (deck.cx - s.w) / 2;
+  else if (kind === 'right') x = deck.cx - s.w;
+  else if (kind === 'top') y = 0;
+  else if (kind === 'middle') y = (deck.cy - s.h) / 2;
+  else y = deck.cy - s.h;
+  return setBounds(deck, at, uid, { x, y, w: s.w, h: s.h });
+}
+
+/** The speaker notes of one slide (kept in the slide's notes page). */
+export function setNotes(deck: Deck, at: number, text: string): Deck {
+  const clean = text.replace(/\r\n?/g, '\n');
+  return mapSlide(deck, at, (slide) => (slide.notes === clean ? slide : { ...slide, notes: clean }));
+}
+
+/**
+ * A web address a click may open: http(s) and mailto only, a bare domain taken as https. Anything
+ * else (javascript:, data:, a file path) is refused — null — so the show can never run it.
+ */
+export function safeLink(raw: string): string | null {
+  const v = raw.trim();
+  if (!v) return null;
+  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(v) ? v : /^[^\s/]+\.[^\s]+$/.test(v) ? `https://${v}` : v;
+  try {
+    const url = new URL(withScheme);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:' && url.protocol !== 'mailto:') return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+/** Links a shape to a web address (null takes the link away). */
+export function setShapeLink(deck: Deck, at: number, uid: number, url: string | null): Deck {
+  return mapShape(deck, at, uid, (s) => {
+    if (s.locked || s.kind === 'group') return s;
+    const link = url ? safeLink(url) : null;
+    if ((s.link ?? null) === link) return s;
+    return { ...s, link };
+  });
+}
+
+/** A new table of `rows` × `cols` empty cells, centred and filling most of the slide's width. */
+export function newTable(deck: Deck, rows: number, cols: number): DeckShape {
+  const r = Math.max(1, Math.min(20, Math.round(rows)));
+  const c = Math.max(1, Math.min(10, Math.round(cols)));
+  const w = deck.cx * 0.8;
+  const h = Math.min(deck.cy * 0.7, r * 370840);
+  const s = baseShape('frame', (deck.cx - w) / 2, (deck.cy - h) / 2, w, h);
+  s.name = 'Table';
+  s.table = Array.from({ length: r }, () => Array.from({ length: c }, () => ''));
+  return s;
+}
+
+/** The text of one table cell. */
+export function setTableCell(deck: Deck, at: number, uid: number, row: number, col: number, text: string): Deck {
+  return mapShape(deck, at, uid, (s) => {
+    if (s.locked || !s.table?.[row] || s.table[row]![col] === undefined || s.table[row]![col] === text) return s;
+    const table = s.table.map((cells, r) => (r === row ? cells.map((v, c) => (c === col ? text : v)) : cells));
+    return { ...s, table };
+  });
 }

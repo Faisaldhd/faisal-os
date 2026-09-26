@@ -16,6 +16,7 @@ import { xmlText } from './xml';
 import { utf8, writeZip, type ZipInput } from './zip';
 import { shapeXml, slideXml } from './impress/deckxml';
 import { layoutShapes } from './impress/ops';
+import { clrSchemeXml, DEFAULT_THEME, fontXml, type DeckTheme } from './impress/themes';
 
 const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships';
@@ -227,21 +228,34 @@ const NEW_LAYOUTS: ReadonlyArray<{ type: string; name: string }> = [
   { type: 'blank', name: 'Blank' },
 ];
 
+/** The theme part in one of the Design themes: its colours and its heading/body fonts. */
+function themeXml(theme: DeckTheme): string {
+  return THEME
+    .replace(/<a:clrScheme[\s\S]*?<\/a:clrScheme>/, clrSchemeXml(theme.en, theme.colors))
+    .replace(/<a:majorFont>[\s\S]*?<\/a:majorFont>/, fontXml('majorFont', theme.major))
+    .replace(/<a:minorFont>[\s\S]*?<\/a:minorFont>/, fontXml('minorFont', theme.minor))
+    .replace('name="Office Theme"', `name="${xmlText(theme.en)}"`);
+}
+
+const hexOf = (c: string): string => c.replace('#', '').toUpperCase();
+
 /**
- * A new 16:9 presentation: one master (title 44 pt, bulleted body), the four layouts
- * the slide rail offers (Title · Title and Content · Two Content · Blank), the theme,
- * and one title slide holding `title` and `subtitle` as placeholders.
+ * A new 16:9 presentation in a design theme (the Copper theme unless another is picked): one
+ * master (its background, a 44 pt title and a bulleted body in the theme's colours and fonts), the
+ * four layouts the slide rail offers (Title · Title and Content · Two Content · Blank), the theme
+ * part, and one title slide holding `title` and `subtitle` as placeholders.
  */
-export function newDeckPptx(title: string, subtitle: string): Uint8Array {
+export function newDeckPptx(title: string, subtitle: string, theme: DeckTheme = DEFAULT_THEME): Uint8Array {
   const n = NEW_LAYOUTS.length;
+  const fill = (c: string): string => `<a:solidFill><a:srgbClr val="${hexOf(c)}"/></a:solidFill>`;
   const master = `${DECL}<p:sldMaster ${NS}><p:cSld>` +
-    '<p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg>' +
+    `<p:bg><p:bgPr>${fill(theme.bg)}<a:effectLst/></p:bgPr></p:bg>` +
     `<p:spTree>${EMPTY_TREE}</p:spTree></p:cSld>` +
     '<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3"' +
     ' accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>' +
     `<p:sldLayoutIdLst>${NEW_LAYOUTS.map((_, i) => `<p:sldLayoutId id="${2147483649 + i}" r:id="rId${i + 1}"/>`).join('')}</p:sldLayoutIdLst>` +
-    '<p:txStyles><p:titleStyle><a:lvl1pPr algn="l" rtl="0"><a:defRPr sz="4400"/></a:lvl1pPr></p:titleStyle>' +
-    '<p:bodyStyle><a:lvl1pPr marL="228600" indent="-228600"><a:buFont typeface="Arial"/><a:buChar char="&#8226;"/><a:defRPr sz="2800"/></a:lvl1pPr></p:bodyStyle>' +
+    `<p:txStyles><p:titleStyle><a:lvl1pPr algn="l" rtl="0"><a:defRPr sz="4400">${fill(theme.title)}<a:latin typeface="+mj-lt"/></a:defRPr></a:lvl1pPr></p:titleStyle>` +
+    `<p:bodyStyle><a:lvl1pPr marL="228600" indent="-228600"><a:buFont typeface="Arial"/><a:buChar char="&#8226;"/><a:defRPr sz="2800">${fill(theme.body)}<a:latin typeface="+mn-lt"/></a:defRPr></a:lvl1pPr></p:bodyStyle>` +
     '<p:otherStyle><a:defPPr><a:defRPr lang="en-US"/></a:defPPr></p:otherStyle></p:txStyles></p:sldMaster>';
   const layout = (type: string, name: string): string => `${DECL}<p:sldLayout ${NS} type="${type}" preserve="1">` +
     `<p:cSld name="${name}"><p:spTree>${EMPTY_TREE}</p:spTree></p:cSld>` +
@@ -282,7 +296,7 @@ export function newDeckPptx(title: string, subtitle: string): Uint8Array {
     { name: 'ppt/presProps.xml', data: utf8(PRES_PROPS) },
     { name: 'ppt/viewProps.xml', data: utf8(VIEW_PROPS) },
     { name: 'ppt/tableStyles.xml', data: utf8(TABLE_STYLES) },
-    { name: 'ppt/theme/theme1.xml', data: utf8(THEME) },
+    { name: 'ppt/theme/theme1.xml', data: utf8(themeXml(theme)) },
     { name: 'ppt/slideMasters/slideMaster1.xml', data: utf8(master) },
     {
       name: 'ppt/slideMasters/_rels/slideMaster1.xml.rels',

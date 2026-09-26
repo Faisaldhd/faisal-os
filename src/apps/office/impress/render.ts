@@ -32,7 +32,7 @@ function svg(tag: string, attrs: Record<string, string | number>): SVGElement {
 }
 
 /** The outline of a preset geometry in a w×h box (the common ones; anything else is a rectangle). */
-function geometry(geom: string, w: number, h: number): SVGElement {
+export function geometry(geom: string, w: number, h: number): SVGElement {
   const poly = (pts: Array<[number, number]>): SVGElement => svg('polygon', { points: pts.map(([x, y]) => `${x},${y}`).join(' ') });
   const m = Math.min(w, h);
   switch (geom) {
@@ -46,8 +46,24 @@ function geometry(geom: string, w: number, h: number): SVGElement {
     case 'upArrow': { const head = Math.min(w, h) * 0.5; return poly([[w * 0.25, h], [w * 0.25, head], [0, head], [w / 2, 0], [w, head], [w * 0.75, head], [w * 0.75, h]]); }
     case 'downArrow': { const head = Math.min(w, h) * 0.5; return poly([[w * 0.25, 0], [w * 0.25, h - head], [0, h - head], [w / 2, h], [w, h - head], [w * 0.75, h - head], [w * 0.75, 0]]); }
     case 'hexagon': return poly([[w * 0.25, 0], [w * 0.75, 0], [w, h / 2], [w * 0.75, h], [w * 0.25, h], [0, h / 2]]);
+    case 'star5': {
+      const pts: Array<[number, number]> = [];
+      for (let i = 0; i < 10; i++) {
+        const r = i % 2 ? 0.2 : 0.5;
+        const a = -Math.PI / 2 + (i * Math.PI) / 5;
+        pts.push([w / 2 + Math.cos(a) * w * r, h * 0.55 + Math.sin(a) * h * r * 1.05]);
+      }
+      return poly(pts);
+    }
     default: return svg('rect', { x: 0, y: 0, width: w, height: h });
   }
+}
+
+/** `color` blended into white by `amount` (0 = white, 1 = the colour). */
+function mix(color: string, amount: number): string {
+  const n = parseInt(color.slice(1), 16);
+  const ch = (v: number): number => Math.round(255 - (255 - v) * amount);
+  return `rgb(${ch((n >> 16) & 255)}, ${ch((n >> 8) & 255)}, ${ch(n & 255)})`;
 }
 
 export interface DrawOptions {
@@ -84,6 +100,10 @@ function drawText(deck: Deck, s: DeckShape, opts: DrawOptions): HTMLElement | nu
     return box;
   }
   const inherited = masterText(s, opts.master);
+  // No font of its own and none from the master: the theme's heading font for a title, its body
+  // font for everything else (what `+mj-lt` / `+mn-lt` mean in the file).
+  const heading = s.ph === 'title' || s.ph === 'ctrTitle';
+  const family = inherited?.font ?? (deck.fonts ? (heading ? deck.fonts.major : deck.fonts.minor) : null);
   for (const p of s.paras) {
     const line = el('div', 'fo-sh-p', `${p.bullet ? '• ' : ''}${p.field === 'slidenum' && live !== null ? live : p.text || ' '}`);
     line.dir = 'auto';
@@ -92,7 +112,8 @@ function drawText(deck: Deck, s: DeckShape, opts: DrawOptions): HTMLElement | nu
     if (p.italic) line.style.fontStyle = 'italic';
     if (p.underline) line.style.textDecoration = 'underline';
     line.style.color = p.color ?? s.ink ?? inherited?.color ?? deck.scheme.dk1 ?? '#000';
-    if (inherited?.font) line.style.fontFamily = `"${inherited.font}", var(--fo-doc-font)`;
+    const face = p.font ?? family;
+    if (face) line.style.fontFamily = `"${face.replace(/["\\]/g, '')}", var(--fo-doc-font)`;
     if (p.align) line.style.textAlign = p.align === 'ctr' ? 'center' : p.align === 'r' ? 'right' : p.align === 'just' ? 'justify' : 'left';
     box.append(line);
   }
@@ -140,12 +161,22 @@ function drawShape(deck: Deck, s: DeckShape, opts: DrawOptions, ox = 0, oy = 0, 
     for (const c of s.children) node.append(drawShape(deck, c, opts, box.x, box.y, gx * sx, gy * sy));
   } else if (s.kind === 'frame') {
     if (s.table) {
+      // PowerPoint's default table look: an accent header row and banded rows below it.
       const table = el('table', 'fo-sh-table');
-      for (const row of s.table) {
+      const accent = deck.scheme.accent1 ?? '#4472C4';
+      s.table.forEach((row, r) => {
         const tr = el('tr');
-        for (const cell of row) { const td = el('td', undefined, cell); td.dir = 'auto'; tr.append(td); }
+        for (const [c, cell] of row.entries()) {
+          const td = el('td', undefined, cell);
+          td.dir = 'auto';
+          td.dataset.cell = `${r}:${c}`;
+          if (r === 0) { td.style.background = accent; td.style.color = '#FFFFFF'; td.style.fontWeight = '700'; }
+          else td.style.background = r % 2 ? mix(accent, 0.2) : mix(accent, 0.1);
+          if (deck.fonts) td.style.fontFamily = `"${deck.fonts.minor.replace(/["\\]/g, '')}", var(--fo-doc-font)`;
+          tr.append(td);
+        }
         table.append(tr);
-      }
+      });
       node.append(table);
     } else {
       node.classList.add('is-object');
@@ -182,6 +213,7 @@ export function drawSlide(deck: Deck, slide: DeckSlide, opts: DrawOptions = {}):
   for (const s of slide.shapes) {
     const node = drawShape(deck, s, { ...opts, master });
     node.dataset.uid = String(s.uid);
+    if (s.link) node.dataset.link = s.link;
     if (opts.hideAnimated && s.anim) node.classList.add('is-pending');
     canvas.append(node);
   }

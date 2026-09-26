@@ -7,6 +7,7 @@
  * key sets stay equal.
  */
 import { defineStrings } from '../../../kernel/i18n';
+import './strings-wps';
 
 defineStrings('impress', {
   ar: {
