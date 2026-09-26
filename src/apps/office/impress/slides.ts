@@ -62,6 +62,8 @@ export function createSlideEditor(ctx: EditorContext): Editor {
   /** Puts the caret back into the overlay after a picker took focus (null while nothing is edited). */
   let restoreCaret: (() => void) | null = null;
   let scale = 1;
+  /** The status bar's zoom, on top of the fit-to-stage size (1 = the slide fits the stage). */
+  let zoom = 1;
   let stageWidth = 0;
   let railDragging = false;
   /** The connector gesture: `connecting` false = not drawing one, `connectFrom` null = waiting for
@@ -405,7 +407,8 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     const box = stage.getBoundingClientRect();
     const pad = (box.width || 1000) <= NARROW_BREAKPOINT ? 24 : 48;
     stageWidth = box.width;
-    const width = fitWidth(d, (box.width || 960) - pad, (box.height || 600) - pad);
+    const width = fitWidth(d, (box.width || 960) - pad, (box.height || 600) - pad) * zoom;
+    stage.classList.toggle('is-zoomed', zoom > 1);
     canvas = drawSlide(d, slide, { prompts: true, index: current });
     const fitted = fitSlide(d, canvas, width);
     frame = fitted.frame;
@@ -880,7 +883,9 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     render,
     status(): StatusInfo {
       const d = deck();
-      return { parts: d ? [t('office.statusSlide', { n: current + 1, total: d.slides.length })] : [] };
+      if (!d) return { parts: [] };
+      const setZoom = (value: number): void => { zoom = value; drawStage(); ctx.refresh(); };
+      return { parts: [t('office.statusSlide', { n: current + 1, total: d.slides.length })], zoom: { value: zoom, set: setZoom } };
     },
     onKey(ev: KeyboardEvent): boolean {
       if (ev.key === 'F5') { present(ev.shiftKey ? current : 0, false); return true; }

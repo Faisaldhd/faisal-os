@@ -33,6 +33,9 @@ function hostOf(anchor: HTMLElement): HTMLElement {
  * bottom sheet when the office window is narrow. Returns a handle to close it.
  */
 export function openPopover(anchor: HTMLElement, content: HTMLElement, opts: { label: string; onClose?: () => void; sheet?: boolean } = { label: '' }): Popover {
+  // Where the anchor is *now*: closing the open popover may move it (a folded ribbon
+  // group's dropdown gives its tools back to the hidden group when it closes).
+  const a = anchor.getBoundingClientRect();
   closePopovers();
   const host = hostOf(anchor);
   const narrow = opts.sheet || host.clientWidth < NARROW_BREAKPOINT;
@@ -55,7 +58,6 @@ export function openPopover(anchor: HTMLElement, content: HTMLElement, opts: { l
 
   if (!narrow) {
     const hostRect = host.getBoundingClientRect();
-    const a = anchor.getBoundingClientRect();
     const rtl = getComputedStyle(host).direction === 'rtl';
     const width = box.offsetWidth || 240;
     let left = rtl ? a.right - hostRect.left - width : a.left - hostRect.left;

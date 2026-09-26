@@ -166,6 +166,9 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   let editing = false;
   let dragging = false;
   let freezeTop: boolean | null = null;
+  /** The status bar's zoom: CSS `zoom` on the scroll box, so its scroll metrics stay in sheet
+   *  pixels; only what is read from the screen (rects, pointer deltas) is divided by it. */
+  let zoom = 1;
 
   const root = el('div', 'fo-calc');
   const fxbar = el('div', 'fo-fxbar');
@@ -634,7 +637,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   function measureRowHeight(): void {
     if (measured || !offsets || rowCells.size === 0) return;
     const rec = rowCells.values().next().value as RowRecord | undefined;
-    const height = rec?.tr.getBoundingClientRect().height ?? 0;
+    const height = (rec?.tr.getBoundingClientRect().height ?? 0) / zoom;
     // A zero height means there was no layout yet (a hidden window, the first paint): come back
     // for it next time rather than believing 0px forever.
     if (!(height > 4)) return;
@@ -1159,7 +1162,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       root.classList.add('is-resizing');
       const move = (e: PointerEvent): void => {
         if (Math.abs(e.clientX - startX) + Math.abs(e.clientY - startY) > 2) moved = true;
-        onDrag(e.clientX - startX, e.clientY - startY);
+        onDrag((e.clientX - startX) / zoom, (e.clientY - startY) / zoom);
       };
       const done = (): void => {
         grip.removeEventListener('pointermove', move);
@@ -1203,7 +1206,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     let start = 0;
     let height = 0;
     dragGrip(grip, () => fitRow(mr), (_dx, dy) => {
-      if (!start) start = tr.getBoundingClientRect().height || 24;
+      if (!start) start = tr.getBoundingClientRect().height / zoom || 24;
       height = draggedHeight(start, 0, dy);
       tr.style.height = `${height}px`;
     }, (moved) => {
@@ -2236,7 +2239,13 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       syncBars();
     },
     status(): StatusInfo {
-      return { parts: [refName(), ...viewParts(), ...selectionStats()] };
+      const setZoom = (value: number): void => {
+        zoom = value;
+        scroll.style.zoom = zoom === 1 ? '' : String(zoom);
+        updateWindow();
+        ctx.refresh();
+      };
+      return { parts: [refName(), ...viewParts(), ...selectionStats()], zoom: { value: zoom, set: setZoom } };
     },
     dispose(): void {
       document.removeEventListener('pointerup', onPointerUp);
