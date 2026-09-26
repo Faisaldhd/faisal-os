@@ -3,10 +3,10 @@ import { newDeckPptx } from '../pptx';
 import { contentTypes } from '../ooxml';
 import { readRawZip, utf8, writeZip } from '../zip';
 import { openZip, zipEntries } from '../../viewer/formats';
-import { deckTexts, readDeck, relativeTarget, resolveTarget, type Deck } from './deck';
+import { deckTexts, readDeck, relativeTarget, resolveTarget, type Deck, type DeckShape } from './deck';
 import { patchDeck } from './deckpatch';
 import {
-  addShape, addSlide, deleteShape, deleteSlide, duplicateSlide, moveSlide, newPicture, newShape, setAnim, setBounds,
+  addShape, addSlide, connectShapes, deleteShape, deleteSlide, duplicateSlide, moveSlide, newPicture, newShape, setAnim, setBounds,
   setShapeText, setTransition,
 } from './ops';
 import { formatClock, stepBack, stepForward } from './show';
@@ -273,6 +273,112 @@ function officeDeck(): Uint8Array {
     { name: 'ppt/media/image1.png', data: new Uint8Array([137, 80, 78, 71]) },
   ]);
 }
+
+describe('connectors in the file', () => {
+  /** Two boxes and a connector attached to both, saved and read back. */
+  async function boxes(): Promise<{ bytes: Uint8Array; saved: Uint8Array }> {
+    const bytes = newDeckPptx('T', 'S');
+    const base = await readDeck(bytes);
+    const a = { ...newShape(base, 'rect'), x: 1000000, y: 1000000, w: 1000000, h: 1000000 };
+    const b = { ...newShape(base, 'rect'), x: 5000000, y: 1000000, w: 1000000, h: 1000000 };
+    let deck = addShape(addShape(base, 0, a), 0, b);
+    deck = connectShapes(deck, 0, a.uid, b.uid);
+    return { bytes, saved: await save(bytes, base, deck) };
+  }
+
+  /** The two boxes and the connector, whatever the slide carried before them. */
+  const lastThree = (d: Deck): [DeckShape, DeckShape, DeckShape] =>
+    d.slides[0].shapes.slice(-3) as [DeckShape, DeckShape, DeckShape];
+
+  it('is written the way PowerPoint writes it, and both ends come back on the right shapes', async () => {
+    const { saved } = await boxes();
+    expect(await problems(saved)).toEqual([]);
+    const xml = await part(saved, 'ppt/slides/slide1.xml');
+    expect(xml).toContain('<a:prstGeom prst="straightConnector1">');
+    expect(xml).toMatch(/<a:stCxn id="\d+" idx="3"\/><a:endCxn id="\d+" idx="1"\/>/);
+    const read = await readDeck(saved);
+    const [a, b, line] = lastThree(read);
+    expect([a.kind, b.kind, line.kind]).toEqual(['shape', 'shape', 'line']);
+    // The reference names a real shape of the slide, not a coincidence of ordering.
+    expect(line.stCxn).toEqual({ uid: a.uid, id: a.spid, idx: 3 });
+    expect(line.endCxn).toEqual({ uid: b.uid, id: b.spid, idx: 1 });
+    expect([line.x, line.y, line.w, line.h]).toEqual([2000000, 1500000, 3000000, 0]);
+  });
+
+  it('follows a shape moved after the file was reopened, and the saved file says the same', async () => {
+    const { saved } = await boxes();
+    const read = await readDeck(saved);
+    const [a, b, line] = lastThree(read);
+    const moved = setBounds(read, 0, b.uid, { x: 5000000, y: 4000000, w: 1000000, h: 1000000 });
+    const next = lastThree(moved)[2];
+    expect(next.stCxn).toEqual({ uid: a.uid, id: a.spid, idx: 3 });
+    expect(next.endCxn).toEqual({ uid: b.uid, id: b.spid, idx: 1 });
+    expect([next.x, next.y, next.w, next.h]).toEqual([2000000, 1500000, 3000000, 3000000]);
+    expect(line.h).toBe(0);
+
+    const again = await save(saved, read, moved);
+    expect(await problems(again)).toEqual([]);
+    const slide = await part(again, 'ppt/slides/slide1.xml');
+    expect(slide).toContain('<a:off x="2000000" y="1500000"/><a:ext cx="3000000" cy="3000000"/>');
+    expect(slide).toMatch(/<a:stCxn id="\d+" idx="3"\/><a:endCxn id="\d+" idx="1"\/>/);
+    // Re-saving a deck that did not change again writes nothing at all.
+    const idle = await patchDeck(readRawZip(again), await readDeck(again), await readDeck(again));
+    expect(idle?.changed).toEqual([]);
+  });
+
+  it('lets go of a shape that is deleted instead of leaving a dangling reference', async () => {
+    const { saved } = await boxes();
+    const base = await readDeck(saved);
+    const b = lastThree(base)[1];
+    const after = await save(saved, base, deleteShape(base, 0, b.uid));
+    expect(await problems(after)).toEqual([]);
+    const xml = await part(after, 'ppt/slides/slide1.xml');
+    expect(xml).toContain('<a:stCxn');
+    expect(xml).not.toContain('<a:endCxn');
+    const read = await readDeck(after);
+    const line = lastThree(read)[2];
+    expect(line.kind).toBe('line');
+    expect(line.stCxn).not.toBeNull();
+    expect(line.endCxn).toBeNull();
+  });
+
+  it('detaches a connector the user drags, so the drawing can never disagree with the file', async () => {
+    const { saved } = await boxes();
+    const base = await readDeck(saved);
+    const line = lastThree(base)[2];
+    const dragged = setBounds(base, 0, line.uid, { x: 300000, y: 400000, w: 500000, h: 600000 });
+    const next = lastThree(dragged)[2];
+    expect(next.stCxn).toBeNull();
+    expect(next.endCxn).toBeNull();
+    expect([next.x, next.y, next.w, next.h]).toEqual([300000, 400000, 500000, 600000]);
+    const after = await save(saved, base, dragged);
+    const xml = await part(after, 'ppt/slides/slide1.xml');
+    expect(xml).not.toContain('<a:stCxn');
+    expect(xml).not.toContain('<a:endCxn');
+    expect(lastThree(await readDeck(after))[2].stCxn).toBeNull();
+  });
+
+  it('keeps the attachment of a duplicated slide on the copy\u2019s own shapes', async () => {
+    const { saved } = await boxes();
+    const base = await readDeck(saved);
+    const copy = duplicateSlide(base, 0);
+    const shapes = copy.slides[1].shapes;
+    const [ca, cb, line] = shapes.slice(-3);
+    expect(line.stCxn?.uid).toBe(ca?.uid);
+    expect(line.endCxn?.uid).toBe(cb?.uid);
+    // Moving the copy's box must move the copy's line, and leave the original where it was.
+    const moved = setBounds(copy, 1, cb!.uid, { x: 5000000, y: 4000000, w: 1000000, h: 1000000 });
+    expect(moved.slides[1].shapes.slice(-1)[0]!.y).toBe(1500000);
+    expect(moved.slides[0].shapes.slice(-1)[0]!.h).toBe(0);
+    const after = await save(saved, base, copy);
+    expect(await problems(after)).toEqual([]);
+    const read = await readDeck(after);
+    const [ra, rb, rline] = read.slides[1].shapes.slice(-3);
+    expect(rline!.stCxn?.uid).toBe(ra!.uid);
+    expect(rline!.endCxn?.uid).toBe(rb!.uid);
+    expect(rline!.stCxn?.id).toBe(ra!.spid);
+  });
+});
 
 describe('a deck written by PowerPoint', () => {
   it('follows sldIdLst, inherits placeholder places and sizes, reads pictures, notes and the background', async () => {

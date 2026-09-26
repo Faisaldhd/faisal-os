@@ -18,6 +18,7 @@ import { columnIndex } from '../../viewer/formats';
 import { cellName, xmlText } from '../xml';
 import { applyEdits, attr, elements, localName, parsePart, type XmlEdit, type XmlElement } from '../xmlscan';
 import { pxToChars, pxToPt, type CellFormat } from './sheetfmt';
+import { parseDxfs } from './condfmt-xml';
 
 const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const S_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
@@ -256,8 +257,44 @@ export function addCellStyles(stylesXml: string | null, requests: readonly Style
   return { xml: applyEdits(xml, edits), ids };
 }
 
-/* ─────────────────────────────── worksheet ─────────────────────────────── */
+/**
+ * Adds the conditional-formatting styles (`<dxf>` entries) a sheet's rules point at by index, and
+ * answers the index of each one. The section is created in the schema's place when the file has
+ * none, and an identical dxf already in the file is reused rather than written twice — Excel
+ * compares them by content anyway, and a smaller file is a smaller file.
+ */
+export function addDxfs(stylesXml: string | null, bodies: readonly string[]): { xml: string; ids: number[] } {
+  const xml = stylesXml && /<(?:\w+:)?styleSheet[\s>]/.test(stylesXml) ? stylesXml : MINIMAL_STYLES;
+  const existing = parseDxfs(xml);
+  const ids: number[] = [];
+  for (const body of bodies) {
+    const at = existing.indexOf(body);
+    if (at >= 0) ids.push(at);
+    else {
+      existing.push(body);
+      ids.push(existing.length - 1);
+    }
+  }
+  const markup = `<dxfs count="${existing.length}">${existing.join('')}</dxfs>`;
+  const open = /<dxfs\b[^>]*>[\s\S]*?<\/dxfs>/.exec(xml) ?? /<dxfs\b[^>]*\/>/.exec(xml);
+  if (open) return { xml: xml.slice(0, open.index) + markup + xml.slice(open.index + open[0].length), ids };
+  // No section yet: it goes after <cellStyles> and before <tableStyles> (the schema's order).
+  const suffix = rootOpen(xml);
+  const after = ['cellStyles', 'cellStyleXfs', 'cellXfs', 'borders', 'fills', 'fonts', 'numFmts']
+    .map((name) => new RegExp(`</(?:\\w+:)?${name}>|<(?:\\w+:)?${name}\\b[^>]*/>`).exec(xml))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .reduce((best: RegExpExecArray | null, m) => (best === null || m.index > best.index ? m : best), null);
+  const at = after ? after.index + after[0].length : suffix;
+  return { xml: `${xml.slice(0, at)}${markup}${xml.slice(at)}`, ids };
+}
 
+/** Where a part's content starts, for a section that has to be appended before the closing tag. */
+function rootOpen(xml: string): number {
+  const close = xml.lastIndexOf('</');
+  return close < 0 ? xml.length : close;
+}
+
+/* ─────────────────────────────── worksheet ─────────────────────────────── */
 export interface SheetLookEdits {
   /** "row:col" → cellXfs index. */
   cells?: ReadonlyMap<string, number>;

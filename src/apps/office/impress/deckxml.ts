@@ -4,7 +4,7 @@
  * here is generated from the model with `xmlText` for text, never from markup.
  */
 import { xmlText } from '../xml';
-import type { Anim, DeckPara, DeckShape, Transition } from './deck';
+import type { Anim, DeckCxn, DeckPara, DeckShape, Transition } from './deck';
 
 const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main';
@@ -63,10 +63,36 @@ function lineXml(s: DeckShape): string {
 }
 
 /**
- * The markup of a new shape. `id` is its `cNvPr id` on the slide; `embed` the
- * relationship id of a picture's media part.
+ * `<a:stCxn>`/`<a:endCxn>` for one end of a connector.
+ *
+ * `ids` maps a target shape's session uid to the `cNvPr id` it is being written with — a shape
+ * only gets an id at the moment the slide is written, so the map is what lets a connector drawn
+ * in this session point at a shape drawn in this session. A reference the map cannot resolve
+ * falls back to the id the file had, which is what keeps an untouched file byte-identical.
  */
-export function shapeXml(s: DeckShape, id: number, embed: string | null): string {
+function cxnRef(tag: 'a:stCxn' | 'a:endCxn', r: DeckCxn | null, ids?: ReadonlyMap<number, number>): string {
+  if (!r) return '';
+  const id = (r.uid !== null ? ids?.get(r.uid) : undefined) ?? r.id;
+  return id > 0 ? `<${tag} id="${id}" idx="${Math.max(0, Math.round(r.idx))}"/>` : '';
+}
+
+/** The inside of a `<p:cNvCxnSpPr>`: both ends of a connector, or '' for a free line. */
+export function cxnRefsXml(st: DeckCxn | null, end: DeckCxn | null, ids?: ReadonlyMap<number, number>): string {
+  return cxnRef('a:stCxn', st, ids) + cxnRef('a:endCxn', end, ids);
+}
+
+/** The whole `<p:cNvCxnSpPr>` element, self-closing when the line holds on to nothing. */
+export function cxnHolderXml(st: DeckCxn | null, end: DeckCxn | null, ids?: ReadonlyMap<number, number>): string {
+  const inner = cxnRefsXml(st, end, ids);
+  return `<p:cNvCxnSpPr${inner ? `>${inner}</p:cNvCxnSpPr>` : '/>'}`;
+}
+
+/**
+ * The markup of a new shape. `id` is its `cNvPr id` on the slide; `embed` the
+ * relationship id of a picture's media part; `ids` the ids of the other new shapes, so a
+ * connector can name the shapes it is attached to.
+ */
+export function shapeXml(s: DeckShape, id: number, embed: string | null, ids?: ReadonlyMap<number, number>): string {
   const name = xmlText(s.name || `${s.kind === 'pic' ? 'Picture' : s.kind === 'line' ? 'Connector' : s.kind === 'text' ? 'TextBox' : 'Shape'} ${id}`);
   if (s.kind === 'pic') {
     return `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="${name}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>` +
@@ -74,8 +100,11 @@ export function shapeXml(s: DeckShape, id: number, embed: string | null): string
       `<p:spPr>${xfrm(s)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
   }
   if (s.kind === 'line') {
-    return `<p:cxnSp><p:nvCxnSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>` +
-      `<p:spPr>${xfrm(s)}<a:prstGeom prst="line"><a:avLst/></a:prstGeom>${lineXml(s)}</p:spPr></p:cxnSp>`;
+    // `straightConnector1` and `a:stCxn`/`a:endCxn` are exactly what PowerPoint writes for a
+    // connector; the attachments are what make it follow the shapes when they are moved.
+    const ends = cxnRefsXml(s.stCxn, s.endCxn, ids);
+    return `<p:cxnSp><p:nvCxnSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvCxnSpPr${ends ? `>${ends}</p:cNvCxnSpPr>` : '/>'}<p:nvPr/></p:nvCxnSpPr>` +
+      `<p:spPr>${xfrm(s)}<a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>${lineXml(s)}</p:spPr></p:cxnSp>`;
   }
   const ph = s.ph ? `<p:ph${s.ph !== 'body' ? ` type="${s.ph}"` : ''}${s.phIdx ? ` idx="${s.phIdx}"` : ''}/>` : '';
   const txBox = s.kind === 'text' && !s.ph ? ' txBox="1"' : '';

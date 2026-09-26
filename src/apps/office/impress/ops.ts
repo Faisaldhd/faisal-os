@@ -4,8 +4,9 @@
  * deck after (`deckEdit`), and the save diffs the current deck against the one read.
  */
 import type { DeckModel, Edit, OfficeModel } from '../model';
-import { deckTexts, nextUid, type Anim, type Deck, type DeckPara, type DeckShape, type DeckSlide, type Transition } from './deck';
+import { deckTexts, nextUid, type Anim, type Deck, type DeckCxn, type DeckPara, type DeckShape, type DeckSlide, type Transition } from './deck';
 import { autoAlign, modelColor, type ParaStylePatch } from './parafmt';
+import { connectable, connectorBetween, detachFrom, followConnectors } from './connectors';
 
 export type SlideLayoutKind = 'title' | 'content' | 'two' | 'blank';
 export const SLIDE_LAYOUTS: readonly SlideLayoutKind[] = ['title', 'content', 'two', 'blank'];
@@ -42,7 +43,7 @@ function baseShape(kind: DeckShape['kind'], x: number, y: number, w: number, h: 
   return {
     uid: nextUid(), kind, origin: null, spid: 0, name: '', ph: null, phIdx: null, geom: 'rect',
     x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), rot: 0, flipH: false, flipV: false,
-    fill: null, stroke: null, strokeW: 12700, arrow: false, paras: [], ink: null, anchor: 't', fontScale: 1,
+    fill: null, stroke: null, strokeW: 12700, arrow: false, stCxn: null, endCxn: null, paras: [], ink: null, anchor: 't', fontScale: 1,
     image: null, children: [], box: null, table: null, anim: null, locked: false,
   };
 }
@@ -115,10 +116,24 @@ function copyShape(s: DeckShape): DeckShape {
 export function duplicateSlide(deck: Deck, at: number): Deck {
   const src = deck.slides[at];
   if (!src) return deck;
-  const copy: DeckSlide = { ...src, uid: nextUid(), part: null, from: src.part ?? src.from, shapes: src.shapes.map(copyShape), notes: '' };
+  // The copy gets its own shapes, so a connector's attachment is re-pointed at the copy's own
+  // shape of the same name — otherwise the duplicate would hold on to the original's shapes.
+  const moved = new Map<number, number>();
+  const shapes = src.shapes.map((s) => { const c = copyShape(s); moved.set(s.uid, c.uid); return c; });
+  for (const s of shapes) {
+    s.stCxn = remapCxn(s.stCxn, moved);
+    s.endCxn = remapCxn(s.endCxn, moved);
+  }
+  const copy: DeckSlide = { ...src, uid: nextUid(), part: null, from: src.part ?? src.from, shapes, notes: '' };
   const slides = deck.slides.slice();
   slides.splice(at + 1, 0, copy);
   return { ...deck, slides };
+}
+
+function remapCxn(ref: DeckCxn | null, moved: ReadonlyMap<number, number>): DeckCxn | null {
+  if (!ref || ref.uid === null) return ref;
+  const uid = moved.get(ref.uid);
+  return uid === undefined ? ref : { ...ref, uid };
 }
 
 /** Removes slide `at`; the last slide is never removed. */
@@ -162,13 +177,32 @@ export function mapShape(deck: Deck, at: number, uid: number, fn: (s: DeckShape)
   });
 }
 
-/** Moves/resizes a shape (EMU), clamped to a positive size. */
+/**
+ * Moves/resizes a shape (EMU), clamped to a positive size.
+ *
+ * Two things follow the shape: every connector attached to it is re-routed onto its new sides,
+ * which is what makes a line between two boxes stay a line between two boxes (in the model, on
+ * the canvas and in the saved file at once); and a connector the user drags *itself* is detached,
+ * because leaving it "attached" while its geometry walks away would draw one thing and save
+ * another. Re-attaching is a deliberate gesture (draw the connector again), not a side effect.
+ */
 export function setBounds(deck: Deck, at: number, uid: number, b: { x: number; y: number; w: number; h: number }): Deck {
-  return mapShape(deck, at, uid, (s) => {
+  const movedDeck = mapShape(deck, at, uid, (s) => {
     if (s.locked) return s;
     const next = { x: Math.round(b.x), y: Math.round(b.y), w: Math.max(s.kind === 'line' ? 0 : 12700, Math.round(b.w)), h: Math.max(s.kind === 'line' ? 0 : 12700, Math.round(b.h)) };
     if (next.x === s.x && next.y === s.y && next.w === s.w && next.h === s.h) return s;
     return { ...s, ...next };
+  });
+  if (movedDeck === deck) return deck;
+  return mapSlide(movedDeck, at, (slide) => {
+    const shape = slide.shapes.find((s) => s.uid === uid);
+    if (!shape) return slide;
+    if (shape.kind === 'line') {
+      if (!shape.stCxn && !shape.endCxn) return slide;
+      return { ...slide, shapes: slide.shapes.map((s) => (s.uid === uid ? { ...s, stCxn: null, endCxn: null } : s)) };
+    }
+    const shapes = followConnectors(slide.shapes);
+    return shapes === slide.shapes ? slide : { ...slide, shapes };
   });
 }
 
@@ -212,8 +246,25 @@ export function deleteShape(deck: Deck, at: number, uid: number): Deck {
   return mapSlide(deck, at, (slide) => {
     const shape = slide.shapes.find((s) => s.uid === uid);
     if (!shape || (shape.locked && shape.origin === null)) return slide;
-    return { ...slide, shapes: slide.shapes.filter((s) => s.uid !== uid) };
+    // A connector that held on to the deleted shape lets go of it: a reference to a shape that
+    // is gone is never written into the file (PowerPoint would show a line attached to nothing).
+    return { ...slide, shapes: detachFrom(slide.shapes.filter((s) => s.uid !== uid), uid) };
   });
+}
+
+/**
+ * Connects two shapes of one slide with a new straight connector, attached to the closest pair
+ * of sides. Returns the deck unchanged when the two shapes cannot be connected, so the caller
+ * can tell the user instead of adding a line that means nothing.
+ */
+export function connectShapes(deck: Deck, at: number, fromUid: number, toUid: number): Deck {
+  const slide = deck.slides[at];
+  if (!slide || fromUid === toUid) return deck;
+  const from = slide.shapes.find((s) => s.uid === fromUid);
+  const to = slide.shapes.find((s) => s.uid === toUid);
+  if (!connectable(from) || !connectable(to)) return deck;
+  const conn = connectorBetween(deck, from, to);
+  return mapSlide(deck, at, (s) => ({ ...s, shapes: [...s.shapes, conn] }));
 }
 
 export function addShape(deck: Deck, at: number, shape: DeckShape): Deck {

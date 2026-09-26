@@ -685,7 +685,7 @@ defineStrings('office', {
     condTop: 'أعلى ١٠',
     condClear: 'امسح التنسيق الشرطي',
     condActive: 'تنسيق شرطي: {n} قاعدة',
-    condViewOnly: 'التنسيق الشرطي للعرض فقط ولا يُحفظ في ملف .xlsx بعد.',
+    condSaved: 'يُحفظ التنسيق الشرطي في الملف (conditionalFormatting + dxfs) ويُقرأ عند الفتح.',
 
     numFormat: 'تنسيق الأرقام',
     numGeneral: 'عام',
@@ -770,7 +770,7 @@ defineStrings('office', {
     condTop: 'Top 10',
     condClear: 'Clear the conditional formatting',
     condActive: 'Conditional formatting: {n} rules',
-    condViewOnly: 'Conditional formatting is view-level only and is not written to the .xlsx yet.',
+    condSaved: 'Conditional formatting is written to the file (conditionalFormatting + dxfs) and read back at open.',
 
     numFormat: 'Number format',
     numGeneral: 'General',

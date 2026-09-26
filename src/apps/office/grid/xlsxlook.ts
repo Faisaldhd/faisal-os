@@ -11,6 +11,49 @@ import { attrLocal as rawAttr, elementText, elementsOf, localName, parsePart, ty
 import { decodeXml, readRels } from '../writer/docxread';
 import { columnName } from '../xml';
 import { parseAutoFilter } from './autofilter';
+import { ourOperator, parseConditionalFormatting, parseDxfs, type ParsedCfRule } from './condfmt-xml';
+import type { CellStyle as CondStyle, CondRule } from '../calc/index';
+
+/**
+ * One `<cfRule>` as this app's own rule, or null when the file's rule is one we cannot show the way
+ * it meant it (a type we do not implement). The style comes from the `<dxf>` it points at.
+ */
+function condRuleFrom(rule: ParsedCfRule, style: Partial<CellStyle> | undefined): CondRule | null {
+  const paint: CondStyle = { ...(style ?? {}) } as CondStyle;
+  switch (rule.type) {
+    case 'cellIs': {
+      const op = rule.operator ? ourOperator(rule.operator) : null;
+      if (!op) return null;
+      const first = rule.formulas[0] ?? '';
+      const value = /^-?\d+(\.\d+)?$/.test(first) ? Number(first) : first;
+      const second = rule.formulas[1];
+      return { type: 'cellIs', op: op as 'gt' | 'lt' | 'gte' | 'lte' | 'eq' | 'neq' | 'between' | 'notBetween', value, ...(second !== undefined ? { value2: Number(second) } : {}), style: paint } as CondRule;
+    }
+    case 'containsText':
+    case 'notContainsText':
+    case 'beginsWith':
+    case 'endsWith': {
+      const op = rule.type === 'containsText' ? 'contains' : rule.type === 'notContainsText' ? 'notContains' : rule.type === 'beginsWith' ? 'begins' : 'ends';
+      return { type: 'text', op, text: rule.text ?? '', style: paint } as CondRule;
+    }
+    case 'containsBlanks': return { type: 'blank', style: paint } as CondRule;
+    case 'notContainsBlanks': return { type: 'notBlank', style: paint } as CondRule;
+    case 'containsErrors': return { type: 'error', style: paint } as CondRule;
+    case 'duplicateValues': return { type: 'duplicate', style: paint } as CondRule;
+    case 'uniqueValues': return { type: 'unique', style: paint } as CondRule;
+    case 'top10': return { type: 'top', count: rule.rank ?? 10, ...(rule.bottom ? { bottom: true } : {}), ...(rule.percent ? { percent: true } : {}), style: paint } as CondRule;
+    case 'aboveAverage': return { type: 'average', ...(rule.aboveAverage === false ? { below: true } : {}), style: paint } as CondRule;
+    case 'colorScale': {
+      const stops = rule.stops ?? [];
+      if (stops.length < 2) return null;
+      const colours = rule.colors ?? [];
+      const withColour = stops.map((stop, i) => ({ ...stop, color: colours[i] ?? (i === 0 ? 'F8696B' : '63BE7B') }));
+      return { type: 'colorScale', min: withColour[0], ...(withColour.length > 2 ? { mid: withColour[1] } : {}), max: withColour[withColour.length - 1] } as CondRule;
+    }
+    case 'dataBar': return { type: 'dataBar', color: rule.colors?.[0] ?? '638EC6' } as CondRule;
+    default: return null;
+  }
+}
 
 const attr = (xml: string, el: XmlElement | undefined, name: string): string | null => (el ? rawAttr(xml, el, name) : null);
 const child = (el: XmlElement | undefined, name: string): XmlElement | undefined => el?.children.find((c) => localName(c.name) === name);
@@ -40,6 +83,8 @@ export interface SheetLook {
   rtl?: boolean;
   /** The file's own AutoFilter, per column index: the checklist values it keeps visible. */
   filters?: Map<number, string[]>;
+  /** The file's own conditional-formatting rules, in file order (the ones this app can read). */
+  condRules?: CondRule[];
 }
 
 export interface BookLook { styles: CellStyle[]; sheets: SheetLook[] }
@@ -149,6 +194,24 @@ export async function readBookLook(bytes: Uint8Array): Promise<BookLook> {
   }
 
   const workbook = await text('xl/workbook.xml');
+  // The `<dxfs>` styles a rule points at by index, read once for the whole book.
+  const dxfStyles: Array<Partial<CellStyle>> = [];
+  for (const body of stylesXml ? parseDxfs(stylesXml) : []) {
+    const bold = /<(?:\w+:)?b\s*\/>/.test(body);
+    const italic = /<(?:\w+:)?i\s*\/>/.test(body);
+    const underline = /<(?:\w+:)?u\s*\/>/.test(body);
+    const strike = /<(?:\w+:)?strike\s*\/>/.test(body);
+    const fill = /<bgColor\b[^>]*rgb="([0-9A-Fa-f]{8})"/.exec(body)?.[1];
+    const colour = /<color\b[^>]*rgb="([0-9A-Fa-f]{8})"/.exec(body)?.[1];
+    dxfStyles.push({
+      ...(bold ? { bold: true } : {}),
+      ...(italic ? { italic: true } : {}),
+      ...(underline ? { underline: true } : {}),
+      ...(strike ? { strike: true } : {}),
+      ...(fill ? { fill: fill.slice(2).toUpperCase() } : {}),
+      ...(colour ? { color: colour.slice(2).toUpperCase() } : {}),
+    });
+  }
   const sheets: SheetLook[] = [];
   if (workbook) {
     const wdoc = parsePart(workbook);
@@ -193,6 +256,12 @@ export async function readBookLook(bytes: Uint8Array): Promise<BookLook> {
       // The file's own AutoFilter: what the owner filtered last time the sheet was saved.
       const filters = parseAutoFilter(xml);
       if (filters.length) look.filters = new Map(filters.map((f) => [f.col, [...f.keys]]));
+      // …and its conditional formatting, with the styles its `<dxf>` indices point at.
+      const parsedCond = parseConditionalFormatting(xml);
+      if (parsedCond.length) {
+        const rules = parsedCond.map(({ rule }) => condRuleFrom(rule, rule.dxfId === undefined ? undefined : dxfStyles[rule.dxfId])).filter((r): r is CondRule => r !== null);
+        if (rules.length) look.condRules = rules;
+      }
       const shared = new Map<string, { formula: string; row: number; col: number }>();
       let rowCount = 0;
       for (const row of child(root, 'sheetData')?.children ?? []) {
