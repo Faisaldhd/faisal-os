@@ -23,6 +23,7 @@
  * previous object for undo, so a mutation here would silently rewrite history.
  */
 import { clamp } from './time';
+import { NO_EFFECTS, type ClipEffects } from './effects';
 import { gainAt } from './fades';
 import { resetTransform, type VideoTransform } from './clips';
 
@@ -77,6 +78,9 @@ export interface MediaClip {
   x: number;
   y: number;
   transition: Transition;
+  /** Picture effects (fade to black, blur, dark frame) — drawn by the compositor, so the
+   *  preview and the export show the same thing. */
+  effects: ClipEffects;
 }
 
 export type FontKey = 'sans' | 'naskh' | 'kufi' | 'display' | 'mono';
@@ -192,6 +196,7 @@ export function makeMediaClip(type: MediaType, mediaId: string, duration: number
     x: opts.overlay ? 0.72 : 0.5,
     y: opts.overlay ? 0.28 : 0.5,
     transition: { kind: 'none', duration: 0.6 },
+    effects: { ...NO_EFFECTS },
   };
 }
 

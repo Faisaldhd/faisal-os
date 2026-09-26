@@ -16,6 +16,7 @@ import type { RevisionLog } from './writer/revisions';
 import { diffText, replaceText } from './writer/docops';
 import { shiftSheetFormat, type SheetFormat } from './grid/sheetfmt';
 import type { AutoFilterColumn } from './grid/autofilter';
+import type { CondRule } from './calc/index';
 import { shiftFormula } from './formula/index';
 import type { StructOp } from './grid/structure';
 
@@ -136,6 +137,12 @@ export interface SheetsModel {
    * left out rather than written as something it is not.
    */
   autoFilters?: Record<number, readonly AutoFilterColumn[]>;
+  /**
+   * The conditional-formatting rules the owner set, per sheet: the save writes them as
+   * `<conditionalFormatting>` with their `<dxfs>` styles, and the reader fills them back at open
+   * (`grid/condfmt-xml.ts`). A rule the file cannot carry exactly is left out of the file.
+   */
+  condRules?: Record<number, readonly CondRule[]>;
 }
 export interface DeckModel {
   kind: 'pptx';
@@ -403,6 +410,28 @@ export function autoFilterEdit(sheet: number, before: readonly AutoFilterColumn[
   };
   return {
     key: `autofilter:${sheet}`,
+    apply: (m) => put(m, after),
+    revert: (m) => put(m, before),
+  };
+}
+
+/**
+ * An edit that sets one sheet's conditional-formatting rules, so what the owner sets reaches the
+ * file and one Ctrl+Z takes it back.
+ */
+export function condRulesEdit(sheet: number, before: readonly CondRule[], after: readonly CondRule[]): Edit {
+  const put = (m: OfficeModel, rules: readonly CondRule[]): OfficeModel => {
+    if (m.kind !== 'xlsx' && m.kind !== 'csv') return m;
+    const all: Record<number, readonly CondRule[]> = { ...(m.condRules ?? {}) };
+    if (rules.length) all[sheet] = rules;
+    else delete all[sheet];
+    const out: SheetsModel = { ...m };
+    if (Object.keys(all).length) out.condRules = all;
+    else delete out.condRules;
+    return out;
+  };
+  return {
+    key: `condrules:${sheet}`,
     apply: (m) => put(m, after),
     revert: (m) => put(m, before),
   };

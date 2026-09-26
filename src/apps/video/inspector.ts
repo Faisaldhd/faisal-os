@@ -26,6 +26,7 @@ import {
 import { COLOR_PRESETS } from './render-math';
 import type { MediaItem } from './media';
 import { formatMediaTime } from './time';
+import { NO_EFFECTS, hasEffects } from './effects';
 import { button, el, s, section, segmented, selectBox, slider, toggle } from './ui';
 import { icon } from './icons';
 
@@ -237,6 +238,29 @@ export class Inspector {
     }
     if (clip.type === 'audio') return;
     const media = clip as MediaClip;
+    /*
+     * Picture effects. Every control writes the clip and nothing else: the compositor reads the
+     * curve while it draws, so the preview and the exported file change together — there is no
+     * second place where an effect could be applied to one of them only.
+     */
+    {
+      const pct = (v: number) => `${Math.round(v)}%`;
+      const secs = (v: number) => `${v.toFixed(1)}s`;
+      const fx = clip.effects;
+      this.body.append(section(s('effectsTitle'), [
+        this.numberSlider(clip, s('fxFadeIn'), fx.fadeIn, 0, 5, 0.1, secs, (c, v) => ({ ...c, effects: { ...c.effects, fadeIn: v } })),
+        this.numberSlider(clip, s('fxFadeOut'), fx.fadeOut, 0, 5, 0.1, secs, (c, v) => ({ ...c, effects: { ...c.effects, fadeOut: v } })),
+        this.numberSlider(clip, s('fxBlur'), fx.blur * 100, 0, 100, 5, pct, (c, v) => ({ ...c, effects: { ...c.effects, blur: v / 100 } })),
+        this.numberSlider(clip, s('fxDark'), fx.dark * 100, 0, 100, 5, pct, (c, v) => ({ ...c, effects: { ...c.effects, dark: v / 100 } })),
+        el('p', 'fvs-note', s('effectsNote')),
+        (() => {
+          const clear = button(s('fxClear'), 'fvs-chip');
+          clear.setAttribute('aria-pressed', String(!hasEffects(fx)));
+          clear.addEventListener('click', () => this.once(clip, (c) => ({ ...c, effects: { ...NO_EFFECTS } })));
+          return clear;
+        })(),
+      ]));
+    }
     // Transform: rotate, flip, fit, crop.
     const rotate = el('div', 'fvs-action-row');
     const rl = button(s('rotateLeft'), 'fvs-btn', 'rotateLeft');

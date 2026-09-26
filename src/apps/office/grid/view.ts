@@ -1,12 +1,12 @@
 /**
- * Sheet — the spreadsheet view (الجدول).
+ * Sheet â€” the spreadsheet view (Ø§Ù„Ø¬Ø¯ÙˆÙ„).
  *
  * A grid with column letters and row numbers that stays left-to-right even in
  * Arabic (A1 is A1), a name box and a formula bar, range selection by dragging or
  * Shift+arrows, Excel's keyboard (arrows, Enter, Tab, F2, Esc), TSV copy/paste
- * with other programs, and sheet tabs at the bottom. The file's own look — column
+ * with other programs, and sheet tabs at the bottom. The file's own look â€” column
  * widths, row heights, merged cells, frozen panes, fonts, fills, borders and
- * alignment — is drawn as Excel draws it.
+ * alignment â€” is drawn as Excel draws it.
  *
  * Every data cell is a text field holding the cell's raw content (the formula when
  * it has one); a formatted value is drawn over it until the field is focused, so the
@@ -15,11 +15,12 @@
 import { t, getLocale } from '../../../kernel/i18n';
 import type { Editor, EditorContext, StatusInfo } from '../editor';
 import {
-  addColumnEdit, addRowEdit, autoFilterEdit, canDeleteColumn, canDeleteRow, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit,
+  addColumnEdit, addRowEdit, autoFilterEdit, canDeleteColumn, canDeleteRow, condRulesEdit, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit,
   gridAt, gridWidth, SHEET_ROWS, type CellState, type Edit, type OfficeModel, type SheetsModel,
 } from '../model';
 import type { AutoFilterColumn } from './autofilter';
 import { evaluateInModel, formatFormula, parseFormula, translateFormula } from '../formula/index';
+import type { CondRule } from '../calc/index';
 import type { FilterCondition } from '../calc/index';
 import { formatValue } from '../calc/index';
 import { columnName } from '../xml';
@@ -81,7 +82,7 @@ export function displayValue(value: string, fmt: string | undefined): string {
   const v = percent ? n * 100 : n;
   let out = v.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals, useGrouping: grouped });
   if (percent) out += '%';
-  const prefix = /^"([^"]*)"/.exec(section)?.[1] ?? (/^[$€£¥]/.exec(section)?.[0] ?? '');
+  const prefix = /^"([^"]*)"/.exec(section)?.[1] ?? (/^[$â‚¬Â£Â¥]/.exec(section)?.[0] ?? '');
   const suffix = /"([^"]*)"\s*$/.exec(section)?.[1] ?? '';
   return `${prefix}${out}${suffix && suffix !== prefix ? suffix : ''}`;
 }
@@ -89,7 +90,7 @@ export function displayValue(value: string, fmt: string | undefined): string {
 /**
  * Whether a sheet is shown right-to-left (column A on the right): the file's own
  * `rightToLeft` when it states one, otherwise when most of its text cells are
- * Arabic — how Excel shows an Arabic sheet. Display only; the file is not changed.
+ * Arabic â€” how Excel shows an Arabic sheet. Display only; the file is not changed.
  */
 export function sheetIsRtl(rows: readonly (readonly string[])[], stated: boolean | undefined): boolean {
   if (stated !== undefined) return stated;
@@ -284,7 +285,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     if (formula) ctx.setStatus(t('office.formulaResult', { value: cellState(modelRowOf(active.row), active.col).value }));
   }
 
-  /* ─────────────────────────── drawing ─────────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ drawing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
   /** One drawn row: its element and the cells it currently holds, in column order. */
   interface RowRecord {
@@ -301,7 +302,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   let spacerBottom: HTMLTableRowElement | null = null;
   let inputs = new Map<string, HTMLInputElement>();
   let tds = new Map<string, HTMLTableCellElement>();
-  /** The rows in the document right now — never the whole sheet. */
+  /** The rows in the document right now â€” never the whole sheet. */
   let rowCells = new Map<number, RowRecord>();
   /** Cumulative row tops; rebuilt when the sheet or its row heights change. */
   let offsets: Float64Array | null = null;
@@ -320,10 +321,10 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   let mergeAt = new Map<string, { r1: number; c1: number }>();
   let sizes: { disconnect(): void } | null = null;
 
-  /* ───────────────────── the sheet's view-level state ───────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ the sheet's view-level state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   // Sort is applied to the model (undoable, saved), and so is the AutoFilter (it is written into
   // the file as `<autoFilter>`); number formats go to the model's cell formats (styles.xml), while
-  // conditional formatting and charts still change only what the screen shows — see grid/sheetview.ts.
+  // conditional formatting and charts still change only what the screen shows â€” see grid/sheetview.ts.
   let sheetView: SheetView = seededView();
   /**
    * The view state a sheet starts with: the file's own AutoFilter (read from its `<autoFilter>` by
@@ -332,10 +333,30 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   function seededView(): SheetView {
     const view = emptySheetView();
     const look = book?.sheets[sheets()?.active ?? 0];
-    if (!look?.filters?.size) return view;
+    if (!look) return view;
     const filters: Record<number, FilterCondition> = {};
-    for (const [col, keys] of look.filters) filters[col] = { kind: 'values', keys };
-    return { ...view, filters };
+    for (const [col, keys] of look.filters ?? []) filters[col] = { kind: 'values', keys };
+    return {
+      ...view,
+      ...(Object.keys(filters).length ? { filters } : {}),
+      // The file's own conditional formatting shows too: a saved rule must not disappear.
+      ...(look.condRules?.length ? { condRules: [...look.condRules] } : {}),
+    };
+  }
+
+  /**
+   * Sets the conditional-formatting rules in the view AND in the model (one undoable edit), so what
+   * the owner sets is what the file gets â€” the panel no longer has to call itself display-only.
+   */
+  function setCondState(next: readonly CondRule[]): void {
+    const before = [...sheetView.condRules];
+    const after = [...next];
+    sheetView = { ...sheetView, condRules: after };
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      ctx.commit(condRulesEdit(sheets()?.active ?? 0, before, after));
+    }
+    renderGrid();
+    ctx.refresh();
   }
 
   /** The AutoFilter the model holds for a view: only the checklist kind has an `<autoFilter>` shape. */
@@ -799,7 +820,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     };
   }
 
-  /* ─────────────────────────── the fill handle ─────────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ the fill handle â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
   // A small square on the corner of the selection: drag it to copy the source cells or continue
   // their series. The maths lives in `fill.ts`; this is only the dragging, the live preview and
   // the single edit it commits. Every target row is mapped through `modelRowOf`, so a drag can
@@ -825,7 +846,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     try { fillHandle.setPointerCapture(ev.pointerId); } catch { /* no capture outside a browser */ }
   });
 
-  /** Marks the cells the release would write. Preview only — the model is untouched. */
+  /** Marks the cells the release would write. Preview only â€” the model is untouched. */
   function paintFillPreview(): void {
     for (const [, td] of tds) td.classList.remove('is-fillpreview');
     if (!filling) return;
@@ -847,7 +868,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     if (!m || !grid || !source || !plan || !cells.length || !ctx.editable()) { paintSelection(); return; }
 
     // One series per line of the source: each column for a vertical drag, each row for a
-    // horizontal one — exactly how a spreadsheet fills a block.
+    // horizontal one â€” exactly how a spreadsheet fills a block.
     const vertical = plan.direction === 'down' || plan.direction === 'up';
     const lines: Array<{ values: string[]; row: number; col: number }> = [];
     if (vertical) {
@@ -919,7 +940,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       td.classList.toggle('is-active', r === active.row && c === active.col);
     }
     table?.querySelectorAll('.fo-colhead').forEach((th) => { const c = Number((th as HTMLElement).dataset.c); th.classList.toggle('is-sel', c >= g.c0 && c <= g.c1); });
-    // The handle rides on the corner of the selection — the cell the fill would continue from.
+    // The handle rides on the corner of the selection â€” the cell the fill would continue from.
     // While a drag is running it stays there, so the pointer can leave the source and come back.
     const corner = (filling && fillSource ? fillSource : g);
     fillHandle.remove();
@@ -1050,7 +1071,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     select(false);
   });
 
-  /* ─────────────────────────── widths and heights ─────────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ widths and heights â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
   /**
    * A fixed-layout table as wide as its columns: without it a narrow window (a
@@ -1167,7 +1188,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     return grip;
   }
 
-  /** "Column width…" / "Row height…": the keyboard's and the phone's way, where a border is hard to grab. */
+  /** "Column widthâ€¦" / "Row heightâ€¦": the keyboard's and the phone's way, where a border is hard to grab. */
   function askSize(kind: 'col' | 'row'): void {
     const label = kind === 'col' ? t('office.columnWidthPx') : t('office.rowHeightPx');
     const input = el('input', 'fo-input');
@@ -1204,7 +1225,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     });
   }
 
-  /* ─────────────────────────── cell formatting (saved into styles.xml) ─────────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ cell formatting (saved into styles.xml) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
   const activeStyle = (): CellStyle | undefined => {
     const mr = modelRowOf(active.row);
@@ -1240,7 +1261,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     applyNumberFormat(stepDecimals(code && code !== 'General' && code !== '@' ? code : '0', delta));
   }
 
-  /* ─────────────────────────── data validation ─────────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ data validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
   const validations = new Map<number, RangedValidation[]>();
   const validationsOf = (): RangedValidation[] => validations.get(sheets()?.active ?? 0) ?? [];
@@ -1352,7 +1373,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     ctx.refresh();
   }
 
-  /* ─────────────────────────── commands ─────────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
   function addRow(): void {
     const m = sheets();
@@ -1430,7 +1451,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
 
   const enabledSheet = (): boolean => !!sheets() && ctx.editable();
 
-  /* ─────────────── conditional formatting, formats, charts, panels ─────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ conditional formatting, formats, charts, panels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
   /** Paints a conditional style onto a cell: a fill, a font colour, and the data bar itself. */
   function styleConditional(td: HTMLTableCellElement, view: HTMLElement | null, style: CondCellStyle | null): void {
@@ -1452,7 +1473,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   /**
    * Applies a chosen number format to every cell of the selection.
    *
-   * It goes into the MODEL (`sheetFormats.cells[…]`, which the save writes into `styles.xml` as a
+   * It goes into the MODEL (`sheetFormats.cells[â€¦]`, which the save writes into `styles.xml` as a
    * `<numFmt>` plus the cell's `s=`) and into the view's own copy, so the screen shows it at once.
    * Writing only the view is what made the picker a display-only feature: the file kept General.
    */
@@ -1472,7 +1493,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     ctx.refresh();
   }
 
-  /** The sheet's own rows, in the order they are drawn — what the engines read. */
+  /** The sheet's own rows, in the order they are drawn â€” what the engines read. */
   function drawnMatrix(): string[][] {
     const grid = sheets() ? gridAt(sheets() as SheetsModel, (sheets() as SheetsModel).active) : null;
     if (!grid) return [];
@@ -1480,7 +1501,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     return Array.from({ length: count }, (_, r) => grid.rows[modelRowOf(r)] ?? []);
   }
 
-  /* ──────────────────────────────── charts ──────────────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ charts â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
   /** Draws every floating chart over the sheet, from the engine's scene. */
   function renderCharts(): void {
@@ -1497,7 +1518,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     box.style.height = `${chart.h}px`;
     const bar = el('div', 'fo-chart-bar');
     bar.append(el('span', 'fo-chart-title', chart.title || t(`office.${chartTypeChoices().find((c) => c.value === chart.type)?.labelKey.split('.')[1] ?? 'chartBar'}`)));
-    const close = el('button', 'fo-chart-close', '✕');
+    const close = el('button', 'fo-chart-close', 'âœ•');
     close.type = 'button';
     close.setAttribute('aria-label', t('office.chartRemove'));
     close.addEventListener('click', () => { sheetView = removeChart(sheetView, chart.id); renderCharts(); ctx.refresh(); });
@@ -1541,7 +1562,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     return box;
   }
 
-  /* ──────────────────────────────── panels ──────────────────────────────── */
+  /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ panels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 
   let openPanel: HTMLElement | null = null;
 
@@ -1558,7 +1579,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     panel.setAttribute('aria-label', title);
     const head = el('div', 'fo-sheetpanel-head');
     head.append(el('span', 'fo-sheetpanel-title', title));
-    const close = el('button', 'fo-sheetpanel-close', '✕');
+    const close = el('button', 'fo-sheetpanel-close', 'âœ•');
     close.type = 'button';
     close.setAttribute('aria-label', t('office.cancel'));
     close.addEventListener('click', closePanel);
@@ -1574,7 +1595,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   function columnLabel(c: number): string {
     const grid = sheets() ? gridAt(sheets() as SheetsModel, (sheets() as SheetsModel).active) : null;
     const head = headerRows ? String(grid?.rows[0]?.[c] ?? '').trim() : '';
-    return head ? `${columnName(c)} — ${head}` : columnName(c);
+    return head ? `${columnName(c)} â€” ${head}` : columnName(c);
   }
 
   function panelButton(label: string, run: () => void, primary = false): HTMLButtonElement {
@@ -1589,7 +1610,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const columns = Math.max(1, Math.min(dataCols, cols));
     const levels = el('div', 'fo-sheetpanel-note', t('office.sortBody', {
       columns: sheetView.sort.length
-        ? sheetView.sort.map((k) => `${columnLabel(k.col)} ${k.order === 'desc' ? '↓' : '↑'}`).join('، ')
+        ? sheetView.sort.map((k) => `${columnLabel(k.col)} ${k.order === 'desc' ? 'â†“' : 'â†‘'}`).join('ØŒ ')
         : t('office.filterAllShown'),
     }));
     body.append(levels);
@@ -1679,7 +1700,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       box.type = 'checkbox';
       box.checked = all || chosen.has(value.key);
       box.addEventListener('change', () => { if (box.checked) chosen.add(value.key); else chosen.delete(value.key); });
-      const text = el('span', undefined, `${value.label === '' ? '∅' : value.label} (${value.count})`);
+      const text = el('span', undefined, `${value.label === '' ? 'âˆ…' : value.label} (${value.count})`);
       row.append(box, text);
       list.append(row);
     }
@@ -1821,10 +1842,10 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
           },
           {
             label: t('office.groupCondFmt'), controls: [
-              { type: 'button', id: 'colorscale', icon: 'fill', label: t('office.condScale'), showLabel: true, enabled: enabledSheet, run: () => { sheetView = addCondRule(sheetView, colorScaleRule()); renderGrid(); ctx.refresh(); } },
-              { type: 'button', id: 'databars', icon: 'chart', label: t('office.condBars'), showLabel: true, enabled: enabledSheet, run: () => { sheetView = addCondRule(sheetView, dataBarRule()); renderGrid(); ctx.refresh(); } },
-              { type: 'button', id: 'condtop', icon: 'check', label: t('office.condTop'), showLabel: true, enabled: enabledSheet, run: () => { sheetView = addCondRule(sheetView, topRule(10)); renderGrid(); ctx.refresh(); } },
-              { type: 'button', id: 'condclear', icon: 'close', label: t('office.condClear'), showLabel: true, enabled: () => sheetView.condRules.length > 0, run: () => { sheetView = clearCondRules(sheetView); renderGrid(); ctx.refresh(); } },
+              { type: 'button', id: 'colorscale', icon: 'fill', label: t('office.condScale'), showLabel: true, enabled: enabledSheet, run: () => setCondState(addCondRule(sheetView, colorScaleRule()).condRules) },
+              { type: 'button', id: 'databars', icon: 'chart', label: t('office.condBars'), showLabel: true, enabled: enabledSheet, run: () => setCondState(addCondRule(sheetView, dataBarRule()).condRules) },
+              { type: 'button', id: 'condtop', icon: 'check', label: t('office.condTop'), showLabel: true, enabled: enabledSheet, run: () => setCondState(addCondRule(sheetView, topRule(10)).condRules) },
+              { type: 'button', id: 'condclear', icon: 'close', label: t('office.condClear'), showLabel: true, enabled: () => sheetView.condRules.length > 0, run: () => setCondState(clearCondRules(sheetView).condRules) },
             ],
           },
           {
@@ -1883,7 +1904,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       const shown = rowMap ? rowMap.length : dataRows;
       parts.push(t('office.filterShown', { n: shown, total: dataRows }));
     }
-    if (sheetView.sort.length) parts.push(t('office.sortedBy', { columns: sheetView.sort.map((k) => `${columnName(k.col)}${k.order === 'desc' ? '↓' : '↑'}`).join(' ') }));
+    if (sheetView.sort.length) parts.push(t('office.sortedBy', { columns: sheetView.sort.map((k) => `${columnName(k.col)}${k.order === 'desc' ? 'â†“' : 'â†‘'}`).join(' ') }));
     if (sheetView.condRules.length) parts.push(t('office.condActive', { n: sheetView.condRules.length }));
     return parts;
   }
