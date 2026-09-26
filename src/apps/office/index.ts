@@ -33,6 +33,10 @@ import {
 } from './model';
 import { computeSheets, parseFormula } from './formula/index';
 import { loadOfficeFile, serializeModel, type LoadRefusal } from './file';
+import {
+  TEMPLATES_DIR, defaultTemplateBlocks, defaultTemplateLines, newDocumentName, safeTemplateName,
+  templateFromDocument, templateLabel, templatePath, templatesIn, uniqueTemplateName,
+} from './writer/templates';
 import { patchPackage, packageKind, snapshotModel, type PatchResult } from './patch';
 import { entryData, readRawZip } from './zip';
 import { emptyLog, type Revision, type RevisionLog } from './writer/revisions';
@@ -355,6 +359,9 @@ function launch(ctx: AppContext): void {
         {
           label: t('office.groupFile'), controls: [
             { type: 'button', id: 'new', icon: 'plus', label: t('office.newFile'), showLabel: true, run: () => { void goStart(); } },
+            { type: 'button', id: 'newFromTemplate', icon: 'doc', label: t('office.templateNew'), showLabel: true, run: () => void newFromTemplate() },
+            { type: 'button', id: 'saveTemplate', icon: 'save', label: t('office.templateSave'), showLabel: true, run: () => void saveAsTemplate() },
+            { type: 'button', id: 'manageTemplates', icon: 'upload', label: t('office.templateManage'), showLabel: true, run: () => void manageTemplates() },
             { type: 'button', id: 'opendevice', icon: 'upload', label: t('office.openDevice'), showLabel: true, run: openDevice },
             { type: 'button', id: 'save2', icon: 'save', label: t('office.saveNow'), showLabel: true, enabled: () => !!model && editable && !busy, run: () => { void save(); } },
             { type: 'button', id: 'saveas', icon: 'save', label: t('office.saveAs'), showLabel: true, enabled: () => !!model && editable && !busy, run: () => { void saveAs(); } },
@@ -691,6 +698,104 @@ function launch(ctx: AppContext): void {
     } catch (err) {
       setStatus(t('office.saveFailed', { message: errorMessage(err, fresh.length) }));
     }
+  }
+
+  /* ───────────────────────────── templates (القوالب) ───────────────────────────── */
+
+  /** The templates the VFS folder holds right now (never throws: an unreadable folder is empty). */
+  async function templateList(): Promise<{ path: string; name: string }[]> {
+    try {
+      if (!(await vfs.exists(TEMPLATES_DIR))) return [];
+      const entries = await vfs.readdir(TEMPLATES_DIR);
+      return templatesIn(entries.map((e) => e.path));
+    } catch {
+      return [];
+    }
+  }
+
+  /** The built-in template, written the first time the list is needed so it is never empty. */
+  async function ensureDefaultTemplate(list: { path: string; name: string }[]): Promise<{ path: string; name: string }[]> {
+    if (list.length) return list;
+    const name = safeTemplateName(t('office.templateDefaultName'));
+    const model: OfficeModel = {
+      kind: 'docx',
+      paragraphs: defaultTemplateLines(),
+      blocks: defaultTemplateBlocks(),
+    };
+    try {
+      if (!(await vfs.exists(TEMPLATES_DIR))) await vfs.mkdir(TEMPLATES_DIR, { recursive: true });
+      await vfs.writeFile(templatePath(name), serializeAs(model, 'docx'));
+    } catch (err) {
+      setStatus(t('office.saveFailed', { message: errorMessage(err, 0) }));
+      return list;
+    }
+    return templateList();
+  }
+
+  /** Saves the open document as a template: an ordinary .docx in the templates folder. */
+  async function saveAsTemplate(): Promise<void> {
+    const source = model;
+    if (!source || busy) return;
+    if (source.kind !== 'docx') { setStatus(t('office.templateDocxOnly')); return; }
+    busy = true;
+    syncBar();
+    try {
+      const existing = (await templateList()).map((tp) => tp.name);
+      const suggested = filePath ? templateLabel(basename(filePath)) : t('office.untitled');
+      const name = uniqueTemplateName(existing, suggested);
+      if (!(await vfs.exists(TEMPLATES_DIR))) await vfs.mkdir(TEMPLATES_DIR, { recursive: true });
+      // The template carries the document's content and formatting, not its review marks.
+      await vfs.writeFile(templatePath(name), serializeAs(templateFromDocument(source), 'docx'));
+      setStatus(t('office.templateSaved', { name }));
+    } catch (err) {
+      setStatus(t('office.saveFailed', { message: errorMessage(err, 0) }));
+    } finally {
+      busy = false;
+      syncBar();
+    }
+  }
+
+  /** The same guard the app uses before anything replaces the open document. */
+  async function confirmDiscardChanges(): Promise<boolean> {
+    if (!history.dirty || !model) return true;
+    return shellConfirm({
+      title: t('office.discardTitle'),
+      message: t('office.discardBody', { name: filePath ? basename(filePath) : t('office.title') }),
+      okLabel: t('office.discard'),
+      cancelLabel: t('office.keep'),
+      danger: true,
+    });
+  }
+
+  /** A new, editable document copied from a template. The template itself is only read. */
+  async function newFromTemplate(): Promise<void> {
+    if (busy) return;
+    if (!(await confirmDiscardChanges())) return;
+    busy = true;
+    syncBar();
+    try {
+      const list = await ensureDefaultTemplate(await templateList());
+      const first = list[0];
+      if (!first) { setStatus(t('office.templateNone')); return; }
+      const bytes = await vfs.readFile(first.path);
+      const dir = '/home/user/Documents';
+      if (!(await vfs.exists(dir))) await vfs.mkdir(dir, { recursive: true });
+      const target = await uniquePath(dir, newDocumentName([], first.name), 'docx');
+      await vfs.writeFile(target, bytes);
+      await openPath(target);
+      setStatus(t('office.templateCreated', { name: basename(target), from: first.name }));
+    } catch (err) {
+      setStatus(t('office.saveFailed', { message: errorMessage(err, 0) }));
+    } finally {
+      busy = false;
+      syncBar();
+    }
+  }
+
+  /** Managing templates is the file manager's job: rename, delete and its own confirmations. */
+  async function manageTemplates(): Promise<void> {
+    await ensureDefaultTemplate(await templateList());
+    await sys.apps.launch('org.faisal.Files', [TEMPLATES_DIR]);
   }
 
   function openDevice(): void {
