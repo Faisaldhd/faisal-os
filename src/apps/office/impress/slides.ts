@@ -13,21 +13,24 @@ import { t } from '../../../kernel/i18n';
 import type { Editor, EditorContext, StatusInfo } from '../editor';
 import { button, el, NARROW_BREAKPOINT, observeSize } from '../ui/dom';
 import { icon, type IconName } from '../ui/icons';
-import { menuList, openPopover, type MenuItem } from '../ui/popover';
+import { menuList, openModal, openPopover, type MenuItem } from '../ui/popover';
 import { PALETTE, type RibbonTab } from '../ui/ribbon';
-import { EMU_PER_PT, type Anim, type Deck, type DeckShape, type Transition } from './deck';
+import { EMU_PER_PT, type Anim, type Deck, type DeckShape, type MasterText, type Transition } from './deck';
 import {
-  addShape, addSlide, connectShapes, deckEdit, deleteShape, deleteSlide, duplicateSlide, moveSlide, newPicture, newShape, setAnim, setBounds,
-  setParaStyle, setShapeText, setTransition, SLIDE_LAYOUTS, type NewShapeKind, type SlideLayoutKind,
+  addShape, addSlide, connectShapes, deckEdit, deleteShape, deleteSlide, duplicateSlide, masterOf, moveSlide, newPicture, newShape,
+  setAnim, setBounds, setMaster, setParaStyle, setShapeText, setTransition, SLIDE_LAYOUTS, type NewShapeKind, type SlideLayoutKind,
 } from './ops';
 import { connectable } from './connectors';
-import { controlColor, paraStyleOf, type ParaStyle, type ParaStylePatch } from './parafmt';
+import { controlColor, modelColor, paraStyleOf, type ParaStyle, type ParaStylePatch } from './parafmt';
 import { drawSlide, fitSlide, fitWidth } from './render';
 import { startShow } from './show';
 import './strings';
 
 /** The sizes the size control offers, in points: the ones a slide deck actually uses. */
 const FONT_SIZES: readonly number[] = [12, 14, 16, 18, 20, 24, 28, 32, 36, 44, 54, 60];
+
+/** The fonts the master dialog offers: families that exist on Windows, macOS and most phones. */
+const MASTER_FONTS: readonly string[] = ['Tahoma', 'Arial', 'Calibri', 'Segoe UI', 'Times New Roman', 'Courier New'];
 
 const LAYOUT_LABEL: Record<SlideLayoutKind, string> = {
   title: 'office.impLayoutTitle', content: 'office.impLayoutContent', two: 'office.impLayoutTwo', blank: 'office.impLayoutBlank',
@@ -239,6 +242,115 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     const mini = list.children[at]?.querySelector('.fo-thumb-slide');
     if (!d || !slide || !mini) return;
     mini.replaceChildren(fitSlide(d, drawSlide(d, slide), thumbWidth()).frame);
+  }
+
+  /* ─────────────────────────── the slide master ─────────────────────────── */
+
+  /**
+   * The design behind the slides: the background and the look of the title and body text, kept
+   * in the file's slide master. One dialog, one undoable edit, and every slide that inherits from
+   * that master is repainted the moment it is applied — the canvas may not show a colour the file
+   * would not have.
+   */
+  function openMasterDialog(): void {
+    const d = deck();
+    const slide = d?.slides[current];
+    const master = d ? masterOf(d as Deck, slide) : null;
+    if (!d || !master) { ctx.setStatus(t('impress.masterNone')); return; }
+    const form = el('div', 'fo-form fo-master-form');
+    form.append(el('p', 'fo-field-label', t('impress.masterHint')));
+    const bg = colorField(t('impress.masterBackground'), master.bg);
+    const titleFont = fontField(t('impress.masterFont'), master.title.font);
+    const titleSize = sizeField(t('impress.masterSize'), master.title.size);
+    const titleColor = colorField(t('impress.masterColor'), master.title.color);
+    const bodyFont = fontField(t('impress.masterFont'), master.body.font);
+    const bodySize = sizeField(t('impress.masterSize'), master.body.size);
+    const bodyColor = colorField(t('impress.masterColor'), master.body.color);
+    form.append(
+      bg.row,
+      textClass(t('impress.masterTitleText'), titleFont.row, titleSize.row, titleColor.row),
+      textClass(t('impress.masterBodyText'), bodyFont.row, bodySize.row, bodyColor.row),
+    );
+    const text = (font: string | null, size: number | null, color: string | null): MasterText => ({ font, size, color });
+    openModal({
+      title: t('impress.masterTitle'), body: form, okLabel: t('impress.masterApply'), cancelLabel: t('office.cancel'), host: ctx.host(),
+      onOk: () => {
+        apply(setMaster(d as Deck, master.part, {
+          bg: bg.value(),
+          title: text(titleFont.value(), titleSize.value(), titleColor.value()),
+          body: text(bodyFont.value(), bodySize.value(), bodyColor.value()),
+        }));
+        drawStage();
+        renderRail();
+        ctx.refresh();
+      },
+    });
+  }
+
+  /** One class of master text: its own heading, then the font, the size and the colour. */
+  function textClass(heading: string, font: HTMLElement, size: HTMLElement, color: HTMLElement): HTMLElement {
+    const box = el('fieldset', 'fo-master-class');
+    box.append(el('legend', 'fo-field-label', heading), font, size, color);
+    return box;
+  }
+
+  /** A colour, or "automatic" — which is what a slide inherits from the theme instead. */
+  function colorField(label: string, value: string | null): { row: HTMLElement; value(): string | null } {
+    const row = el('div', 'fo-field');
+    row.append(el('span', 'fo-field-label', label));
+    const line = el('div', 'fo-master-row');
+    const input = el('input', 'fo-input fo-colorinput');
+    input.type = 'color';
+    // The picker only ever hands back `#rrggbb`, and the model keeps exactly that: a bare hex
+    // value is a colour CSS silently refuses, which once painted a whole deck wrong.
+    input.value = modelColor(value) ?? '#FFFFFF';
+    const auto = el('label', 'fo-check');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = !value;
+    auto.append(box, el('span', undefined, t('impress.masterAuto')));
+    line.append(input, auto);
+    row.append(line);
+    return { row, value: () => (box.checked ? null : modelColor(input.value)) };
+  }
+
+  /** A font family, with the file's own family kept as a choice so it is never lost silently. */
+  function fontField(label: string, value: string | null): { row: HTMLElement; value(): string | null } {
+    const row = el('label', 'fo-field');
+    row.append(el('span', 'fo-field-label', label));
+    const select = el('select', 'fo-select');
+    const families = value && !MASTER_FONTS.includes(value) ? [value, ...MASTER_FONTS] : MASTER_FONTS;
+    const theme = el('option', undefined, t('impress.masterThemeFont'));
+    theme.value = '';
+    select.append(theme);
+    for (const family of families) {
+      const option = el('option', undefined, family);
+      option.value = family;
+      select.append(option);
+    }
+    select.value = value ?? '';
+    row.append(select);
+    return { row, value: () => select.value || null };
+  }
+
+  /** A size in points; an empty box means "inherit it from the theme". */
+  function sizeField(label: string, value: number | null): { row: HTMLElement; value(): number | null } {
+    const row = el('label', 'fo-field');
+    row.append(el('span', 'fo-field-label', label));
+    const input = el('input', 'fo-input');
+    input.type = 'number';
+    input.min = '8';
+    input.max = '200';
+    input.placeholder = t('impress.masterAuto');
+    input.value = value === null ? '' : String(Math.round(value));
+    row.append(input);
+    return {
+      row,
+      value: () => {
+        const n = Number(input.value);
+        return input.value.trim() === '' || !Number.isFinite(n) ? null : Math.max(8, Math.min(200, Math.round(n)));
+      },
+    };
   }
 
   /* ─────────────────────────────── the stage ─────────────────────────────── */
@@ -618,6 +730,7 @@ export function createSlideEditor(ctx: EditorContext): Editor {
             { type: 'button', id: 'delSlide', icon: 'trash', label: t('office.impDeleteSlide'), enabled: () => can() && (deck()?.slides.length ?? 0) > 1, run: () => remove() },
             { type: 'button', id: 'upSlide', icon: 'moveUp', label: t('office.impMoveUp'), enabled: () => can() && current > 0, run: () => move(current, current - 1) },
             { type: 'button', id: 'downSlide', icon: 'moveDown', label: t('office.impMoveDown'), enabled: () => can() && current < (deck()?.slides.length ?? 0) - 1, run: () => move(current, current + 1) },
+            { type: 'button', id: 'master', icon: 'theme', label: t('impress.masterButton'), enabled: can, run: openMasterDialog },
           ] },
           { label: t('office.impGroupInsert'), controls: [
             { type: 'button', id: 'textBox', icon: 'textBox', label: t('office.impTextBox'), showLabel: true, phone: true, enabled: can, run: () => { const d = deck(); if (d) insert(newShape(d, 'text')); } },

@@ -4,7 +4,7 @@
  * deck after (`deckEdit`), and the save diffs the current deck against the one read.
  */
 import type { DeckModel, Edit, OfficeModel } from '../model';
-import { deckTexts, nextUid, type Anim, type Deck, type DeckCxn, type DeckPara, type DeckShape, type DeckSlide, type Transition } from './deck';
+import { deckTexts, nextUid, type Anim, type Deck, type DeckCxn, type DeckMaster, type DeckPara, type DeckShape, type DeckSlide, type Transition } from './deck';
 import { autoAlign, modelColor, type ParaStylePatch } from './parafmt';
 import { connectable, connectorBetween, detachFrom, followConnectors } from './connectors';
 
@@ -96,12 +96,58 @@ export function layoutPartFor(deck: Deck, kind: SlideLayoutKind, near: DeckSlide
 export function addSlide(deck: Deck, after: number, kind: SlideLayoutKind): Deck {
   const near = deck.slides[after] ?? deck.slides[0];
   const slide: DeckSlide = {
-    uid: nextUid(), part: null, from: null, layout: layoutPartFor(deck, kind, near),
-    shapes: layoutShapes(kind, deck.cx, deck.cy), bg: near?.bg ?? null, notes: '', transition: 'none',
+    uid: nextUid(), part: null, from: null, layout: layoutPartFor(deck, kind, near), master: near?.master ?? null,
+    shapes: layoutShapes(kind, deck.cx, deck.cy), bg: near?.bg ?? null, bgOwn: null, bgLayout: null, notes: '', transition: 'none',
   };
   const slides = deck.slides.slice();
   slides.splice(after + 1, 0, slide);
   return { ...deck, slides };
+}
+
+/**
+ * One master changed: the background and the look of the title and body text it gives every
+ * slide that inherits them. Returns a new deck, so it stays one undoable edit like everything
+ * else, and the slides that took their background from this master are re-resolved here — the
+ * canvas must never show a colour the file would not have.
+ *
+ * A size change also reaches the placeholder paragraphs of those slides. In a `.pptx` a slide's
+ * own `sz` always beats the master's, and the reader bakes the master's size into a placeholder
+ * that had none, so without this the size box would appear to do nothing at all. This is the
+ * "apply to all the slides of this master" the dialog promises, and it is written into the file
+ * like any other text change.
+ */
+export function setMaster(deck: Deck, part: string, patch: Partial<Omit<DeckMaster, 'part'>>): Deck {
+  const at = deck.masters.findIndex((m) => m.part === part);
+  if (at < 0) return deck;
+  const before = deck.masters[at]!;
+  const next: DeckMaster = { ...before, ...patch };
+  const masters = deck.masters.slice();
+  masters[at] = next;
+  const sizeChanged = before.title.size !== next.title.size || before.body.size !== next.body.size;
+  const slides = deck.slides.map((s) => {
+    if (s.master !== part) return s;
+    let out = !s.bgOwn && !s.bgLayout && s.bg !== next.bg ? { ...s, bg: next.bg } : s;
+    if (!sizeChanged) return out;
+    const shapes = out.shapes.map((shape) => {
+      const size = placeholderSize(shape, next);
+      if (size === null || shape.locked || !shape.paras.length || shape.paras.every((p) => p.size === size)) return shape;
+      return { ...shape, paras: shape.paras.map((p) => ({ ...p, size })) };
+    });
+    if (shapes.some((shape, i) => shape !== out.shapes[i])) out = { ...out, shapes };
+    return out;
+  });
+  return { ...deck, masters, slides };
+}
+
+/** The size a master gives this shape's text: titles and body placeholders, nothing else. */
+function placeholderSize(shape: DeckShape, master: DeckMaster): number | null {
+  if (!shape.ph || ['dt', 'ftr', 'sldNum'].includes(shape.ph)) return null;
+  return shape.ph === 'title' || shape.ph === 'ctrTitle' ? master.title.size : master.body.size;
+}
+
+/** The master a slide inherits from, or null when the file has none for it. */
+export function masterOf(deck: Deck, slide: DeckSlide | undefined): DeckMaster | null {
+  return deck.masters.find((m) => m.part === slide?.master) ?? null;
 }
 
 function copyShape(s: DeckShape): DeckShape {

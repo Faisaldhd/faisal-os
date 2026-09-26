@@ -790,6 +790,13 @@
 .fo-editframe.is-connecting { box-shadow: 0 0 0 2px var(--app-copper-2), 0 8px 32px rgba(0, 0, 0, .28); touch-action: manipulation; }
 .fo-editframe.is-connecting .fo-sh { cursor: crosshair; }
 .fo-sh.is-cxn-from { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+/* The slide-master dialog: a small form that stays inside a phone-height window. */
+.fo-master-form { max-height: min(58vh, 420px); overflow: auto; padding-inline-end: 4px; }
+.fo-master-class { border: 1px solid var(--app-hairline); border-radius: 10px; margin: 0; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 12px; }
+.fo-master-class > legend { padding: 0 4px; font-weight: 700; color: var(--app-text); }
+.fo-master-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fo-colorinput { width: 64px; height: 32px; padding: 2px; flex: none; }
+@media (pointer: coarse) { .fo-colorinput { height: 44px; } }
 .fo-selection { position: absolute; inset: 0; pointer-events: none; }
 .fo-selbox { position: absolute; outline: 2px solid var(--app-blue); }
 .fo-selbox.is-locked { outline-style: dashed; }
