@@ -71,7 +71,7 @@ export function startShow(host: HTMLElement, deck: Deck, start: number, presente
     show.classList.toggle('is-presenter', presenter);
     const box = main.getBoundingClientRect();
     const width = fitWidth(deck, box.width || 960, box.height || 540);
-    const canvas = drawSlide(deck, slide, { hideAnimated: true });
+    const canvas = drawSlide(deck, slide, { hideAnimated: true, index: state.at });
     const animated = slide.shapes.filter((x) => x.anim);
     animated.forEach((shape, i) => {
       if (i >= state.step) return;
@@ -91,7 +91,7 @@ export function startShow(host: HTMLElement, deck: Deck, start: number, presente
       if (next) {
         const sideBox = side.getBoundingClientRect().width || 280;
         const sideWidth = Math.max(96, (show.getBoundingClientRect().width || 1000) <= 700 ? sideBox * 0.4 - 12 : Math.min(sideBox, 420) - 24);
-        nextBox.append(fitSlide(deck, drawSlide(deck, next), sideWidth).frame);
+        nextBox.append(fitSlide(deck, drawSlide(deck, next, { index: state.at + 1 }), sideWidth).frame);
       } else nextBox.append(el('p', 'fo-show-end', t('office.impEndOfShow')));
       notes.replaceChildren(el('div', 'fo-show-label', t('office.impNotes')), el('p', 'fo-show-notetext', slide.notes || t('office.impNoNotes')));
       tick();

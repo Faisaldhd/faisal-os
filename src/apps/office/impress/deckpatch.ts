@@ -21,10 +21,10 @@ import { elements, localName, parsePart, applyEdits, attr, type XmlEdit, type Xm
 import { entryData, rebuildZip, utf8, type RawZip } from '../zip';
 import {
   child, deckTexts, parseRels, readDeck, relativeTarget, relsPath, resolveTarget, shapeElements, slideOrder, transitionElement,
-  type Anim, type Deck, type DeckCxn, type DeckPara, type DeckShape, type DeckSlide,
+  type Anim, type Deck, type DeckBox, type DeckCxn, type DeckPara, type DeckShape, type DeckSlide, type MasterText,
 } from './deck';
-import { cxnHolderXml, shapeXml, slideXml, timingXml, transitionXml } from './deckxml';
-import { layoutBgEdits, masterEdits } from './master';
+import { cxnHolderXml, groupWritable, shapeXml, slideXml, timingXml, transitionXml } from './deckxml';
+import { layoutBgEdits, chromeEdits, chromeShapes, masterEdits } from './master';
 import { targetOf } from './connectors';
 import { sameParaStyle, styleParagraphXml } from './parafmt';
 
@@ -76,6 +76,14 @@ function rewriteParagraph(sub: string, text: string): string {
   if (!p) return `<a:p>${text ? `<a:r><a:t>${xmlText(text)}</a:t></a:r>` : ''}</a:p>`;
   const pPr = child(p, 'pPr');
   const run = p.children.find((c) => localName(c.name) === 'r');
+  const field = p.children.find((c) => localName(c.name) === 'fld');
+  if (field) {
+    // A live field must stay a field: its `<a:t>` is a hint, and replacing the run with plain
+    // text would freeze a slide number that PowerPoint was keeping up to date by itself.
+    const t = elements(doc, 't')[0];
+    if (t) return `${sub.slice(0, t.start)}${sub.slice(t.start, t.openEnd)}${xmlText(text)}</${t.name}>${sub.slice(t.end)}`;
+    return sub;
+  }
   const runPr = child(run, 'rPr');
   const end = child(p, 'endParaRPr');
   let rPr = runPr ? sub.slice(runPr.start, runPr.end) : '';
@@ -111,7 +119,11 @@ function rewriteParagraph(sub: string, text: string): string {
 function sameParas(a: readonly DeckPara[], b: readonly DeckPara[]): boolean {
   return a.length === b.length && a.every((p, i) => {
     const q = b[i];
-    return !!q && p.text === q.text && sameParaStyle(p, q);
+    // Two slide-number fields are the same paragraph whatever number each happens to hold: the
+    // one in the file is a hint PowerPoint rewrites, and comparing it would rewrite the part on
+    // every save that moved a slide.
+    const sameText = p.field === 'slidenum' && q?.field === 'slidenum' ? true : p.text === q?.text;
+    return !!q && sameText && sameParaStyle(p, q);
   });
 }
 
@@ -197,14 +209,21 @@ function editSlide(ctx: Ctx, part: string, xml: string, rels: string, before: De
   let animChanged = false;
 
   // The ids come first, because a change to a connector's attachments names the shape it holds
-  // on to — including a shape drawn in this same edit, whose id does not exist until now.
+  // on to — including a shape drawn in this same edit, whose id does not exist until now — and
+  // because the children of a new group need ids of their own on the slide.
   let maxId = 1;
   for (const c of elements(doc, 'cNvPr')) maxId = Math.max(maxId, Number(attr(xml, c, 'id')) || 0);
   const spids = new Map<number, number>();
-  for (const s of after.shapes) {
-    if (s.origin !== null) spids.set(s.uid, s.spid);
-    else spids.set(s.uid, ++maxId);
-  }
+  const assignIds = (list: readonly DeckShape[]): void => {
+    for (const s of list) {
+      if (s.origin !== null) spids.set(s.uid, s.spid);
+      else spids.set(s.uid, ++maxId);
+      assignIds(s.children);
+    }
+  };
+  assignIds(after.shapes);
+  // A new group holding something this writer cannot put in a group refuses the save.
+  for (const s of after.shapes) if (s.kind === 'group' && s.origin === null && !groupWritable(s)) return null;
 
   for (const b of before.shapes) {
     if (b.origin === null) continue;
@@ -290,7 +309,8 @@ function newSlide(ctx: Ctx, part: string, slide: DeckSlide): { xml: string; rels
   const anims: Array<{ spid: number; anim: Exclude<Anim, null> }> = [];
   let shapes = '';
   for (const s of slide.shapes) {
-    if (s.kind === 'group' || s.kind === 'frame') return null; // never created here
+    if (s.kind === 'frame') return null; // never created here
+    if (s.kind === 'group' && !groupWritable(s)) return null;
     const spid = ids.get(s.uid) as number;
     let embed: string | null = null;
     if (s.kind === 'pic') {
@@ -466,12 +486,25 @@ export async function patchDeck(archive: RawZip, base: Deck, cur: Deck): Promise
   if (JSON.stringify(deckTexts(read)) !== JSON.stringify(deckTexts(cur))) return null;
   if (connectorKeys(read) !== connectorKeys(cur)) return null;
   // The master is the design: if the file does not say what the model says, nothing is written.
-  if (JSON.stringify(read.masters) !== JSON.stringify(cur.masters)) return null;
+  if (masterKey(read) !== masterKey(cur)) return null;
   for (let i = 0; i < cur.slides.length; i++) {
     const want = cur.slides[i].transition;
     if (want !== 'other' && read.slides[i].transition !== want) return null;
   }
   return { bytes, changed: [...replacements.keys(), ...ctx.additions.keys(), ...removals] };
+}
+
+/**
+ * Every master of the deck as a canonical string.
+ *
+ * Field by field rather than `JSON.stringify` of the objects: two masters that say the same
+ * thing must compare equal whichever order their keys were built in (the dialog builds a text
+ * look one way, the reader another, and a key order is not a difference).
+ */
+function masterKey(deck: Deck): string {
+  const text = (t: MasterText): readonly unknown[] => [t.font, t.color, t.size];
+  const box = (b: DeckBox | null): readonly unknown[] | null => (b ? [b.x, b.y, b.w, b.h] : null);
+  return JSON.stringify(deck.masters.map((m) => [m.part, m.bg, text(m.title), text(m.body), m.footer, m.slideNumber, box(m.footerBox), box(m.numberBox)]));
 }
 
 /**
@@ -506,8 +539,13 @@ async function patchMasters(archive: RawZip, base: Deck, cur: Deck, replacements
     if (!before) return false;
     const xml = await textOf(archive, master.part);
     if (xml === null) return false;
-    const edits = masterEdits(xml, before, master);
-    if (edits === null) return false;
+    const design = masterEdits(xml, before, master);
+    if (design === null) return false;
+    // The master carries the design of the footer and the number — where they sit and what the
+    // footer says; every slide carries its own copy, because PowerPoint shows neither otherwise.
+    const chrome = chromeEdits(xml, chromeShapes(cur, master, 0));
+    if (chrome === null) return false;
+    const edits = [...design, ...chrome];
     if (edits.length) replacements.set(master.part, utf8(applyEdits(xml, edits)));
     if (before.bg === master.bg) continue;
     for (const layout of cur.layouts) {

@@ -6,8 +6,8 @@
  */
 import { dateFromJs, dateToSerial, daysInMonth, MAX_SERIAL, serialToDate, serialToTime } from '../dates';
 import { registerFunction, type CallContext } from '../registry';
-import { ERR, isError, textToNumber, type CellError, type Value } from '../values';
-import { num, optNum, text } from './helpers';
+import { ERR, isArea, isError, textToNumber, type CellError, type Value } from '../values';
+import { eachCell, num, optNum, text } from './helpers';
 
 /** A date argument's serial (#NUM! outside Excel's range). */
 function serialArg(v: Value, ctx: CallContext): number | CellError {
@@ -148,3 +148,84 @@ registerFunction('DATEDIF', (args, ctx) => {
     default: return ERR.NUM;
   }
 }, { minArgs: 3, maxArgs: 3 });
+
+/* ── batch 2: common date functions this library did not have yet ── */
+
+/** WEEKNUM: type 1 counts weeks from Sunday, type 2 from Monday (Excel's two common modes). */
+registerFunction('WEEKNUM', (args, ctx) => {
+  const serial = serialArg(args[0], ctx);
+  if (isError(serial)) return serial;
+  const type = optNum(args, 1, 1, ctx);
+  if (isError(type)) return type;
+  if (type !== 1 && type !== 2) return ERR.NUM;
+  const whole = Math.floor(serial);
+  const year = serialToDate(whole).year;
+  const first = dateToSerial(year, 1, 1);
+  const firstDay = serialToDate(first).weekday;               // 0 = Sunday in this engine
+  const before = type === 2 ? (firstDay + 6) % 7 : firstDay;  // days of the first week already past
+  return Math.floor((whole - first + before) / 7) + 1;
+}, { minArgs: 1, maxArgs: 2 });
+
+/** TIMEVALUE: the fraction of a day a "13:30" or "1:30 PM" text means (#VALUE! otherwise). */
+registerFunction('TIMEVALUE', (args, ctx) => {
+  const raw = text(args[0], ctx);
+  if (isError(raw)) return raw;
+  const m = /^\s*(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?\s*(am|pm)?\s*$/i.exec(raw);
+  if (!m) return ERR.VALUE;
+  let hour = Number(m[1]);
+  const minute = Number(m[2]);
+  const second = Number(m[3] ?? 0);
+  const half = (m[4] ?? '').toLowerCase();
+  if (half === 'pm' && hour < 12) hour += 12;
+  if (half === 'am' && hour === 12) hour = 0;
+  if (hour > 23 || minute > 59 || second > 59) return ERR.VALUE;
+  return (hour * 3600 + minute * 60 + second) / 86400;
+}, { minArgs: 1, maxArgs: 1 });
+
+/** DAYS360: the 360-day year both accounting methods use. */
+registerFunction('DAYS360', (args, ctx) => {
+  const a = serialArg(args[0], ctx);
+  if (isError(a)) return a;
+  const b = serialArg(args[1], ctx);
+  if (isError(b)) return b;
+  const european = args.length > 2 && optNum(args, 2, 0, ctx) !== 0;
+  const one = serialToDate(Math.floor(a));
+  const two = serialToDate(Math.floor(b));
+  let d1 = one.day;
+  let d2 = two.day;
+  if (d1 === 31) d1 = 30;
+  if (european) { if (d2 === 31) d2 = 30; }
+  else if (d2 === 31 && d1 === 30) d2 = 30;
+  return (two.year - one.year) * 360 + (two.month - one.month) * 30 + (d2 - d1);
+}, { minArgs: 2, maxArgs: 3 });
+
+/** NETWORKDAYS: Monday-to-Friday days between two dates, holidays excluded, negative backwards. */
+registerFunction('NETWORKDAYS', (args, ctx) => {
+  const a = serialArg(args[0], ctx);
+  if (isError(a)) return a;
+  const b = serialArg(args[1], ctx);
+  if (isError(b)) return b;
+  const from = Math.floor(Math.min(a, b));
+  const to = Math.floor(Math.max(a, b));
+  const holidays = new Set<number>();
+  if (args.length > 2 && args[2] !== null) {
+    if (isArea(args[2])) {
+      eachCell(args[2], (v) => {
+        const n = typeof v === 'number' ? v : textToNumber(String(v ?? ''));
+        if (typeof n === 'number' && Number.isFinite(n)) holidays.add(Math.floor(n));
+      });
+    } else {
+      // A single date text or serial is a holiday too, the way Excel takes it.
+      const one = serialArg(args[2], ctx);
+      if (typeof one === 'number' && Number.isFinite(one)) holidays.add(Math.floor(one));
+    }
+  }
+  let days = 0;
+  for (let s = from; s <= to; s++) {
+    const day = serialToDate(s).weekday;
+    if (day === 0 || day === 6) continue;
+    if (holidays.has(s)) continue;
+    days++;
+  }
+  return a <= b ? days : -days;
+}, { minArgs: 2, maxArgs: 3 });
