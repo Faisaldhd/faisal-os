@@ -46,7 +46,7 @@ import { draggedHeight, isCircularAt, MAX_ROW_HEIGHT, MIN_ROW_HEIGHT, measureCel
 import { validationAt, validationProblem, withoutRules, type RangedValidation } from './rules';
 import { parseListSource, type CompareOp, type ValidationRule } from '../calc/index';
 import type { BookLook, CellStyle } from './xlsxlook';
-import { cellAlignment, sheetDirection } from './layout';
+import { cellAlignment, columnsToDraw, sheetDirection } from './layout';
 import { isCoarsePointer } from '../../../shell/device';
 import {
   MAX_SORT_LEVELS, addChart, addCondRule, addSortLevel, chartNumber, chartTypeChoices, clearCondRules,
@@ -493,12 +493,13 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     rowMap = map.filtered ? map.rows : null;
     const viewRows = rowMap ? rowMap.length : dataRows;
     rowCount = Math.max(viewRows + (ctx.editable() ? PAD_ROWS : 0), PAD_ROWS);
-    cols = Math.min(Math.max(dataCols + (ctx.editable() ? 3 : 0), PAD_COLS), MAX_COLS);
     rowHeight = baseRowHeight(look);
     offsets = rowOffsets(rowCount, rowHeightOf);
     measured = false;
     frozenRows = Math.min(freezeTop === null ? look?.frozenRows ?? 0 : freezeTop ? 1 : 0, rowCount);
-    sheetRtl = sheetIsRtl(grid?.rows ?? [], look?.rtl);
+    // An Arabic UI opens a sheet right-to-left (column A on the right), as WPS does; the file's own
+    // `rightToLeft` still wins, and an English UI follows the text of the sheet.
+    sheetRtl = sheetDirection(grid?.rows ?? [], look?.rtl, getLocale() === 'ar');
     scroll.dir = sheetRtl ? 'rtl' : 'ltr';
     root.classList.toggle('is-rtl-sheet', sheetRtl);
     // Conditional formatting runs once per render over the rows in the order they are drawn.
@@ -517,7 +518,10 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const corner = el('col');
     corner.style.width = '48px';
     colgroup.append(corner);
-    computeAutoWidths(dataRows, Math.min(dataCols, cols));
+    computeAutoWidths(dataRows, Math.min(dataCols, MAX_COLS));
+    // The data, a few columns to type into, then as many more as it takes to reach the far edge of
+    // the window: a sheet never ends in an empty strip.
+    cols = columnsToDraw(dataCols, ctx.editable() ? 3 : 0, PAD_COLS, MAX_COLS, viewportWidth(), widthOf);
     colEls = [];
     for (let c = 0; c < cols; c++) {
       const col = el('col');
@@ -566,6 +570,11 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       : '';
     note.hidden = !note.textContent;
     paintSelection();
+  }
+
+  /** The scroll box's width in sheet pixels (the status bar's zoom scales what is drawn). */
+  function viewportWidth(): number {
+    return scroll.clientWidth / (zoom || 1);
   }
 
   /** The row height a row gets when the file states none: 44px on a touch screen (G8). */
@@ -2393,7 +2402,11 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   // Redraw the window on every scroll (passive: the wheel is never blocked) and whenever the
   // viewport changes size, so a resized window draws the rows that really fit.
   scroll.addEventListener('scroll', () => updateWindow(), { passive: true });
-  sizes = observeSize(scroll, () => updateWindow());
+  sizes = observeSize(scroll, () => {
+    // A wider window draws the extra columns that now fit; the rows follow the height.
+    if (table && columnsToDraw(dataCols, ctx.editable() ? 3 : 0, PAD_COLS, MAX_COLS, viewportWidth(), widthOf) > cols) renderGrid();
+    else updateWindow();
+  });
 
   return {
     element: root,

@@ -6,6 +6,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import '../strings';
+import { setLocale } from '../../../kernel/i18n';
 import type { Editor, EditorContext } from '../editor';
 import { formulaAt, type Edit, type OfficeModel, type SheetsModel } from '../model';
 import { createSheet } from './view';
@@ -45,6 +46,10 @@ function harness(model: SheetsModel = sheet(), editable = true) {
 
 beforeEach(() => { document.body.replaceChildren(); });
 
+/** The arrow that goes to the next column: ← in a right-to-left sheet (column A on the right). */
+const nextColumnKey = (h: ReturnType<typeof harness>): string =>
+  (h.editor.element.classList.contains('is-rtl-sheet') ? 'ArrowLeft' : 'ArrowRight');
+
 describe('the grid keyboard', () => {
   it('has no text field per cell: one editor, opened only while typing', () => {
     const h = harness();
@@ -58,17 +63,34 @@ describe('the grid keyboard', () => {
     const h = harness();
     clickCell(cellEl(h.wrap, 0, 0)!);
     h.key('ArrowDown');
-    h.key('ArrowRight');
+    h.key(nextColumnKey(h));
     expect(h.nameBox.value).toBe('B2');
     expect(h.fx.value).toBe('1');
     expect(cellEl(h.wrap, 1, 1)?.classList.contains('is-active')).toBe(true);
+  });
+
+  it('runs right-to-left in an Arabic UI: ← goes to the next column', () => {
+    setLocale('ar');
+    const h = harness();
+    expect(h.editor.element.classList.contains('is-rtl-sheet')).toBe(true);
+    expect(h.wrap.dir).toBe('rtl');
+    clickCell(cellEl(h.wrap, 0, 0)!);
+    h.key('ArrowLeft');
+    expect(h.nameBox.value).toBe('B1');
+    setLocale('en');
+    const e = harness();
+    expect(e.wrap.dir).toBe('ltr');                 // an English UI with English text runs left to right
+    clickCell(cellEl(e.wrap, 0, 0)!);
+    e.key('ArrowRight');
+    expect(e.nameBox.value).toBe('B1');
+    setLocale('ar');
   });
 
   it('Shift+arrows select a block', () => {
     const h = harness();
     clickCell(cellEl(h.wrap, 1, 0)!);
     h.key('ArrowDown', { shiftKey: true });
-    h.key('ArrowRight', { shiftKey: true });
+    h.key(nextColumnKey(h), { shiftKey: true });
     expect(h.nameBox.value).toBe('A2:B3');
   });
 
