@@ -1058,6 +1058,8 @@
 .faisal-office[data-kind="pptx"] .fo-show-notes { flex: 1; min-height: 0; overflow: auto; }
 .faisal-office[data-kind="pptx"] .fo-show-notetext { margin: 0; white-space: pre-wrap; font-size: 18px; line-height: 1.5; }
 .faisal-office[data-kind="pptx"] .fo-show-end { margin: 0; color: var(--app-text-3); }
+.faisal-office[data-kind="pptx"] .fo-show-endscreen { margin: 0; padding: 24px; color: #c9ced9; font-size: 18px; text-align: center; }
+.faisal-office[data-kind="pptx"] .fo-show-count { direction: ltr; unicode-bidi: isolate; }
 .faisal-office[data-kind="pptx"] .is-enter-fade { animation: fo-imp-fade .5s cubic-bezier(.2, 0, 0, 1); }
 .faisal-office[data-kind="pptx"] .is-enter-push { animation: fo-imp-push .5s cubic-bezier(.2, 0, 0, 1); }
 @keyframes fo-imp-fade { from { opacity: 0; } to { opacity: 1; } }

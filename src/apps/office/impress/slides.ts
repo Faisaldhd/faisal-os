@@ -420,6 +420,9 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     frame.append(overlay);
     frame.addEventListener('pointerdown', onPointerDown);
     frame.addEventListener('dblclick', (ev) => {
+      // The second click of a double-click may already have opened the overlay (a tap on the
+      // selected shape does): a second overlay would blur the first and close both at once.
+      if (editing) return;
       const node = (ev.target as Element).closest<HTMLElement>('[data-uid]');
       if (node) { selected = Number(node.dataset.uid); beginEdit(); }
     });
@@ -610,6 +613,7 @@ export function createSlideEditor(ctx: EditorContext): Editor {
   }
 
   function beginEdit(): void {
+    if (editing) return;
     const s = shapeOf(selected);
     if (!s || s.locked || !ctx.editable() || (s.kind !== 'text' && s.kind !== 'shape') || !canvas) return;
     const node = canvas.querySelector<HTMLElement>(`[data-uid="${s.uid}"]`);
