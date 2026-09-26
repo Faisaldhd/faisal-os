@@ -236,15 +236,17 @@ describe('AutoFilter on the virtual sheet', () => {
     h.wrap.scrollTop = 0;
     h.wrap.dispatchEvent(new Event('scroll'));
     ribbonControl(h.editor, 'data', 'filter').run();
-    const panel = h.editor.element.querySelector<HTMLElement>('.fo-sheetpanel');
-    expect(panel).toBeTruthy();
-    const boxes = [...panel!.querySelectorAll<HTMLInputElement>('.fo-sheetpanel-check input')];
+    // The ▼ arrows are on; column B's list offers its values with their counts.
+    h.wrap.querySelector<HTMLButtonElement>('.fo-filterbtn[data-c="1"]')!.click();
+    const pop = document.querySelector<HTMLElement>('.fo-filterpop');
+    expect(pop).toBeTruthy();
+    const boxes = [...pop!.querySelectorAll<HTMLInputElement>('.fo-filteritem:not(.is-all) input')];
     expect(boxes.length).toBeGreaterThan(2);
     // Keep only the value "2": one data row in the whole sheet has Qty = 2, and it is model row 2.
-    for (const box of boxes) box.checked = false;
+    for (const box of boxes) { box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true })); }
     boxes[1].checked = true;
     boxes[1].dispatchEvent(new Event('change', { bubbles: true }));
-    [...panel!.querySelectorAll<HTMLButtonElement>('.fo-sheetpanel-btn')].find((b) => b.classList.contains('is-primary'))!.click();
+    pop!.querySelector<HTMLButtonElement>('.fo-filterpop-ok')!.click();
 
     // The drawn rows are now the header and the one row the filter kept: no other model row is
     // drawn at all, and the blank rows below take no typing (a hidden row must not be reachable).

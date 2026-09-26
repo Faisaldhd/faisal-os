@@ -129,6 +129,11 @@ defineStrings('office', {
     condSavedNote: 'يُحفظ التنسيق الشرطي مع الملف.',
     filterSavedNote: 'تُحفظ التصفية مع الملف.',
     chartFromRange: 'البيانات: {range}',
+    // the AutoFilter arrows
+    filterArrow: 'تصفية {name}',
+    selectAll: 'تحديد الكل',
+    blankValue: '(فارغة)',
+    ok: 'موافق',
   },
   en: {
     sheetGrid: 'Sheet cells',
@@ -247,5 +252,9 @@ defineStrings('office', {
     condSavedNote: 'Conditional formatting is saved with the file.',
     filterSavedNote: 'The filter is saved with the file.',
     chartFromRange: 'Data: {range}',
+    filterArrow: 'Filter {name}',
+    selectAll: 'Select all',
+    blankValue: '(Blanks)',
+    ok: 'OK',
   },
 });

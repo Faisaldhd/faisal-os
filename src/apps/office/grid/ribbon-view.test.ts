@@ -213,3 +213,33 @@ describe('Data and View commands', () => {
     expect(h.editor.element.classList.contains('no-gridlines')).toBe(false);
   });
 });
+
+describe('the AutoFilter arrows', () => {
+  it('Data → Filter puts a ▼ in each header cell; its list filters and sorts', () => {
+    const h = harness();
+    expect(h.wrap.querySelector('.fo-filterbtn')).toBeNull();
+    h.run('data', 'filter');
+    const arrows = [...h.wrap.querySelectorAll<HTMLElement>('.fo-filterbtn')];
+    expect(arrows.map((a) => a.dataset.c)).toEqual(['0', '1']);
+    expect(arrows[0].closest('.fo-td')?.getAttribute('data-r')).toBe('0');   // in the header row itself
+    arrows[1].click();
+    const pop = document.querySelector<HTMLElement>('.fo-filterpop')!;
+    const lines = [...pop.querySelectorAll<HTMLElement>('.fo-filteritem:not(.is-all)')].map((l) => l.textContent);
+    expect(lines).toEqual(['5 (1)', '10 (2)', '20 (1)']);
+    const boxes = [...pop.querySelectorAll<HTMLInputElement>('.fo-filteritem:not(.is-all) input')];
+    boxes[1].checked = false;
+    boxes[1].dispatchEvent(new Event('change', { bubbles: true }));
+    pop.querySelector<HTMLButtonElement>('.fo-filterpop-ok')!.click();
+    expect(h.model().autoFilters?.[0]).toEqual([{ col: 1, keys: ['5', '20'] }]);
+    expect(h.wrap.querySelector('.fo-filterbtn[data-c="1"]')!.classList.contains('is-on')).toBe(true);
+    // Sort from the same list
+    h.wrap.querySelector<HTMLButtonElement>('.fo-filterbtn[data-c="0"]')!.click();
+    document.querySelector<HTMLButtonElement>('.fo-filterpop-sort')!.click();
+    expect(h.model().grids[0].rows[0]).toEqual(['Region', 'Sales']);
+    // Filter off clears every filter and the arrows go.
+    h.run('data', 'filter');
+    expect(h.wrap.querySelector('.fo-filterbtn')).toBeNull();
+    expect(h.model().autoFilters?.[0] ?? []).toEqual([]);
+  });
+});
+

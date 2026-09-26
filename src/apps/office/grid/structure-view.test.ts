@@ -18,7 +18,7 @@ import '../strings';
 import type { Editor, EditorContext } from '../editor';
 import type { Edit, OfficeModel, SheetsModel } from '../model';
 import { createSheet } from './view';
-import { clickCell, shownAt } from './cells.testkit';
+import { clickCell, shownAt, filterColumn } from './cells.testkit';
 import { formatChoices } from './sheetview';
 
 const WORDS = ['ألف', 'باء', 'جيم'];
@@ -75,19 +75,10 @@ const ribbonControl = (editor: Editor, tabId: string, controlId: string) => {
 };
 
 function filterTo(h: ReturnType<typeof harness>, keep: string[]): void {
-  h.wrap.querySelector<HTMLTableCellElement>('.fo-colhead[data-c="1"]')!.click();
   h.wrap.scrollTop = 0;
   h.wrap.dispatchEvent(new Event('scroll'));
-  ribbonControl(h.editor, 'data', 'filter').run();
-  const panel = h.editor.element.querySelector<HTMLElement>('.fo-sheetpanel')!;
-  for (const label of [...panel.querySelectorAll<HTMLElement>('.fo-sheetpanel-check')]) {
-    const box = label.querySelector('input');
-    if (!box) continue;
-    const value = (label.textContent ?? '').replace(/\s*\(\d+\)\s*$/, '').trim();
-    box.checked = keep.includes(value);
-    box.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-  [...panel.querySelectorAll<HTMLButtonElement>('.fo-sheetpanel-btn')].find((b) => b.classList.contains('is-primary'))!.click();
+  // Data → Filter shows the arrows; column B's arrow opens its list (see cells.testkit).
+  filterColumn(h.editor.element, 1, keep, () => ribbonControl(h.editor, 'data', 'filter').run());
 }
 
 beforeEach(() => { document.body.replaceChildren(); });

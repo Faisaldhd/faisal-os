@@ -15,7 +15,7 @@ import '../strings';
 import type { Editor, EditorContext } from '../editor';
 import type { Edit, OfficeModel, SheetsModel } from '../model';
 import { createSheet } from './view';
-import { cellEl, shownAt, typeInto } from './cells.testkit';
+import { cellEl, shownAt, typeInto, filterColumn } from './cells.testkit';
 
 /** Column A repeats three words with no digits in them, so a fill COPIES it rather than stepping a
  *  number — which makes a fill that lands in the wrong row visible at a glance. */
@@ -80,21 +80,10 @@ const ribbonControl = (editor: Editor, tabId: string, controlId: string) => {
 
 /** Filters the Qty column down to the rows whose value is in `keep`, through the real panel. */
 function filterTo(h: ReturnType<typeof harness>, keep: string[]): void {
-  h.wrap.querySelector<HTMLTableCellElement>('.fo-colhead[data-c="1"]')!.click();
   h.wrap.scrollTop = 0;
   h.wrap.dispatchEvent(new Event('scroll'));
-  ribbonControl(h.editor, 'data', 'filter').run();
-  const panel = h.editor.element.querySelector<HTMLElement>('.fo-sheetpanel')!;
-  const labels = [...panel.querySelectorAll<HTMLElement>('.fo-sheetpanel-check')];
-  for (const label of labels) {
-    const box = label.querySelector('input');
-    if (!box) continue;
-    // The label reads "2 (1)" — the value, then how many rows carry it.
-    const value = (label.textContent ?? '').replace(/\s*\(\d+\)\s*$/, '').trim();
-    box.checked = keep.includes(value);
-    box.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-  [...panel.querySelectorAll<HTMLButtonElement>('.fo-sheetpanel-btn')].find((b) => b.classList.contains('is-primary'))!.click();
+  // Data → Filter shows the arrows; column B's arrow opens its list (see cells.testkit).
+  filterColumn(h.editor.element, 1, keep, () => ribbonControl(h.editor, 'data', 'filter').run());
 }
 
 /** Selects a cell the way the owner does: type its address in the name box. */

@@ -802,6 +802,15 @@
 @container office (max-width: 700px) {
   .fo-calc .fo-sheetpanel-select, .fo-calc .fo-sheetpanel-input, .fo-calc .fo-sheetpanel-btn, .fo-calc .fo-sheetpanel-check { min-height: 44px; }
 }
+/* The AutoFilter's ▼: at the inline-end of the header cell, highlighted when the column is filtered. */
+.fo-calc .fo-filterbtn { position: absolute; z-index: 2; inset-block: 2px; inset-inline-end: 2px; width: 20px; display: grid; place-items: center; padding: 0;
+  border: 1px solid #c5ccd8; border-radius: 4px; background: #f6f8fb; color: #3a4252; cursor: pointer; }
+.fo-calc .fo-filterbtn:hover { background: #e3eafa; }
+.fo-calc .fo-filterbtn.is-on { background: #dfe7fb; border-color: #5B8DEF; color: #1b3f9e; }
+.fo-calc .fo-filterbtn:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 1px; }
+.fo-calc .fo-colhead .fo-filterbtn { inset-block: 3px; }
+.fo-calc .fo-td.has-filterbtn .fo-cellview { padding-inline-end: 24px; }
+@media (pointer: coarse) { .fo-calc .fo-filterbtn { width: 40px; inset-block: 2px; } .fo-calc .fo-td.has-filterbtn .fo-cellview { padding-inline-end: 44px; } }
 .fo-calc .fo-colhead.is-filtered { box-shadow: inset 0 -3px 0 var(--app-copper, #C8894B); }
 .fo-calc .fo-td.has-cond { background-clip: padding-box; }
 /* The virtual grid's stand-in strips: they carry the height of the rows that are NOT drawn, so
@@ -925,6 +934,22 @@
 /* the data-validation dialog lives in the window's overlay host */
 .faisal-office[data-kind="xlsx"] .fo-validdlg, .faisal-office[data-kind="csv"] .fo-validdlg { display: flex; flex-direction: column; gap: 12px; }
 .faisal-office[data-kind="xlsx"] .fo-validdlg .fo-select, .faisal-office[data-kind="csv"] .fo-validdlg .fo-select { width: 100%; }
+/* The filter arrow's popup: sort, search, the values with their counts, OK. */
+.faisal-office[data-kind="xlsx"] .fo-filterpop, .faisal-office[data-kind="csv"] .fo-filterpop { display: flex; flex-direction: column; gap: 8px; width: min(280px, calc(100vw - 32px)); padding: 4px; }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-sorts, .faisal-office[data-kind="csv"] .fo-filterpop-sorts { display: flex; flex-direction: column; border-block-end: 1px solid var(--app-hairline); padding-block-end: 4px; }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-sort, .faisal-office[data-kind="csv"] .fo-filterpop-sort { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--app-text); font: 13px var(--faisal-font); text-align: start; cursor: pointer; }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-sort:hover, .faisal-office[data-kind="csv"] .fo-filterpop-sort:hover { background: var(--app-blue-soft); }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-search, .faisal-office[data-kind="csv"] .fo-filterpop-search { min-height: 32px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--app-hairline-strong); border-radius: 6px; background: var(--app-glass); color: var(--app-text); font: 13px var(--faisal-font); }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-list, .faisal-office[data-kind="csv"] .fo-filterpop-list { max-height: min(240px, 40vh); overflow: auto; border: 1px solid var(--app-hairline); border-radius: 6px; padding: 4px; }
+.faisal-office[data-kind="xlsx"] .fo-filteritem, .faisal-office[data-kind="csv"] .fo-filteritem { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 4px; color: var(--app-text); font: 13px var(--faisal-font); cursor: pointer; }
+.faisal-office[data-kind="xlsx"] .fo-filteritem.is-all, .faisal-office[data-kind="csv"] .fo-filteritem.is-all { font-weight: 600; }
+.faisal-office[data-kind="xlsx"] .fo-filteritem input, .faisal-office[data-kind="csv"] .fo-filteritem input { width: 16px; height: 16px; accent-color: var(--app-blue); }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-empty, .faisal-office[data-kind="csv"] .fo-filterpop-empty { padding: 8px; color: var(--app-text-3); font-size: 12px; }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-actions, .faisal-office[data-kind="csv"] .fo-filterpop-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (pointer: coarse) {
+  .faisal-office[data-kind="xlsx"] .fo-filterpop-sort, .faisal-office[data-kind="xlsx"] .fo-filterpop-search, .faisal-office[data-kind="xlsx"] .fo-filteritem,
+  .faisal-office[data-kind="csv"] .fo-filterpop-sort, .faisal-office[data-kind="csv"] .fo-filterpop-search, .faisal-office[data-kind="csv"] .fo-filteritem { min-height: 44px; }
+}
 .faisal-office[data-kind="xlsx"] .fo-field-note { min-height: 16px; font-size: 12px; color: var(--app-danger); }
 /* Cell styles menu: a chip showing each style's look. */
 .faisal-office[data-kind="xlsx"] .fo-stylechip { display: inline-grid; place-items: center; width: 24px; height: 20px; border-radius: 4px; border: 1px solid var(--app-hairline-strong); font: 700 12px var(--faisal-font); }

@@ -63,3 +63,25 @@ export function typeAt(root: ParentNode, r: number, c: number, text: string): bo
   if (!td) throw new Error(`no drawn cell at model row ${r}, column ${c}`);
   return typeInto(td, text);
 }
+
+/**
+ * Filters a column the way a person does: Data → Filter shows the ▼ arrows (unless they are
+ * already on), the column's arrow opens its list, the values in `keep` stay ticked, OK.
+ */
+export function filterColumn(root: HTMLElement, col: number, keep: readonly string[], toggleArrows: () => void): void {
+  if (!root.querySelector('.fo-filterbtn')) toggleArrows();
+  const arrow = root.querySelector<HTMLButtonElement>(`.fo-filterbtn[data-c="${col}"]`);
+  if (!arrow) throw new Error(`no filter arrow on column ${col}`);
+  arrow.click();
+  const pop = document.querySelector<HTMLElement>('.fo-filterpop');
+  if (!pop) throw new Error('the filter list did not open');
+  for (const line of [...pop.querySelectorAll<HTMLElement>('.fo-filteritem:not(.is-all)')]) {
+    const box = line.querySelector('input');
+    if (!box) continue;
+    // The line reads "2 (1)": the value, then how many rows carry it.
+    const value = (line.textContent ?? '').replace(/\s*\(\d+\)\s*$/, '').trim();
+    box.checked = keep.includes(value);
+    box.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  pop.querySelector<HTMLButtonElement>('.fo-filterpop-ok')!.click();
+}

@@ -70,6 +70,7 @@ import { cellStyleFormat, formatFromStyle } from './cellstyles';
 import { DESCRIBED_FUNCTIONS, FUNCTION_CATEGORIES, functionEntry, functionsIn, hyperlinkFormula, hyperlinkOf, safeLink, searchFunctions, type FunctionCategory } from './functions';
 import { chartPlacement, chartSource, chartTitleFrom, draggedChart, resizedChart } from './chartplace';
 import { cellMatches, findAll, removeDuplicates, replaceInCell, type CellHit, type FindOptions } from './find';
+import { checklistFor, conditionFrom, itemText, selectAllState, setVisible, toggleItem, visibleItems } from './filterpopup';
 import './strings';
 
 /** Columns drawn past the data on an editable sheet, so a sheet still looks like one. */
@@ -345,6 +346,8 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   // the file as `<autoFilter>`); number formats go to the model's cell formats (styles.xml), while
   // conditional formatting and charts still change only what the screen shows — see grid/sheetview.ts.
   let sheetView: SheetView = seededView();
+  /** Whether the AutoFilter's ▼ arrows are shown (Data → Filter, or a file that was saved filtered). */
+  let filterArrows = Object.keys(sheetView.filters).length > 0;
   /**
    * The view state a sheet starts with: the file's own AutoFilter (read from its `<autoFilter>` by
    * `xlsxlook`) shows at open, so a filtered sheet opens looking the way it was saved.
@@ -559,9 +562,11 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       // A filtered column says so in its own header: the state must never be invisible.
       if (filtered.has(c)) { th.classList.add('is-filtered'); th.title = t('office.filterTitle', { name: columnName(c) }); }
       th.addEventListener('click', (ev) => {
-        if ((ev.target as HTMLElement).closest('.fo-colgrip')) return;
+        if ((ev.target as HTMLElement).closest('.fo-colgrip, .fo-filterbtn')) return;
         anchor = { row: 0, col: c }; active = { row: Math.max(0, viewRows - 1), col: c }; select(false);
       });
+      // No header row: the arrows sit on the column letters instead.
+      if (filterArrows && !headerRows && c < dataCols) th.append(filterArrow(c));
       th.append(colGrip(c));
       hr.append(th);
     }
@@ -762,6 +767,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       if (!blank && value !== '') markLink(view, mr, c);
       td.append(view);
       if (!blank) decorateCell(td, mr, c);
+      if (filterArrows && headerRows && mr === 0 && c < dataCols) { td.classList.add('has-filterbtn'); td.append(filterArrow(c)); }
       tr.append(td);
       rec.tds.push(td);
       rec.views.push(view);
@@ -2149,42 +2155,112 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     renderGrid();
   }
 
-  function openFilterPanel(col: number): void {
+  /* ─────────────────────────── the AutoFilter arrows ─────────────────────────── */
+
+  /** Turns the arrows on, or off — which also clears every filter, as Excel does. */
+  function toggleFilterArrows(): void {
+    if (filterArrows) {
+      filterArrows = false;
+      if (isFiltered(sheetView)) { setFilterState(clearFilters(sheetView)); return; }
+    } else filterArrows = true;
+    renderGrid();
+    ctx.refresh();
+  }
+
+  /** The ▼ button of a column: in its header cell (the data's top row, else the column letter). */
+  function filterArrow(c: number): HTMLButtonElement {
+    const b = el('button', 'fo-filterbtn');
+    b.type = 'button';
+    b.dataset.c = String(c);
+    const on = !!sheetView.filters[c];
+    b.classList.toggle('is-on', on);
+    const label = t('office.filterArrow', { name: columnLabel(c) });
+    b.setAttribute('aria-label', label);
+    b.title = label;
+    b.setAttribute('aria-haspopup', 'dialog');
+    b.append(icon(on ? 'filter' : 'chevronDown', 14));
+    b.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+    b.addEventListener('dblclick', (ev) => ev.stopPropagation());
+    b.addEventListener('click', (ev) => { ev.stopPropagation(); openFilterPopup(c, b); });
+    return b;
+  }
+
+  /**
+   * The arrow's popup: sort this column, search, tick the values to keep (with how many rows carry
+   * each), OK. The choice is one undoable edit and is saved with the file (`<autoFilter>`).
+   */
+  function openFilterPopup(col: number, anchorEl: HTMLElement): void {
     const grid = sheets() ? gridAt(sheets() as SheetsModel, (sheets() as SheetsModel).active) : null;
     if (!grid) return;
-    const body = el('div', 'fo-sheetpanel-body');
-    const values = distinctValues(grid.rows, col, { header: headerRows }).slice(0, 300);
-    if (!values.length) body.append(el('div', 'fo-sheetpanel-note', t('office.filterEmpty')));
-    const chosen = new Set<string>();
-    const existing = sheetView.filters[col];
-    if (existing?.kind === 'values') for (const key of existing.keys) chosen.add(key);
-    const all = existing === undefined;
-    const list = el('div', 'fo-sheetpanel-list');
-    for (const value of values) {
-      const row = el('label', 'fo-sheetpanel-check');
-      const box = el('input');
-      box.type = 'checkbox';
-      box.checked = all || chosen.has(value.key);
-      box.addEventListener('change', () => { if (box.checked) chosen.add(value.key); else chosen.delete(value.key); });
-      const text = el('span', undefined, `${value.label === '' ? '∅' : value.label} (${value.count})`);
-      row.append(box, text);
-      list.append(row);
+    let items = checklistFor(distinctValues(grid.rows, col, { header: headerRows }).slice(0, 1000), sheetView.filters[col]);
+    let query = '';
+    const box = el('div', 'fo-filterpop');
+    const sorts = el('div', 'fo-filterpop-sorts');
+    const sortBtn = (order: 'asc' | 'desc'): HTMLButtonElement => {
+      const b = el('button', 'fo-filterpop-sort');
+      b.type = 'button';
+      b.append(icon(order === 'asc' ? 'sortAsc' : 'sortDesc', 18), el('span', undefined, t(order === 'asc' ? 'office.sortAscShort' : 'office.sortDescShort')));
+      b.addEventListener('click', () => { pop.close(); active = { row: active.row, col }; quickSort(order); });
+      return b;
+    };
+    sorts.append(sortBtn('asc'), sortBtn('desc'));
+    const search = el('input', 'fo-filterpop-search');
+    search.type = 'search';
+    search.dir = 'auto';
+    search.placeholder = t('office.filterSearch');
+    search.setAttribute('aria-label', t('office.filterSearch'));
+    const allLine = el('label', 'fo-filteritem is-all');
+    const allBox = el('input');
+    allBox.type = 'checkbox';
+    allLine.append(allBox, el('span', undefined, t('office.selectAll')));
+    const list = el('div', 'fo-filterpop-list');
+    const ok = el('button', 'fo-btn has-label is-primary fo-filterpop-ok', t('office.ok'));
+    ok.type = 'button';
+    const cancel = el('button', 'fo-btn has-label fo-filterpop-cancel', t('office.cancel'));
+    cancel.type = 'button';
+    const draw = (): void => {
+      const shown = visibleItems(items, query);
+      list.replaceChildren(...shown.map((item) => {
+        const line = el('label', 'fo-filteritem');
+        const cb = el('input');
+        cb.type = 'checkbox';
+        cb.checked = item.checked;
+        cb.addEventListener('change', () => { items = toggleItem(items, item.key, cb.checked); sync(); });
+        const text = el('span', undefined, itemText(item, t('office.blankValue')));
+        text.dir = 'auto';
+        line.append(cb, text);
+        return line;
+      }));
+      if (!shown.length) list.append(el('div', 'fo-filterpop-empty', t('office.findNone')));
+      sync();
+    };
+    const sync = (): void => {
+      const state = selectAllState(visibleItems(items, query));
+      allBox.checked = state === 'all';
+      allBox.indeterminate = state === 'some';
+      ok.disabled = conditionFrom(items, query) === undefined;
+    };
+    allBox.addEventListener('change', () => { items = setVisible(items, query, allBox.checked); draw(); });
+    search.addEventListener('input', () => { query = search.value; draw(); });
+    const actions = el('div', 'fo-filterpop-actions');
+    ok.addEventListener('click', () => {
+      const condition = conditionFrom(items, query);
+      if (condition === undefined) return;
+      pop.close();
+      setFilterState(condition === null ? clearFilter(sheetView, col) : setFilter(sheetView, col, condition));
+    });
+    cancel.addEventListener('click', () => pop.close());
+    actions.append(ok, cancel);
+    if (sheetView.filters[col]) {
+      const clear = el('button', 'fo-btn has-label fo-filterpop-clear', t('office.filterClearColumn'));
+      clear.type = 'button';
+      clear.addEventListener('click', () => { pop.close(); setFilterState(clearFilter(sheetView, col)); });
+      actions.append(clear);
     }
-    body.append(list);
-    const actions = el('div', 'fo-sheetpanel-actions');
-    actions.append(
-      panelButton(t('office.filterApply'), () => {
-        const keys = values.filter((v) => chosen.has(v.key)).map((v) => v.key);
-        // Unticking nothing at all is the same as clearing the column.
-        const next = keys.length === values.length ? clearFilter(sheetView, col) : setFilter(sheetView, col, { kind: 'values', keys });
-        closePanel();
-        setFilterState(next);
-      }, true),
-      panelButton(t('office.filterClearColumn'), () => { const next = clearFilter(sheetView, col); closePanel(); setFilterState(next); }),
-      panelButton(t('office.filterClearAll'), () => { const next = clearFilters(sheetView); closePanel(); setFilterState(next); }),
-    );
-    body.append(actions, el('div', 'fo-sheetpanel-note', t('office.filterSavedNote')));
-    showPanel(t('office.filterTitle', { name: columnLabel(col) }), body);
+    box.append(sorts, search, allLine, list, actions);
+    const pop = openPopover(anchorEl, box, { label: t('office.filterTitle', { name: columnLabel(col) }) });
+    draw();
+    search.focus({ preventScroll: true });
   }
 
   /**
@@ -2752,8 +2828,8 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     autoSum,
     sort: quickSort,
     customSort: () => openSortPanel(),
-    toggleFilter: () => openFilterPanel(active.col),
-    filterOn: () => isFiltered(sheetView),
+    toggleFilter: toggleFilterArrows,
+    filterOn: () => filterArrows,
     isFiltered: () => isFiltered(sheetView),
     clearFilters: () => setFilterState(clearFilters(sheetView)),
     find: findPanel,
