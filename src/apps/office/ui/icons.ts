@@ -115,6 +115,16 @@ export const ICONS = {
   keyboard: ['M3 7a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z', 'M7 10v.1', 'M11 10v.1', 'M15 10v.1', 'M8 14h8'],
   plus: ['M12 5v14', 'M5 12h14'],
   minus: ['M5 12h14'],
+  // Writer (WPS-style ribbon): links, header/footer, script, clearing, ruler, reading/editing.
+  link: ['M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1', 'M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'],
+  header: ['M6 3h12a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z', 'M8 7h8', 'M8 12h8', 'M8 15h5'],
+  footer: ['M6 3h12a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z', 'M8 7h8', 'M8 10h5', 'M8 17h8'],
+  superscript: ['M4 8l8 10', 'M12 8l-8 10', 'M16 5.5c.3-.9 2.8-1 2.8.5 0 1.2-2.8 1.8-2.8 3h3'],
+  subscript: ['M4 6l8 10', 'M12 6l-8 10', 'M16 16.5c.3-.9 2.8-1 2.8.5 0 1.2-2.8 1.8-2.8 3h3'],
+  clearFormat: ['M6 5h12', 'M12 5l-3 14', 'M14 14l6 6', 'M20 14l-6 6'],
+  ruler: ['M3 8h18v8H3z', 'M7 8v3', 'M11 8v4', 'M15 8v3', 'M19 8v4'],
+  reading: ['M4 5c3 0 5.5.8 8 2.5V20c-2.5-1.7-5-2.5-8-2.5z', 'M20 5c-3 0-5.5.8-8 2.5V20c2.5-1.7 5-2.5 8-2.5z'],
+  edit: ['M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3z', 'M14 7.5l3 3'],
   text: ['M5 6h14', 'M12 6v13', 'M9 19h6'],
   heading: ['M6 5v14', 'M16 5v14', 'M6 12h10'],
   quote: ['M5 11h4v6H5z', 'M5 11c0-3 1-5 4-6', 'M14 11h4v6h-4z', 'M14 11c0-3 1-5 4-6'],
@@ -129,6 +139,9 @@ export const ICONS = {
   footnote: ['M7 3h7l3 3v9H7z', 'M14 3v3h3', 'M10 8h4', 'M10 11h2', 'M4 16h16', 'M11 21v-4l-1 .6'],
   // A note at the end of the document: the page with its text, and the number after the last line.
   endnote: ['M6 3h12v18H6z', 'M9 7h6', 'M9 10h6', 'M9 13h3', 'M17 17v4', 'M16 18l1-.7'],
+  // The sheet (Phase C): the format painter's brush, conditional formatting's banded cells.
+  brush: ['M14 4h6v6l-7 7', 'M13 17l-3-3 7-7', 'M10 14c-2 0-4 1.5-4 4 0 1-1 2-2 2h5a4 4 0 0 0 4-3'],
+  condFormat: ['M4 4h16v16H4z', 'M4 10h16', 'M4 15h16', 'F:M5 5h6v4H5z', 'F:M5 11h10v3H5z'],
 } as const;
 
 export type IconName = keyof typeof ICONS;

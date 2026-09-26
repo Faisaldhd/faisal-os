@@ -953,6 +953,8 @@ export async function readDocxDocument(bytes: Uint8Array): Promise<ReadDoc> {
       else if (abs) format.list = abs.get(direct.ilvl ?? 0)?.fmt === 'bullet' ? 'bullet' : 'number';
     }
     if (direct.line !== undefined && !direct.lineExact) format.line = Math.round(direct.line * 100) / 100;
+    // A list item's indent belongs to its list level; only a plain paragraph's own indent is edited.
+    if (direct.indStart !== undefined && direct.indStart > 0 && direct.numId === undefined) format.indent = Math.round(direct.indStart * 10) / 10;
     if (Object.keys(format).length) formats[index] = format;
 
     for (const marker of elementsOf(p, 'commentRangeStart')) {

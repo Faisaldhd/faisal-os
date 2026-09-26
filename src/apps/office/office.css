@@ -715,6 +715,75 @@
   .fo-writer .fo-panel-tab, .fo-writer .fo-nav-item, .fo-writer .fo-link { min-height: 44px; }
 }
 
+/* WPS-style Writer: styles gallery, ruler, header/footer bands, columns, reading mode, phone bar */
+.fo-writer { position: relative; }
+.faisal-office[data-kind="docx"] .fo-stylechip {
+  appearance: none; flex: none; display: flex; align-items: center; justify-content: center; width: 72px; height: 44px; padding: 0 8px;
+  border: 1px solid var(--app-hairline); border-radius: 6px; background: #fff; color: #1a1d26; cursor: pointer; overflow: hidden;
+  transition: border-color 140ms var(--fo-ease), box-shadow 140ms var(--fo-ease);
+}
+.faisal-office[data-kind="docx"] .fo-stylechip:hover { border-color: var(--app-blue); }
+.faisal-office[data-kind="docx"] .fo-stylechip[aria-pressed="true"] { border-color: var(--app-copper); box-shadow: inset 0 -2px 0 var(--app-copper); }
+.faisal-office[data-kind="docx"] .fo-stylechip:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+.faisal-office[data-kind="docx"] .fo-stylechip:disabled { opacity: .5; cursor: default; }
+.faisal-office[data-kind="docx"] .fo-stylechip-sample { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; max-width: 100%; }
+.fo-writer .fo-ruler { position: sticky; top: 0; z-index: 3; height: 20px; margin: 0 auto 8px; background: #d5d9e2; border-radius: 3px; box-shadow: 0 1px 2px rgba(0, 0, 0, .2); overflow: hidden; direction: ltr; }
+.fo-writer .fo-ruler-text { position: absolute; top: 0; bottom: 0; background: #fff; }
+.fo-writer .fo-ruler-tick { position: absolute; bottom: 0; width: 1px; height: 4px; background: #8a8f9c; }
+.fo-writer .fo-ruler-tick.is-major { height: 8px; }
+.fo-writer .fo-ruler-num { position: absolute; top: 1px; transform: translateX(-50%); font: 9px/1 var(--faisal-font, sans-serif); color: #5d6372; font-variant-numeric: tabular-nums; }
+.fo-writer .fo-header, .fo-writer .fo-footer { pointer-events: auto; border-radius: 4px; cursor: text; transition: box-shadow 140ms var(--fo-ease); }
+.fo-writer .fo-header:hover, .fo-writer .fo-footer:hover { box-shadow: 0 0 0 1px rgba(91, 141, 239, .45); }
+.fo-writer .fo-header { display: flex; flex-direction: column; justify-content: flex-end; }
+.fo-writer .fo-colrule { position: absolute; width: 0; border-inline-start: 1px dashed #c9cdd6; }
+.fo-writer .fo-colbreak { border-top-style: dotted; }
+.fo-writer .fo-op-field { color: inherit; border-bottom: 1px dotted #9aa3b5; }
+.fo-writer.is-reading .fo-flow { caret-color: transparent; }
+.fo-writer .fo-wreading { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-block-end: 1px solid var(--app-hairline); color: var(--app-text-2); background: var(--app-glass); }
+.fo-writer .fo-wreading-label { flex: 1; font-weight: 600; }
+.fo-writer .fo-wphone { display: none; }
+.faisal-office[data-kind="docx"]:has(.fo-writer.is-reading) .fo-ribbon { display: none; }
+.faisal-office[data-kind="docx"] .fo-ctxanchor { position: absolute; width: 0; height: 0; pointer-events: none; }
+.faisal-office[data-kind="docx"] .fo-symbols { display: grid; grid-template-columns: repeat(8, 36px); gap: 4px; }
+.faisal-office[data-kind="docx"] .fo-symbol { appearance: none; width: 36px; height: 36px; border: 1px solid var(--app-hairline); border-radius: 6px; background: transparent; color: var(--app-text); font: 16px/1 var(--fo-doc-font); cursor: pointer; }
+.faisal-office[data-kind="docx"] .fo-symbol:hover { background: var(--app-blue-soft); }
+.faisal-office[data-kind="docx"] .fo-symbol:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+.faisal-office[data-kind="docx"] .fo-form-error { margin: 0; min-height: 16px; font-size: 12px; color: var(--app-danger); }
+.faisal-office[data-kind="docx"] .fo-form-error:empty { display: none; }
+.faisal-office[data-kind="docx"] .fo-form-hint { margin: 0; font-size: 12px; color: var(--app-text-3); }
+.faisal-office[data-kind="docx"] .fo-wphone-colors { grid-template-columns: repeat(6, 44px); }
+.faisal-office[data-kind="docx"] .fo-wphone-colors .fo-swatch { width: 44px; height: 44px; }
+@media (pointer: coarse) {
+  .faisal-office[data-kind="docx"] .fo-symbols { grid-template-columns: repeat(6, 44px); }
+  .faisal-office[data-kind="docx"] .fo-symbol { width: 44px; height: 44px; }
+}
+@container office (max-width: 700px) {
+  .faisal-office[data-kind="docx"] .fo-phonebar { display: none; }
+  .fo-writer .fo-ruler { display: none; }
+  .fo-writer .fo-wphone {
+    display: flex; gap: 4px; padding: 4px 8px; flex: none; border-block-start: 1px solid var(--app-hairline);
+    background: var(--app-glass-strong);
+  }
+  .fo-writer .fo-wphone .fo-btn { flex: 1 1 0; min-width: 0; min-height: 52px; height: auto; flex-direction: column; gap: 2px; padding: 4px; font-size: 13px; }
+  .fo-writer .fo-wphone .fo-btn-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fo-writer .fo-wphone[data-mode="read"] .fo-btn.is-primary { flex: 2 1 0; flex-direction: row; gap: 8px; }
+  .fo-writer .fo-wphone-note { flex: 2; align-self: center; text-align: center; color: var(--app-text-2); font-size: 13px; }
+}
+
+/* The Writer's ribbon is laid out like WPS: two rows of small tools per group, big labelled buttons
+   (icon above its words), and every tab the same height, so switching tabs never moves the page. */
+.faisal-office[data-kind="docx"] .fo-toolpanel { min-height: 88px; }
+.faisal-office[data-kind="docx"] .fo-group[data-mode="full"] .fo-btn.has-label { flex-direction: column; gap: 4px; min-height: 68px; padding: 4px 8px; font-size: 12px; }
+.faisal-office[data-kind="docx"] .fo-group:has(> .fo-group-tools > [data-control="font"]) > .fo-group-tools { flex-wrap: wrap; width: 320px; row-gap: 4px; align-content: center; }
+.faisal-office[data-kind="docx"] .fo-group:has(> .fo-group-tools > [data-control="bullets"]) > .fo-group-tools { flex-wrap: wrap; width: 212px; row-gap: 4px; align-content: center; }
+.faisal-office[data-kind="docx"] .fo-group:has(> .fo-group-tools > [data-control="find"]) > .fo-group-tools { flex-wrap: wrap; width: 68px; row-gap: 4px; align-content: center; }
+.faisal-office[data-kind="docx"] .fo-group:has(> .fo-group-tools > [data-control="paste"]) > .fo-group-tools { display: grid; grid-template-columns: auto 32px; grid-template-rows: 32px 32px; gap: 4px; align-content: center; }
+.faisal-office[data-kind="docx"] .fo-group-tools > [data-control="paste"] { grid-row: span 2; }
+.faisal-office[data-kind="docx"] .fo-group[data-mode="full"] .fo-group-tools > [data-control="paste"].has-label { min-height: 68px; }
+.faisal-office[data-kind="docx"] .fo-groupdrop .fo-group-tools { width: auto; max-width: 336px; }
+.faisal-office[data-kind="docx"] .fo-stylegallery { display: grid; grid-template-rows: repeat(2, 32px); grid-auto-flow: column; grid-auto-columns: 72px; gap: 4px; max-width: 300px; overflow-x: auto; overflow-y: hidden; }
+.faisal-office[data-kind="docx"] .fo-stylegallery .fo-stylechip { height: 32px; }
+
 /* ═══════════════════════════════ app: calc ═══════════════════════════════ */
 
 .fo-calc { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -744,35 +813,73 @@
 /* The sheet area holds the grid, the floating charts and the panels: the grid keeps scrolling
    under them, and the charts stay where the owner put them while it does. */
 .fo-calc .fo-sheetcanvas { position: relative; flex: 1; min-height: 0; display: flex; }
-.fo-calc .fo-chartlayer, .fo-calc .fo-sheetpanels { position: absolute; inset: 0; pointer-events: none; }
-.fo-calc .fo-chart { position: absolute; pointer-events: auto; display: flex; flex-direction: column; background: #fff;
-  border: 1px solid var(--app-line, #d5d9e1); border-radius: 10px; box-shadow: 0 6px 20px rgba(0, 0, 0, .18); overflow: hidden; }
-.fo-calc .fo-chart-bar { display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: #eef1f7; cursor: move; touch-action: none; }
-.fo-calc .fo-chart-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--faisal-font); color: #333; }
-.fo-calc .fo-chart-close { min-width: 28px; min-height: 28px; border: 0; border-radius: 6px; background: transparent; color: #555; cursor: pointer; }
-.fo-calc .fo-chart-close:hover { background: #dde3ee; }
+.fo-calc .fo-sheetpanels { position: absolute; inset: 0; pointer-events: none; }
+/* The charts ride on the sheet: a zero-size layer at the corner of A1 (after the row numbers and
+   under the column letters), so a chart's x/y are sheet pixels, mirrored in a right-to-left sheet. */
+.fo-calc .fo-gridwrap { position: relative; }
+.fo-calc .fo-chartlayer { position: absolute; top: 26px; inset-inline-start: 48px; width: 0; height: 0; z-index: 1; }
+.fo-calc .fo-chart { position: absolute; display: flex; flex-direction: column; background: #fff;
+  border: 1px solid #d5d9e1; border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .18); overflow: hidden; }
+.fo-calc .fo-chart.is-dragging { box-shadow: 0 12px 32px rgba(0, 0, 0, .28); outline: 2px solid var(--app-blue); }
+.fo-calc .fo-chart-bar { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 4px 0 12px; padding-inline: 12px 4px; background: #f3f5f9; border-block-end: 1px solid #e3e6ec; cursor: move; touch-action: none; }
+.fo-calc .fo-chart-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 12px var(--faisal-font); color: #2a3144; }
+.fo-calc .fo-chart-close { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent; color: #4a5061; cursor: pointer; }
+.fo-calc .fo-chart-close:hover { background: rgba(91, 141, 239, .16); }
+.fo-calc .fo-chart-close:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
 .fo-calc .fo-chart-body { flex: 1; min-height: 0; overflow: hidden; }
 .fo-calc .fo-chart-body svg { width: 100%; height: 100%; display: block; }
-.fo-calc .fo-chart-empty { padding: 12px; font-size: 12px; color: var(--app-text-3); }
-.fo-calc .fo-sheetpanel { position: absolute; pointer-events: auto; inset-block-start: 12px; inset-inline-start: 12px;
+.fo-calc .fo-chart-empty { padding: 12px; font-size: 12px; color: #6b7180; }
+/* The resize grip: the chart's inline-end/bottom corner (a finger gets a 44px target). */
+.fo-calc .fo-chart-grip { position: absolute; inset-block-end: 0; inset-inline-end: 0; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none;
+  background: linear-gradient(135deg, transparent 50%, #9aa6bf 50%, #9aa6bf 60%, transparent 60%, transparent 72%, #9aa6bf 72%, #9aa6bf 82%, transparent 82%); }
+.fo-calc.is-rtl-sheet .fo-chart-grip { cursor: nesw-resize; transform: scaleX(-1); }
+@media (pointer: coarse) { .fo-calc .fo-chart-grip { width: 44px; height: 44px; background-size: 16px 16px; background-position: 100% 100%; background-repeat: no-repeat; } }
+/* The sheet's side panels (sort, filter, find, pivot, remove duplicates): glass, themed, never a
+   white box in the dark theme. */
+.fo-calc .fo-sheetpanel { position: absolute; pointer-events: auto; inset-block-start: 12px; inset-inline-end: 12px;
   width: min(360px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: auto; display: flex; flex-direction: column;
-  background: var(--app-surface, #fff); color: var(--app-text, #111); border: 1px solid var(--app-line, #d5d9e1);
-  border-radius: 14px; box-shadow: 0 10px 30px rgba(0, 0, 0, .28); z-index: 4; }
-.fo-calc .fo-sheetpanel-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-block-end: 1px solid var(--app-line, #e3e6ec); }
-.fo-calc .fo-sheetpanel-title { flex: 1; min-width: 0; font: 600 13px var(--faisal-font); }
-.fo-calc .fo-sheetpanel-close { min-width: 44px; min-height: 44px; border: 0; background: transparent; color: inherit; font-size: 16px; cursor: pointer; border-radius: 10px; }
-.fo-calc .fo-sheetpanel-close:hover { background: rgba(127, 127, 127, .16); }
-.fo-calc .fo-sheetpanel-rows { display: flex; flex-direction: column; gap: 6px; }
-.fo-calc .fo-sheetpanel-row { display: flex; align-items: center; gap: 6px; }
-.fo-calc .fo-sheetpanel-level { min-width: 22px; text-align: center; font: 12px var(--faisal-font); color: var(--app-text-3); }
-.fo-calc .fo-sheetpanel-select, .fo-calc .fo-sheetpanel-input { flex: 1; min-width: 0; min-height: 44px; padding: 0 8px; border-radius: 10px;
-  border: 1px solid var(--app-line, #d5d9e1); background: var(--app-field, #fff); color: inherit; font: 13px var(--faisal-font); }
-.fo-calc .fo-sheetpanel-list { max-height: 40vh; overflow: auto; border: 1px solid var(--app-line, #e3e6ec); border-radius: 10px; padding: 4px; }
-.fo-calc .fo-sheetpanel-check { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 6px; font: 13px var(--faisal-font); }
-.fo-calc .fo-sheetpanel-check input { width: 20px; height: 20px; }
-.fo-calc .fo-sheetpanel-btn { min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--app-line, #d5d9e1);
-  background: var(--app-field, #fff); color: inherit; font: 13px var(--faisal-font); cursor: pointer; }
-.fo-calc .fo-sheetpanel-btn.is-primary { background: var(--app-copper, #C8894B); border-color: transparent; color: #1a1206; font-weight: 600; }
+  background: var(--app-glass-strong); color: var(--app-text); border: 1px solid var(--app-hairline-strong);
+  -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%);
+  border-radius: 10px; box-shadow: 0 8px 32px rgba(0, 0, 0, .35); z-index: 4; animation: fo-in 220ms var(--fo-ease); }
+@media (prefers-reduced-motion: reduce) { .fo-calc .fo-sheetpanel { animation: none; } }
+.fo-calc .fo-sheetpanel-head { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 12px; padding-inline: 12px 4px; border-block-end: 1px solid var(--app-hairline); }
+.fo-calc .fo-sheetpanel-title { flex: 1; min-width: 0; font: 600 13px var(--faisal-font); color: var(--app-text); }
+.fo-calc .fo-sheetpanel-close { display: grid; place-items: center; min-width: 44px; min-height: 44px; border: 0; background: transparent; color: var(--app-text-2); cursor: pointer; border-radius: 6px; }
+.fo-calc .fo-sheetpanel-close:hover { background: var(--app-blue-soft); color: var(--app-text); }
+.fo-calc .fo-sheetpanel-close:focus-visible, .fo-calc .fo-sheetpanel-btn:focus-visible, .fo-calc .fo-sheetpanel-select:focus-visible, .fo-calc .fo-sheetpanel-input:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+.fo-calc .fo-sheetpanel-body { display: flex; flex-direction: column; gap: 12px; padding: 12px; }
+.fo-calc .fo-sheetpanel-note { font-size: 12px; color: var(--app-text-2); }
+.fo-calc .fo-sheetpanel-note.is-stale { color: var(--app-copper-2); }
+.fo-calc .fo-sheetpanel-rows { display: flex; flex-direction: column; gap: 8px; }
+.fo-calc .fo-sheetpanel-row { display: flex; align-items: center; gap: 8px; }
+.fo-calc .fo-sheetpanel-level { min-width: 24px; text-align: center; font: 12px var(--faisal-font); color: var(--app-text-3); }
+.fo-calc .fo-sheetpanel-select, .fo-calc .fo-sheetpanel-input { flex: 1; min-width: 0; min-height: 36px; box-sizing: border-box; padding: 0 8px; border-radius: 6px;
+  border: 1px solid var(--app-hairline-strong); background: var(--app-glass); color: var(--app-text); font: 13px var(--faisal-font); }
+.fo-calc .fo-sheetpanel-select option { background: var(--app-bg); color: var(--app-text); }
+.fo-calc .fo-sheetpanel-list { max-height: 40vh; overflow: auto; border: 1px solid var(--app-hairline); border-radius: 6px; padding: 4px; }
+.fo-calc .fo-sheetpanel-check { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 4px; font: 13px var(--faisal-font); color: var(--app-text); }
+.fo-calc .fo-sheetpanel-check input { width: 16px; height: 16px; accent-color: var(--app-blue); }
+.fo-calc .fo-sheetpanel-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.fo-calc .fo-sheetpanel-btn { min-height: 32px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--app-hairline-strong);
+  background: var(--app-glass); color: var(--app-text); font: 13px var(--faisal-font); cursor: pointer; }
+.fo-calc .fo-sheetpanel-btn:hover { background: var(--app-blue-soft); }
+.fo-calc .fo-sheetpanel-btn.is-primary { background: var(--app-blue); border-color: transparent; color: #fff; font-weight: 600; }
+@media (pointer: coarse) {
+  .fo-calc .fo-sheetpanel-select, .fo-calc .fo-sheetpanel-input, .fo-calc .fo-sheetpanel-btn, .fo-calc .fo-sheetpanel-check { min-height: 44px; }
+  .fo-calc .fo-sheetpanel-check input { width: 20px; height: 20px; }
+}
+@container office (max-width: 700px) {
+  .fo-calc .fo-sheetpanel-select, .fo-calc .fo-sheetpanel-input, .fo-calc .fo-sheetpanel-btn, .fo-calc .fo-sheetpanel-check { min-height: 44px; }
+}
+/* The AutoFilter's ▼: at the inline-end of the header cell, highlighted when the column is filtered. */
+.fo-calc .fo-filterbtn { position: absolute; z-index: 2; inset-block: 2px; inset-inline-end: 2px; width: 20px; display: grid; place-items: center; padding: 0;
+  border: 1px solid #c5ccd8; border-radius: 4px; background: #f6f8fb; color: #3a4252; cursor: pointer; }
+.fo-calc .fo-filterbtn:hover { background: #e3eafa; }
+.fo-calc .fo-filterbtn.is-on { background: #dfe7fb; border-color: #5B8DEF; color: #1b3f9e; }
+.fo-calc .fo-filterbtn:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 1px; }
+.fo-calc .fo-colhead .fo-filterbtn { inset-block: 3px; }
+.fo-calc .fo-td.has-filterbtn .fo-cellview { padding-inline-end: 24px; }
+@media (pointer: coarse) { .fo-calc .fo-filterbtn { width: 40px; inset-block: 2px; } .fo-calc .fo-td.has-filterbtn .fo-cellview { padding-inline-end: 44px; } }
 .fo-calc .fo-colhead.is-filtered { box-shadow: inset 0 -3px 0 var(--app-copper, #C8894B); }
 .fo-calc .fo-td.has-cond { background-clip: padding-box; }
 /* The virtual grid's stand-in strips: they carry the height of the rows that are NOT drawn, so
@@ -782,31 +889,56 @@
 .fo-calc .fo-grid th { position: sticky; background: #f1f3f7; color: #555; font: 12px var(--faisal-font); font-weight: 400; border-inline-end: 1px solid #d5d9e1; border-block-end: 1px solid #d5d9e1; z-index: 2; }
 .fo-calc .fo-colhead { top: 0; height: 26px; text-align: center; }
 .fo-calc .fo-rowhead { inset-inline-start: 0; min-width: 48px; text-align: center; z-index: 1; }
-.fo-calc .fo-corner { top: 0; inset-inline-start: 0; z-index: 3; }
+.fo-calc .fo-corner { top: 0; inset-inline-start: 0; z-index: 5; }
 .fo-calc .fo-grid th.is-sel { background: #dfe7fb; color: #1b3f9e; }
-.fo-calc .fo-grid tr.is-frozen td { position: sticky; z-index: 1; background-clip: padding-box; box-shadow: 0 1px 0 #9aa6bf; }
+.fo-calc .fo-grid tr.is-frozen td { position: sticky; z-index: 2; background-clip: padding-box; }
+.fo-calc .fo-grid tr.is-frozen th.fo-rowhead { z-index: 3; }
+.fo-calc .fo-grid tr.is-frozen-edge td { box-shadow: 0 1px 0 #7d8aa6; }
+/* Frozen columns: sticky beside the row numbers; the last one draws the split line. */
+.fo-calc .fo-grid .fo-td.is-frozen-col { position: sticky; z-index: 2; background-clip: padding-box; }
+.fo-calc .fo-grid tr.is-frozen .fo-td.is-frozen-col { z-index: 3; }
+.fo-calc .fo-grid .fo-colhead.is-frozen-col { z-index: 4; }
+.fo-calc .fo-grid .is-frozen-col.is-frozen-edge { box-shadow: inset -1px 0 0 #7d8aa6; }
+.fo-calc.is-rtl-sheet .fo-grid .is-frozen-col.is-frozen-edge { box-shadow: inset 1px 0 0 #7d8aa6; }
+/* Gridlines off (View): the cells' own borders still show. */
+.fo-calc.no-gridlines .fo-td { border-color: transparent; }
+/* A link cell, and the format painter's cursor. */
+.fo-calc .fo-cellview.is-link { color: #1a56c9; text-decoration: underline; text-underline-offset: 2px; }
+.fo-calc.is-painting .fo-gridwrap { cursor: copy; }
 .fo-calc .fo-td { position: relative; height: 24px; padding: 0; border-inline-end: 1px solid #e3e6ec; border-block-end: 1px solid #e3e6ec; background: #fff; overflow: hidden; }
 .fo-calc .fo-td.is-sel { background-image: linear-gradient(rgba(91, 141, 239, .16), rgba(91, 141, 239, .16)); }
 .fo-calc .fo-td.is-active { box-shadow: inset 0 0 0 2px #2f67e6; z-index: 1; }
 .fo-calc .fo-cellview { position: absolute; inset: 0; display: flex; align-items: flex-end; padding: 2px 4px; white-space: nowrap; overflow: hidden; pointer-events: none; }
 .fo-calc .fo-cellview.is-wrap { white-space: normal; align-items: flex-start; }
-.fo-calc .faisal-office-cell, .fo-calc .fo-cell-empty {
-  position: relative;
-  display: block;
-  width: 100%;
+/* The grid holds the keyboard between entries; its focus shows as the active cell's frame. */
+.fo-calc .fo-gridwrap:focus { outline: none; }
+.fo-calc .fo-gridwrap:focus-visible .fo-td.is-active { box-shadow: inset 0 0 0 2px var(--app-copper-2); }
+.fo-calc .fo-grid { user-select: none; -webkit-user-select: none; }
+/* The ONE floating editor: it sits over the active cell and grows with a long entry. */
+.fo-calc .fo-td.is-editing { overflow: visible; z-index: 3; }
+/* Between entries the editor waits, invisible, on the active cell and holds the keyboard. */
+.fo-calc .fo-celleditor.is-idle { opacity: 0; pointer-events: none; outline: none; caret-color: transparent; }
+.fo-calc .fo-td.is-editing .fo-cellview { visibility: hidden; }
+.fo-calc .fo-celleditor {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
+  z-index: 4;
+  min-width: 100%;
   height: 100%;
-  min-height: 22px;
   box-sizing: border-box;
   padding: 2px 4px;
   border: 0;
-  background: transparent;
-  color: transparent;
+  outline: 2px solid #2f67e6;
+  outline-offset: -2px;
+  background: #fff;
+  color: #000;
   caret-color: #000;
   font: inherit;
-  outline: none;
+  user-select: text;
+  -webkit-user-select: text;
+  field-sizing: content;
 }
-.fo-calc .faisal-office-cell:focus, .fo-calc .fo-cell-empty:focus { color: #000 !important; background: #fff; }
-.fo-calc .faisal-office-cell:focus + .fo-cellview, .fo-calc .fo-td:focus-within .fo-cellview { visibility: hidden; }
 .fo-calc .fo-sheettabs { flex: none; display: flex; gap: 4px; padding: 4px 8px; overflow-x: auto; border-block-start: 1px solid var(--app-hairline); direction: ltr; }
 .fo-calc .fo-sheettab { appearance: none; flex: none; min-height: 32px; padding: 0 16px; border: 0; border-radius: 6px; background: transparent; color: var(--app-text-2); font: inherit; cursor: pointer; }
 .fo-calc .fo-sheettab[aria-selected="true"] { background: rgba(200, 137, 75, .16); color: var(--app-text); box-shadow: inset 0 -2px 0 var(--app-copper); font-weight: 600; }
@@ -871,14 +1003,49 @@
 /* the data-validation dialog lives in the window's overlay host */
 .faisal-office[data-kind="xlsx"] .fo-validdlg, .faisal-office[data-kind="csv"] .fo-validdlg { display: flex; flex-direction: column; gap: 12px; }
 .faisal-office[data-kind="xlsx"] .fo-validdlg .fo-select, .faisal-office[data-kind="csv"] .fo-validdlg .fo-select { width: 100%; }
+/* The filter arrow's popup: sort, search, the values with their counts, OK. */
+.faisal-office[data-kind="xlsx"] .fo-filterpop, .faisal-office[data-kind="csv"] .fo-filterpop { display: flex; flex-direction: column; gap: 8px; width: min(280px, calc(100vw - 32px)); padding: 4px; }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-sorts, .faisal-office[data-kind="csv"] .fo-filterpop-sorts { display: flex; flex-direction: column; border-block-end: 1px solid var(--app-hairline); padding-block-end: 4px; }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-sort, .faisal-office[data-kind="csv"] .fo-filterpop-sort { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--app-text); font: 13px var(--faisal-font); text-align: start; cursor: pointer; }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-sort:hover, .faisal-office[data-kind="csv"] .fo-filterpop-sort:hover { background: var(--app-blue-soft); }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-search, .faisal-office[data-kind="csv"] .fo-filterpop-search { min-height: 32px; box-sizing: border-box; padding: 0 8px; border: 1px solid var(--app-hairline-strong); border-radius: 6px; background: var(--app-glass); color: var(--app-text); font: 13px var(--faisal-font); }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-list, .faisal-office[data-kind="csv"] .fo-filterpop-list { max-height: min(240px, 40vh); overflow: auto; border: 1px solid var(--app-hairline); border-radius: 6px; padding: 4px; }
+.faisal-office[data-kind="xlsx"] .fo-filteritem, .faisal-office[data-kind="csv"] .fo-filteritem { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 4px; color: var(--app-text); font: 13px var(--faisal-font); cursor: pointer; }
+.faisal-office[data-kind="xlsx"] .fo-filteritem.is-all, .faisal-office[data-kind="csv"] .fo-filteritem.is-all { font-weight: 600; }
+.faisal-office[data-kind="xlsx"] .fo-filteritem input, .faisal-office[data-kind="csv"] .fo-filteritem input { width: 16px; height: 16px; accent-color: var(--app-blue); }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-empty, .faisal-office[data-kind="csv"] .fo-filterpop-empty { padding: 8px; color: var(--app-text-3); font-size: 12px; }
+.faisal-office[data-kind="xlsx"] .fo-filterpop-actions, .faisal-office[data-kind="csv"] .fo-filterpop-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (pointer: coarse) {
+  .faisal-office[data-kind="xlsx"] .fo-filterpop-sort, .faisal-office[data-kind="xlsx"] .fo-filterpop-search, .faisal-office[data-kind="xlsx"] .fo-filteritem,
+  .faisal-office[data-kind="csv"] .fo-filterpop-sort, .faisal-office[data-kind="csv"] .fo-filterpop-search, .faisal-office[data-kind="csv"] .fo-filteritem { min-height: 44px; }
+}
+.faisal-office[data-kind="xlsx"] .fo-field-note { min-height: 16px; font-size: 12px; color: var(--app-danger); }
+/* Cell styles menu: a chip showing each style's look. */
+.faisal-office[data-kind="xlsx"] .fo-stylechip { display: inline-grid; place-items: center; width: 24px; height: 20px; border-radius: 4px; border: 1px solid var(--app-hairline-strong); font: 700 12px var(--faisal-font); }
+/* Insert function: search, category, the list, one line of help. */
+.faisal-office[data-kind="xlsx"] .fo-fndlg { display: flex; flex-direction: column; gap: 8px; }
+.faisal-office[data-kind="xlsx"] .fo-fndlg .fo-select { width: 100%; }
+.faisal-office[data-kind="xlsx"] .fo-fnlist { display: flex; flex-direction: column; height: min(240px, 40vh); overflow: auto; border: 1px solid var(--app-hairline); border-radius: 6px; padding: 4px; direction: ltr; }
+.faisal-office[data-kind="xlsx"] .fo-fnitem { flex: none; min-height: 32px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--app-text); text-align: start; font: 13px var(--faisal-font-mono, ui-monospace, monospace); cursor: pointer; }
+.faisal-office[data-kind="xlsx"] .fo-fnitem:hover { background: var(--app-blue-soft); }
+.faisal-office[data-kind="xlsx"] .fo-fnitem[aria-selected="true"] { background: var(--app-blue); color: #fff; }
+.faisal-office[data-kind="xlsx"] .fo-fnitem:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+.faisal-office[data-kind="xlsx"] .fo-fnempty { padding: 8px; color: var(--app-text-3); font-size: 12px; }
+.faisal-office[data-kind="xlsx"] .fo-fnhelp { display: flex; flex-direction: column; gap: 4px; min-height: 40px; font-size: 12px; color: var(--app-text-2); }
+.faisal-office[data-kind="xlsx"] .fo-fnhelp strong { color: var(--app-text); font: 600 13px var(--faisal-font-mono, ui-monospace, monospace); direction: ltr; text-align: start; }
+@media (pointer: coarse) { .faisal-office[data-kind="xlsx"] .fo-fnitem { min-height: 44px; } }
 
 @container office (max-width: 700px) {
   .fo-calc .fo-td { height: 44px; }
   .fo-calc .fo-namebox { width: 72px; }
   .fo-calc .fo-namebox, .fo-calc .fo-fxinput { min-height: 44px; }
 }
+/* Phone: while an entry is open the formula bar sits right on top of the on-screen keyboard. */
+.fo-calc.is-kbd .fo-fxbar { position: fixed; inset-inline: 0; z-index: 70; background: var(--app-glass-strong); box-shadow: 0 -4px 16px rgba(0, 0, 0, .25); }
 @media (pointer: coarse) {
   .fo-calc .fo-td { height: 44px; }
+  /* A 44px row reads better with its text in the middle (a cell's own vertical alignment still wins). */
+  .fo-calc .fo-cellview { align-items: center; }
   .fo-calc .fo-sheettab { min-height: 44px; }
 }
 

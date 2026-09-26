@@ -55,6 +55,9 @@ import { hasArabic } from './docops';
 import type { Revision } from './revisions';
 import { decodeXml, readDocxDocument, type DocLook, type Media } from './docxread';
 import { revisionAttrs, textBody, trackSegments } from './trackfile';
+import {
+  hfPartXml, hfText, readSectPr, samePage, sectPrWithPage, sectPrWithReference, type HeaderFooterSetup, type PageSetup,
+} from './layout';
 import { RUN_KEYS, blockText, type DocBlock, type NewCell, type NewImage, type OpaqueRun, type Run, type RunProps, type TextRun } from './types';
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
@@ -171,6 +174,20 @@ export function paraPropsMarkup(
       out = `${out.slice(0, spacing.start)}${open}${out.slice(spacing.end)}`;
     } else if (value) {
       out = setChildren(out, 'pPr', PPR_ORDER, new Map([['spacing', `<w:spacing w:line="${value}" w:lineRule="auto"/>`]]));
+    }
+  }
+  if (differs('indent')) {
+    // Only the start edge changes: a hanging or first-line indent and the end edge stay as they were.
+    const doc = parsePart(out || '<w:pPr></w:pPr>');
+    const ind = child(doc.roots[0], 'ind');
+    const value = f.indent ? Math.round(f.indent * 20) : null;
+    if (ind) {
+      let open = out.slice(ind.start, ind.end).replace(/\s+w:(start|left)(Chars)?="[^"]*"/g, '');
+      if (value) open = open.replace(/^<w:ind/, `<w:ind w:start="${value}"`);
+      if (/^<w:ind\s*\/>$/.test(open)) open = '';
+      out = `${out.slice(0, ind.start)}${open}${out.slice(ind.end)}`;
+    } else if (value) {
+      out = setChildren(out, 'pPr', PPR_ORDER, new Map([['ind', `<w:ind w:start="${value}"/>`]]));
     }
   }
   return out;
@@ -391,7 +408,8 @@ export async function patchDocxRich(
     if (at === undefined || at !== i) return true;
     return !unchanged(b, baseBlocks[at]) || !sameFormat(baseline.formats?.[at], current.formats?.[i]);
   });
-  if (!changedAny) return { bytes: archive.bytes, changed: [] };
+  // The page setup and the header/footer are compared with the file itself further down.
+  if (!changedAny && !current.page && !current.headerFooter) return { bytes: archive.bytes, changed: [] };
 
   const part = await loadPart(archive, 'word/document.xml');
   if (!part) return null;
@@ -630,8 +648,66 @@ export async function patchDocxRich(
     edits.push({ start: at, end: at, xml: markup });
   }
 
+  /* page layout, header and footer: the body's own section (w:sectPr) and its header/footer parts */
+  let layoutChanged = false;
+  if (current.page || current.headerFooter) {
+    let sectXml = sect ? xml.slice(sect.start, sect.end) : '<w:sectPr></w:sectPr>';
+    const original = sectXml;
+    if (current.page && !samePage(current.page, readSectPr(xml, sect))) sectXml = sectPrWithPage(sectXml, current.page);
+    const setup = current.headerFooter;
+    if (setup) {
+      const rtl = current.formats?.[0]?.dir === 'rtl';
+      for (const kind of ['header', 'footer'] as const) {
+        const hf = setup[kind];
+        const ref = sect?.children.find((c) => localName(c.name) === `${kind}Reference` && (attrLocal(xml, c, 'type') ?? 'default') === 'default');
+        const rid = ref ? attrLocal(xml, ref, 'id') : null;
+        const target = rid ? relTarget(relsXml ?? null, rid) : null;
+        if (!hf) {
+          if (ref) sectXml = sectPrWithReference(sectXml, kind, null);
+          continue;
+        }
+        const part = hfPartXml(kind, hf, rtl || hasArabic(hf.text));
+        const name = `fo-${kind}1.xml`;
+        const path = `word/${name}`;
+        const before = names.has(path) ? (await loadPart(archive, path))?.xml ?? null : null;
+        if (target === name && before === part) continue;
+        if (before !== part) {
+          if (names.has(path)) replacements.set(path, utf8(part));
+          else { additions.set(path, utf8(part)); names.add(path); }
+          layoutChanged = true;
+        }
+        if (target === name) continue;
+        const existing = relIdFor(relsXml ?? null, name);
+        let id = existing;
+        if (!id) {
+          const rel = addRelationship(relsXml ?? null, kind, name);
+          relsXml = rel.xml;
+          id = rel.id;
+        }
+        ctXml = ensureOverride(ctXml ?? contentTypes([]), `/${path}`, `application/vnd.openxmlformats-officedocument.wordprocessingml.${kind}+xml`);
+        sectXml = sectPrWithReference(sectXml, kind, id);
+      }
+    }
+    if (sectXml !== original) {
+      layoutChanged = true;
+      if (sect) edits.push({ start: sect.start, end: sect.end, xml: sectXml });
+      else {
+        const at = xml.lastIndexOf('<', body.end - 1);
+        edits.push({ start: at, end: at, xml: sectXml });
+      }
+    }
+  }
+  if (!changedAny && !layoutChanged) return { bytes: archive.bytes, changed: [] };
+
   let nextXml: string;
   try { nextXml = spliceEdits(xml, edits); } catch { return null; }
+  // A header or footer reference is an r:id: the prefix must be declared on the root.
+  if (layoutChanged) {
+    const root = parsePart(nextXml).roots.find((r) => localName(r.name) === 'document');
+    if (root && !/\sxmlns:r=/.test(nextXml.slice(root.start, root.openEnd))) {
+      nextXml = `${nextXml.slice(0, root.openEnd - 1)} xmlns:r="${R_NS}"${nextXml.slice(root.openEnd - 1)}`;
+    }
+  }
 
   // Pictures need their namespaces on the root for strict readers.
   if (materialized.length) {
@@ -718,6 +794,9 @@ export async function patchDocxRich(
     if (texts.length !== current.paragraphs.length) return null;
     for (let k = 0; k < texts.length; k++) if ((texts[k] ?? '') !== (current.paragraphs[k] ?? '')) return null;
     const reread = await readDocxDocument(bytes);
+    // The page and the header/footer read back as the owner set them.
+    if (current.page && !samePage(current.page, pageOfLook(reread.look.page))) return null;
+    if (current.headerFooter && !sameHeaderFooter(current.headerFooter, reread.look)) return null;
     for (const [ci, block] of curBlocks.entries()) {
       const bi = baseIndex.get(block.id);
       // A paragraph whose tracked changes were just written holds MORE runs than the model: the
@@ -733,6 +812,43 @@ export async function patchDocxRich(
     }
   } catch { return null; }
   return { bytes, changed: [...replacements.keys(), ...additions.keys()], materialized };
+}
+
+/** The target of a relationship id in a rels part. */
+function relTarget(rels: string | null, id: string): string | null {
+  if (!rels) return null;
+  for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
+    if (new RegExp(`\\bId="${id.replace(/[^\w-]/g, '')}"`).test(m[0])) return /\bTarget="([^"]*)"/.exec(m[0])?.[1] ?? null;
+  }
+  return null;
+}
+
+/** The id of the relationship that points at `target`, if there is one. */
+function relIdFor(rels: string | null, target: string): string | null {
+  if (!rels) return null;
+  for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
+    if (/\bTarget="([^"]*)"/.exec(m[0])?.[1] === target) return /\bId="([^"]*)"/.exec(m[0])?.[1] ?? null;
+  }
+  return null;
+}
+
+/** The page setup of a read document. */
+export function pageOfLook(p: DocLook['page']): PageSetup {
+  return { w: p.w, h: p.h, top: p.top, bottom: p.bottom, left: p.left, right: p.right, header: p.header, footer: p.footer, cols: p.cols, colGap: p.colGap };
+}
+
+/** The default header and footer of a read document, as a setup (null when there is none). */
+export function headerFooterOfLook(look: DocLook): HeaderFooterSetup {
+  const of = (hf: DocLook['headers']['default']): HeaderFooterSetup['header'] =>
+    hf?.lines.length ? { text: hfText(hf.lines), align: hf.lines[0].align ?? 'left' } : null;
+  return { header: of(look.headers.default), footer: of(look.footers.default) };
+}
+
+function sameHeaderFooter(want: HeaderFooterSetup, look: DocLook): boolean {
+  const got = headerFooterOfLook(look);
+  // Blank lines are not read back (a header line with no text is only spacing).
+  const text = (value: string | undefined): string => (value ?? '').split('\n').filter((line) => line.trim()).join('\n');
+  return (['header', 'footer'] as const).every((k) => text(want[k]?.text) === text(got[k]?.text));
 }
 
 /** JSON replacer that keeps picture bytes out of comparisons. */
@@ -761,7 +877,7 @@ export function charProps(runs: readonly Run[]): string {
 }
 
 function sameParagraph(a: ParagraphFormat | undefined, b: ParagraphFormat | undefined): boolean {
-  const keys = ['align', 'dir', 'style', 'list', 'line'] as const;
+  const keys = ['align', 'dir', 'style', 'list', 'line', 'indent'] as const;
   return keys.every((k) => (a?.[k] ?? undefined) === (b?.[k] ?? undefined) || (k === 'list' && (a?.[k] ?? null) === null && (b?.[k] ?? null) === null));
 }
 
@@ -877,7 +993,16 @@ export async function rebuildDocxRich(model: DocModel, tracked: readonly Revisio
       return { ...(carriedImage(r, media) ?? r), src: undefined };
     }),
   }));
-  const current: DocModel = { kind: 'docx', paragraphs: model.paragraphs.slice(), blocks, ...(model.formats ? { formats: model.formats } : {}) };
+  // The page setup and the header/footer come along: the owner's, else the source file's own.
+  const page = model.page ?? (look ? pageOfLook(look.page) : undefined);
+  const headerFooter = model.headerFooter ?? (look ? headerFooterOfLook(look) : undefined);
+  const hasHf = !!headerFooter && (!!headerFooter.header || !!headerFooter.footer);
+  const current: DocModel = {
+    kind: 'docx', paragraphs: model.paragraphs.slice(), blocks,
+    ...(model.formats ? { formats: model.formats } : {}),
+    ...(page ? { page } : {}),
+    ...(hasHf ? { headerFooter } : {}),
+  };
   const out = await patchDocxRich(archive, baseline, current, true, tracked);
   if (!out) return null;
   const data = await entryData(readRawZip(out.bytes), 'word/document.xml');

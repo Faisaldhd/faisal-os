@@ -1,3 +1,4 @@
+import { t } from '../../../kernel/i18n';
 import { describe, expect, it } from 'vitest';
 import { columnName } from '../xml';
 import { colorScaleRule, dataBarRule, topRule } from './sheetview';
@@ -172,7 +173,7 @@ describe('round trip: rules written into the file and read back', () => {
     expect((await readBookLook(saved)).sheets[0].condRules).toBeUndefined();
   });
 });
-describe('the Data tab conditional-format buttons save what they set', () => {
+describe('the Home tab conditional-format menu saves what it sets', () => {
   it('records the rule in the model, so the file can carry it', () => {
     let model: OfficeModel = { kind: 'xlsx', active: 0, delimiter: ',', grids: [{ name: 'S', rows: [['Cat', 'Qty'], ['word1', '2'], ['word2', '300']], truncated: false }] };
     const ctx: EditorContext = {
@@ -188,14 +189,16 @@ describe('the Data tab conditional-format buttons save what they set', () => {
     const editor: Editor = createSheet(ctx, null);
     document.body.append(editor.element);
     editor.render();
-    const control = editor.tabs().find((t) => t.id === 'data')?.groups.flatMap((g) => g.controls).find((c) => c.id === 'colorscale') as unknown as { run: () => void };
-    control.run();
+    // Home → Conditional formatting is one menu (as in WPS); its items are the commands.
+    const menu = (): Array<{ label: string; run: () => void } | 'sep'> =>
+      (editor.tabs().find((tb) => tb.id === 'home')?.groups.flatMap((g) => g.controls).find((c) => c.id === 'condfmt') as unknown as { items: () => Array<{ label: string; run: () => void } | 'sep'> }).items();
+    const item = (label: string): { run: () => void } => menu().find((i) => i !== 'sep' && i.label === label) as { run: () => void };
+    item(t('office.condScale')).run();
     const rules = (model as SheetsModel).condRules?.[0] ?? [];
     expect(rules).toHaveLength(1);
     expect(rules[0].type).toBe('colorScale');
     // …and clearing them takes the model entry away again, so nothing false is saved.
-    const clear = editor.tabs().find((t) => t.id === 'data')?.groups.flatMap((g) => g.controls).find((c) => c.id === 'condclear') as unknown as { run: () => void };
-    clear.run();
+    item(t('office.condClear')).run();
     expect((model as SheetsModel).condRules).toBeUndefined();
   });
 });

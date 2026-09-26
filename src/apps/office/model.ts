@@ -9,10 +9,13 @@
  * honest format list: the UI prints it and the tests assert it against what the
  * readers in `src/apps/viewer/formats.ts` actually do.
  */
+import { t } from '../../kernel/i18n';
+import './grid/strings';
 import type { Deck } from './impress/deck';
 import { MAX_COLS, extensionOf } from '../viewer/formats';
 import type { DocBlock } from './writer/types';
 import type { RevisionLog } from './writer/revisions';
+import type { HeaderFooterSetup, PageSetup } from './writer/layout';
 import type { PivotPlacement } from './grid/pivot';
 import { diffText, replaceText } from './writer/docops';
 import { shiftSheetFormat, type SheetFormat } from './grid/sheetfmt';
@@ -70,10 +73,12 @@ export interface ParagraphFormat {
   list?: 'bullet' | 'number' | null;
   /** Line spacing as a multiple of a single line (1, 1.15, 1.5, 2). */
   line?: number | null;
+  /** The paragraph's start indent in points (`<w:ind w:start>`), the Writer's indent buttons. */
+  indent?: number | null;
 }
 
 /** The properties a format can carry, in one place for diffing and copying. */
-export const FORMAT_KEYS = ['bold', 'italic', 'underline', 'size', 'align', 'dir', 'style', 'list', 'line'] as const;
+export const FORMAT_KEYS = ['bold', 'italic', 'underline', 'size', 'align', 'dir', 'style', 'list', 'line', 'indent'] as const;
 
 /**
  * True when two formats say the same thing. `undefined` (leave the file's own
@@ -105,6 +110,10 @@ export interface DocModel {
    * presented as text that is already decided.
    */
   tracked?: RevisionLog;
+  /** The page setup the owner chose in this session (absent = what the file says). */
+  page?: PageSetup;
+  /** The default header and footer the owner set in this session (absent = the file's own). */
+  headerFooter?: HeaderFooterSetup;
 }
 export interface SheetsModel {
   kind: 'xlsx' | 'csv';
@@ -243,7 +252,8 @@ export function planFor(path: string): FormatPlan {
 export function emptyModel(plan: FormatPlan, name = 'Sheet1'): OfficeModel {
   switch (plan.kind) {
     case 'docx': return { kind: 'docx', paragraphs: [''] };
-    case 'xlsx': return { kind: 'xlsx', grids: [{ name: 'Sheet1', rows: [['']], truncated: false }], active: 0, delimiter: ',' };
+    // A new workbook's sheet is named in the UI's language: "ورقة1" or "Sheet1".
+    case 'xlsx': return { kind: 'xlsx', grids: [{ name: t('office.defaultSheetName', { n: 1 }), rows: [['']], truncated: false }], active: 0, delimiter: ',' };
     case 'csv': return { kind: 'csv', grids: [{ name, rows: [['']], truncated: false }], active: 0, delimiter: plan.delimiter };
     case 'pptx': return { kind: 'pptx', slides: [['']] };
     default: return { kind: 'text', text: '' };

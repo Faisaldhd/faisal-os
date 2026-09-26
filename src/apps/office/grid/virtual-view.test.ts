@@ -6,7 +6,7 @@
  * `src/apps/office/grid/virtual.test.ts` already covers the maths (which rows a scroll offset
  * shows, how a new window recycles the old one). This file covers the INTEGRATION the slice was
  * about: the view honours that window, the spacers carry the rest of the sheet, and editing a
- * cell 9 000 rows down works through the ordinary input elements.
+ * cell 9 000 rows down works through the one floating editor.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import '../strings';                    // the sheet's own sentences, so the status line can be read
@@ -14,6 +14,7 @@ import type { Editor, EditorContext } from '../editor';
 import type { Edit, OfficeModel, SheetsModel } from '../model';
 import { SHEET_ROWS, formulaCellEdit } from '../model';
 import { createSheet } from './view';
+import { cellEl, rawAt, shownAt, typeInto } from './cells.testkit';
 
 const ROWS = 10_000;
 const COLS = 8;
@@ -135,7 +136,7 @@ describe('the virtual sheet', { timeout: 60_000 }, () => {
     expect(worst).toBeLessThan(70);
   });
 
-  it('edits a cell nine thousand rows down through the ordinary input', () => {
+  it('edits a cell nine thousand rows down through the floating editor', () => {
     const h = harness(bigSheet());
     withViewport(h.wrap);
     h.editor.render();
@@ -152,15 +153,15 @@ describe('the virtual sheet', { timeout: 60_000 }, () => {
     expect(rows).toContain(9000);
     expect(h.wrap.querySelectorAll('tr').length).toBeLessThan(70);
 
-    const input = h.wrap.querySelector<HTMLInputElement>('.faisal-office-cell[data-r="9000"][data-c="0"]');
-    expect(input).toBeTruthy();
-    input!.value = 'typed';
-    input!.dispatchEvent(new Event('input', { bubbles: true }));
+    const td = cellEl(h.wrap, 9000, 0);
+    expect(td).toBeTruthy();
+    expect(typeInto(td!, 'typed')).toBe(true);
     expect(h.commits.length).toBe(1);
     expect(h.model().grids[0].rows[9000][0]).toBe('typed');
     // …and the row that was drawn still shows it after the edit.
-    const view = input!.previousElementSibling as HTMLElement | null;
-    expect(view?.textContent).toBe('typed');
+    expect(shownAt(h.wrap, 9000, 0)).toBe('typed');
+    // One editor at most, never a field per cell.
+    expect(h.wrap.querySelectorAll('input').length).toBeLessThanOrEqual(1);
   });
 
   it('grows past the end of the sheet without losing the caret', () => {
@@ -173,11 +174,10 @@ describe('the virtual sheet', { timeout: 60_000 }, () => {
     h.editor.render();
     expect(h.model().grids[0].rows[9]?.[0]).toBe('new');
     expect(drawnRows(h.wrap).length).toBeGreaterThanOrEqual(before);
-    // The row the owner typed into exists as an input again, with the value in it.
+    // The row the owner typed into is drawn again, with the value in it.
     h.wrap.scrollTop = 0;
     h.wrap.dispatchEvent(new Event('scroll'));
-    const input = h.wrap.querySelector<HTMLInputElement>('.faisal-office-cell[data-r="9"][data-c="0"]');
-    expect(input?.value).toBe('new');
+    expect(rawAt(h.wrap, 9, 0)).toBe('new');
   });
 
   it('a read-only sheet still draws its rows and refuses the edit', () => {
@@ -196,7 +196,9 @@ describe('the virtual sheet', { timeout: 60_000 }, () => {
     withViewport(wrap);
     editor.render();
     expect(drawnRows(wrap).length).toBeGreaterThan(5);
-    expect(wrap.querySelectorAll('.faisal-office-cell[readonly]').length).toBeGreaterThan(0);
+    expect(wrap.querySelectorAll('.faisal-office-cell[aria-readonly="true"]').length).toBeGreaterThan(0);
+    // Double-clicking a cell opens no editor on a read-only sheet.
+    expect(typeInto(cellEl(wrap, 1, 0)!, 'x')).toBe(false);
   });
 });
 
@@ -234,36 +236,37 @@ describe('AutoFilter on the virtual sheet', () => {
     h.wrap.scrollTop = 0;
     h.wrap.dispatchEvent(new Event('scroll'));
     ribbonControl(h.editor, 'data', 'filter').run();
-    const panel = h.editor.element.querySelector<HTMLElement>('.fo-sheetpanel');
-    expect(panel).toBeTruthy();
-    const boxes = [...panel!.querySelectorAll<HTMLInputElement>('.fo-sheetpanel-check input')];
+    // The ▼ arrows are on; column B's list offers its values with their counts.
+    h.wrap.querySelector<HTMLButtonElement>('.fo-filterbtn[data-c="1"]')!.click();
+    const pop = document.querySelector<HTMLElement>('.fo-filterpop');
+    expect(pop).toBeTruthy();
+    const boxes = [...pop!.querySelectorAll<HTMLInputElement>('.fo-filteritem:not(.is-all) input')];
     expect(boxes.length).toBeGreaterThan(2);
     // Keep only the value "2": one data row in the whole sheet has Qty = 2, and it is model row 2.
-    for (const box of boxes) box.checked = false;
+    for (const box of boxes) { box.checked = false; box.dispatchEvent(new Event('change', { bubbles: true })); }
     boxes[1].checked = true;
     boxes[1].dispatchEvent(new Event('change', { bubbles: true }));
-    [...panel!.querySelectorAll<HTMLButtonElement>('.fo-sheetpanel-btn')].find((b) => b.classList.contains('is-primary'))!.click();
+    pop!.querySelector<HTMLButtonElement>('.fo-filterpop-ok')!.click();
 
     // The drawn rows are now the header and the one row the filter kept: no other model row is
     // drawn at all, and the blank rows below take no typing (a hidden row must not be reachable).
-    const dataDrawn = [...h.wrap.querySelectorAll<HTMLInputElement>('.faisal-office-cell[data-r]')]
-      .map((i) => Number(i.dataset.r)).filter((n) => Number.isFinite(n));
+    const dataDrawn = [...h.wrap.querySelectorAll<HTMLElement>('.faisal-office-cell[data-r]')]
+      .filter((td) => td.dataset.r !== '')
+      .map((td) => Number(td.dataset.r)).filter((n) => Number.isFinite(n));
     expect(new Set(dataDrawn)).toEqual(new Set([0, 2]));   // the header row, and the kept row only
     const drawn = drawnRows(h.wrap);
     expect(drawn[0]).toBe(0);                       // the header row is always drawn
     expect(drawn).not.toContain(1);                 // the hidden rows are not drawn
     expect(drawn).not.toContain(3);
-    expect(h.wrap.querySelectorAll('.fo-cell-empty[readonly]').length).toBeGreaterThan(0);
+    expect(h.wrap.querySelectorAll('.fo-cell-empty[aria-readonly="true"]').length).toBeGreaterThan(0);
     // The header of the filtered column says so, and the status line reports it honestly.
     expect(h.editor.element.querySelector('.fo-colhead.is-filtered')).toBeTruthy();
     expect(h.editor.status().parts.join(' ')).toMatch(/مُصفّى|Filtered/);
 
     // The drawn row for model row 2 is the only data row: type there and the value must land in
     // model row 2, never in a row the filter hid.
-    const input = h.wrap.querySelector<HTMLInputElement>('.faisal-office-cell[data-r="2"][data-c="0"]');
-    expect(input?.value).toBe('Even');
-    input!.value = 'typed';
-    input!.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(rawAt(h.wrap, 2, 0)).toBe('Even');
+    expect(typeInto(cellEl(h.wrap, 2, 0)!, 'typed')).toBe(true);
     expect(h.model().grids[0].rows[2][0]).toBe('typed');
     expect(h.model().grids[0].rows[1][0]).toBe('Odd');   // the hidden row is untouched
     expect(h.model().grids[0].rows[3][0]).toBe('Odd');   // and so is the one after it
