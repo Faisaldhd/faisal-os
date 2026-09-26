@@ -7,6 +7,7 @@ import type { DeckModel, Edit, OfficeModel } from '../model';
 import { deckTexts, nextUid, type Anim, type Deck, type DeckCxn, type DeckMaster, type DeckPara, type DeckShape, type DeckSlide, type Transition } from './deck';
 import { autoAlign, modelColor, type ParaStylePatch } from './parafmt';
 import { connectable, connectorBetween, detachFrom, followConnectors } from './connectors';
+import { chromeShapes, withChromeBoxes } from './master';
 
 export type SlideLayoutKind = 'title' | 'content' | 'two' | 'blank';
 export const SLIDE_LAYOUTS: readonly SlideLayoutKind[] = ['title', 'content', 'two', 'blank'];
@@ -101,7 +102,7 @@ export function addSlide(deck: Deck, after: number, kind: SlideLayoutKind): Deck
   };
   const slides = deck.slides.slice();
   slides.splice(after + 1, 0, slide);
-  return { ...deck, slides };
+  return refreshChrome({ ...deck, slides });
 }
 
 /**
@@ -120,13 +121,18 @@ export function setMaster(deck: Deck, part: string, patch: Partial<Omit<DeckMast
   const at = deck.masters.findIndex((m) => m.part === part);
   if (at < 0) return deck;
   const before = deck.masters[at]!;
-  const next: DeckMaster = { ...before, ...patch };
+  // The model keeps the boxes the placeholders really use, so what the file reads back after
+  // a save says exactly what the model says (and a second save writes nothing).
+  const next: DeckMaster = withChromeBoxes(deck, { ...before, ...patch });
   const masters = deck.masters.slice();
   masters[at] = next;
   const sizeChanged = before.title.size !== next.title.size || before.body.size !== next.body.size;
-  const slides = deck.slides.map((s) => {
+  const chromeChanged = before.footer !== next.footer || before.slideNumber !== next.slideNumber
+    || before.footerBox !== next.footerBox || before.numberBox !== next.numberBox;
+  const slides = deck.slides.map((s, index) => {
     if (s.master !== part) return s;
     let out = !s.bgOwn && !s.bgLayout && s.bg !== next.bg ? { ...s, bg: next.bg } : s;
+    if (chromeChanged) out = { ...out, shapes: withChrome(deck, out.shapes, next, index) };
     if (!sizeChanged) return out;
     const shapes = out.shapes.map((shape) => {
       const size = placeholderSize(shape, next);
@@ -137,6 +143,40 @@ export function setMaster(deck: Deck, part: string, patch: Partial<Omit<DeckMast
     return out;
   });
   return { ...deck, masters, slides };
+}
+
+/**
+ * A slide's shapes with the footer and slide-number placeholders the master asks for.
+ *
+ * A placeholder that is already there keeps its uid, its `spid` and its place in the file, so
+ * turning the footer on and then changing its words edits one element instead of replacing it.
+ */
+export function withChrome(deck: Deck, shapes: readonly DeckShape[], master: DeckMaster, index: number): DeckShape[] {
+  const wanted = chromeShapes(deck, master, index);
+  const out = shapes.filter((s) => s.ph !== 'ftr' && s.ph !== 'sldNum');
+  for (const want of wanted) {
+    const existing = shapes.find((s) => s.ph === want.ph);
+    out.push(existing
+      ? { ...existing, ...want, uid: existing.uid, origin: existing.origin, spid: existing.spid, locked: false }
+      : want);
+  }
+  return out;
+}
+
+/**
+ * Adds or refreshes the footer and slide-number placeholders of every slide that inherits from
+ * this master. Used when slides are added or removed: the number a slide shows is its position,
+ * so a new slide must not leave the others with a stale hint in the file.
+ */
+export function refreshChrome(deck: Deck, part?: string): Deck {
+  const slides = deck.slides.map((s, index) => {
+    const master = deck.masters.find((m) => m.part === s.master);
+    if (!master || (part && s.master !== part)) return s;
+    if (master.footer === null && !master.slideNumber) return s;
+    const shapes = withChrome(deck, s.shapes, master, index);
+    return shapes.some((x, i) => x !== s.shapes[i]) || shapes.length !== s.shapes.length ? { ...s, shapes } : s;
+  });
+  return slides.some((s, i) => s !== deck.slides[i]) ? { ...deck, slides } : deck;
 }
 
 /** The size a master gives this shape's text: titles and body placeholders, nothing else. */
@@ -173,7 +213,7 @@ export function duplicateSlide(deck: Deck, at: number): Deck {
   const copy: DeckSlide = { ...src, uid: nextUid(), part: null, from: src.part ?? src.from, shapes, notes: '' };
   const slides = deck.slides.slice();
   slides.splice(at + 1, 0, copy);
-  return { ...deck, slides };
+  return refreshChrome({ ...deck, slides });
 }
 
 function remapCxn(ref: DeckCxn | null, moved: ReadonlyMap<number, number>): DeckCxn | null {
@@ -185,7 +225,7 @@ function remapCxn(ref: DeckCxn | null, moved: ReadonlyMap<number, number>): Deck
 /** Removes slide `at`; the last slide is never removed. */
 export function deleteSlide(deck: Deck, at: number): Deck {
   if (deck.slides.length <= 1 || !deck.slides[at]) return deck;
-  return { ...deck, slides: deck.slides.filter((_, i) => i !== at) };
+  return refreshChrome({ ...deck, slides: deck.slides.filter((_, i) => i !== at) });
 }
 
 /** Moves slide `from` so it ends up at index `to`. */
@@ -197,7 +237,7 @@ export function moveSlide(deck: Deck, from: number, to: number): Deck {
   const slides = deck.slides.slice();
   const [moved] = slides.splice(from, 1);
   slides.splice(target, 0, moved);
-  return { ...deck, slides };
+  return refreshChrome({ ...deck, slides });
 }
 
 function mapSlide(deck: Deck, at: number, fn: (s: DeckSlide) => DeckSlide): Deck {
