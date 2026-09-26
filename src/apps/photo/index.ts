@@ -65,6 +65,10 @@ import {
 } from './render';
 import { PROJECT_EXT, ProjectError, isProjectPath, parseProject, serializeProject } from './project';
 import { loadRecent, pushRecent, removeRecent, saveRecent, type RecentItem } from './recent';
+import {
+  PRESETS_MAX, exportPresets, loadPresets, makePreset, mergePresets, movePreset, parsePresets,
+  removePreset, renamePreset, savePresets, sanitizeName, type CustomPreset,
+} from './presets';
 import { SHORTCUTS, describeKeys, matchShortcut, toolKey, type Command, type ToolId } from './shortcuts';
 import { PICTURES, createGallery, emptyIllustration, isImagePath, pickFile, thumbnail } from './gallery';
 import { History, HISTORY_PRESETS } from './history';
@@ -443,6 +447,33 @@ export function launch(ctx: AppContext): void {
   }, (v) => `${v}%`);
   const filterNote = el('p', 'fp-muted fp-small');
   pFilters.body.append(filterGrid, filterAmount.row, filterNote);
+
+  /* my presets — the current settings saved under a name, kept on this device only */
+  const presetsBox = el('div', 'fp-presets');
+  const presetsHead = el('h3', 'fp-group-title', L('presetsTitle'));
+  const presetSaveRow = el('div', 'fp-row');
+  const presetName = el('input', 'fp-input fp-preset-name');
+  presetName.type = 'text';
+  presetName.maxLength = 40;
+  presetName.placeholder = L('presetNamePlaceholder');
+  presetName.setAttribute('aria-label', L('presetNamePlaceholder'));
+  const presetSaveBtn = button(L('presetSave'), 'primary', 'save');
+  presetSaveRow.append(presetName, presetSaveBtn);
+  const presetList = el('ul', 'fp-preset-list');
+  presetList.setAttribute('aria-label', L('presetsTitle'));
+  const presetEmpty = el('p', 'fp-muted fp-small', L('presetEmpty'));
+  const presetMsg = el('p', 'fp-muted fp-small');
+  presetMsg.setAttribute('role', 'status');
+  presetMsg.setAttribute('aria-live', 'polite');
+  const presetIoRow = el('div', 'fp-row-end fp-preset-io');
+  const presetExportBtn = button(L('presetExport'), 'secondary', 'export');
+  const presetImportBtn = button(L('presetImport'), 'secondary', 'folderOpen');
+  presetIoRow.append(presetExportBtn, presetImportBtn);
+  const presetFile = el('input', 'fp-hidden-file');           // JSON picker, separate from the image one
+  presetFile.type = 'file';
+  presetFile.accept = '.json,application/json';
+  presetsBox.append(presetsHead, presetSaveRow, presetEmpty, presetList, presetMsg, presetIoRow, presetFile);
+  pFilters.body.append(presetsBox);
 
   /* export (quick) */
   const pExport = panel('export', L('exportTitle'), 'export');
@@ -1436,7 +1467,164 @@ export function launch(ctx: AppContext): void {
       c.imageSmoothingQuality = 'high';
       c.drawImage(src, (THUMB_W - out.width * k) / 2, (THUMB_H - out.height * k) / 2, out.width * k, out.height * k);
     }
+    drawPresetThumbs(small);
   }
+
+  /* ─────────────────────────────── my presets (قوالبي) ─────────────────────────────── */
+
+  let presets: CustomPreset[] = loadPresets();
+  const presetThumbs = new Map<string, HTMLCanvasElement>();
+
+  /** The settings on screen: an adjustment layer's, the live session's, or the sliders'. */
+  function currentParams(): AdjustParams {
+    const params: AdjustParams = { ...NEUTRAL_ADJUST };
+    const layer = doc ? activeLayer(doc) : null;
+    const fromLayer = layer && layer.kind === 'adjust' ? (layer.adjust as Partial<AdjustParams>) : null;
+    for (const [key, handle] of adjSliders) params[key] = fromLayer?.[key] ?? handle.get();
+    params.invert = fromLayer ? fromLayer.invert === true : invChk.input.checked;
+    params.grayscale = fromLayer ? fromLayer.grayscale === true : grayChk.input.checked;
+    return params;
+  }
+
+  function presetMessage(text: string): void { presetMsg.textContent = text; }
+
+  /**
+   * Applies a preset by driving the SAME sliders a person would: one adjustment session, one
+   * engine call. Nothing about the pixels lives here.
+   */
+  function applyCustomPreset(preset: CustomPreset): void {
+    if (!doc) return;
+    for (const key of adjSliders.keys()) setAdjust(key, preset.params[key]);
+    setAdjustFlag('invert', preset.params.invert);
+    setAdjustFlag('grayscale', preset.params.grayscale);
+    presetMessage(L('presetApplied', { name: preset.name }));
+  }
+
+  /** One small thumbnail per preset, through the engine's own adjustment chain. */
+  function drawPresetThumbs(small: PixelBuffer): void {
+    for (const [id, canvas] of presetThumbs) {
+      const preset = presets.find((p) => p.id === id);
+      if (!preset) continue;
+      const out = adjust(small, preset.params);
+      const c = canvas.getContext('2d');
+      if (!c) continue;
+      canvas.width = THUMB_W;
+      canvas.height = THUMB_H;
+      c.clearRect(0, 0, THUMB_W, THUMB_H);
+      const src = bufferCanvas(out);
+      const k = Math.max(THUMB_W / out.width, THUMB_H / out.height);
+      c.imageSmoothingQuality = 'high';
+      c.drawImage(src, (THUMB_W - out.width * k) / 2, (THUMB_H - out.height * k) / 2, out.width * k, out.height * k);
+    }
+  }
+
+  function commitPresets(): void {
+    savePresets(presets);
+    renderPresets();
+    scheduleThumbs();
+  }
+
+  /** Renaming happens in place: the name becomes an input, Enter or blur keeps it. */
+  function renameInPlace(nameEl: HTMLElement, preset: CustomPreset): void {
+    const input = el('input', 'fp-input fp-preset-rename');
+    input.type = 'text';
+    input.maxLength = 40;
+    input.value = preset.name;
+    input.setAttribute('aria-label', L('presetRename', { name: preset.name }));
+    let done = false;
+    const commit = (): void => {
+      if (done) return;
+      done = true;
+      const clean = sanitizeName(input.value, 0);
+      presets = renamePreset(presets, preset.id, clean);
+      presetMessage(L('presetRenamed', { name: clean }));
+      commitPresets();
+    };
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter') { ev.preventDefault(); commit(); }
+      else if (ev.key === 'Escape') { done = true; renderPresets(); }
+    });
+    input.addEventListener('blur', commit);
+    nameEl.replaceWith(input);
+    input.focus();
+    if (typeof input.select === 'function') input.select();
+  }
+
+  function renderPresets(): void {
+    presetThumbs.clear();
+    presetList.replaceChildren();
+    presetEmpty.hidden = presets.length > 0;
+    presets.forEach((preset, index) => {
+      const li = el('li', 'fp-preset');
+      const applyBtn = el('button', 'fp-preset-apply');
+      applyBtn.type = 'button';
+      applyBtn.setAttribute('aria-label', L('presetApply', { name: preset.name }));
+      const canvas = el('canvas', 'fp-filter-thumb');
+      canvas.width = THUMB_W;
+      canvas.height = THUMB_H;
+      const name = el('span', 'fp-preset-name', preset.name);
+      applyBtn.append(canvas, name);
+      applyBtn.addEventListener('click', () => applyCustomPreset(preset));
+      presetThumbs.set(preset.id, canvas);
+
+      const tools = el('div', 'fp-preset-tools');
+      const up = iconButton(L('presetUp', { name: preset.name }), 'up');
+      const down = iconButton(L('presetDown', { name: preset.name }), 'down');
+      const rename = iconButton(L('presetRename', { name: preset.name }), 'pencilEdit');
+      const del = iconButton(L('presetDelete', { name: preset.name }), 'trash', 'fp-danger-icon');
+      up.disabled = index === 0;
+      down.disabled = index === presets.length - 1;
+      up.addEventListener('click', () => { presets = movePreset(presets, preset.id, -1); commitPresets(); });
+      down.addEventListener('click', () => { presets = movePreset(presets, preset.id, 1); commitPresets(); });
+      rename.addEventListener('click', () => renameInPlace(name, preset));
+      del.addEventListener('click', () => {
+        presets = removePreset(presets, preset.id);
+        presetMessage(L('presetDeleted', { name: preset.name }));
+        commitPresets();
+      });
+      tools.append(up, down, rename, del);
+      li.append(applyBtn, tools);
+      presetList.append(li);
+    });
+  }
+
+  presetSaveBtn.addEventListener('click', () => {
+    if (presets.length >= PRESETS_MAX) { presetMessage(L('presetLimit', { max: PRESETS_MAX })); return; }
+    const params = currentParams();
+    if (isNeutralAdjust(params)) { presetMessage(L('presetNeedAdjust')); return; }
+    const preset = makePreset(presetName.value, params);
+    presets = mergePresets(presets, [preset]);
+    presetName.value = '';
+    presetMessage(L('presetSaved', { name: preset.name }));
+    commitPresets();
+  });
+  presetExportBtn.addEventListener('click', () => {
+    if (!presets.length) { presetMessage(L('presetEmpty')); return; }
+    download(new TextEncoder().encode(exportPresets(presets)), 'photo-filters.json', 'application/json');
+  });
+  presetImportBtn.addEventListener('click', () => presetFile.click());
+  presetFile.addEventListener('change', () => {
+    const file = presetFile.files?.[0];
+    presetFile.value = '';
+    if (!file) return;
+    // Strictly validated before anything is touched: a broken file cannot reach the list.
+    void file.text().then((text) => {
+      const parsed = parsePresets(text);
+      if (!parsed.ok) {
+        presetMessage(L('presetImportFailed', {
+          reason: L(parsed.error === 'json' ? 'presetErrJson' : parsed.error === 'text' ? 'presetErrText' : 'presetErrShape'),
+        }));
+        return;
+      }
+      const merged = mergePresets(presets, parsed.presets);
+      const added = merged.length - presets.length;
+      if (added <= 0) { presetMessage(L('presetImportNone')); return; }
+      presets = merged;
+      presetMessage(L('presetImported', { count: added }));
+      commitPresets();
+    }).catch(() => presetMessage(L('presetImportFailed', { reason: L('presetErrText') })));
+  });
+  renderPresets();
 
   /* ─────────────────────────── adjust / filter sessions ─────────────────────────── */
 
