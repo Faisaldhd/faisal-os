@@ -5,6 +5,28 @@ import {
 } from './adjust';
 import { imgFrom, px, randomImg, bigImg } from './test-utils';
 
+/**
+ * This machine's speed, measured here rather than assumed: the same fixed arithmetic workload that
+ * the budgets are expressed against. Load (a teammate's gate, a parallel test file) slows this by
+ * the same factor it slows the engine, so the ratio below survives a busy machine while a genuine
+ * regression — which adds work to the engine alone — still fails it.
+ */
+function referenceMs(): number {
+  let sink = 0;
+  const t0 = performance.now();
+  for (let i = 0; i < 4_000_000; i++) sink += Math.sqrt(i & 1023);
+  const ms = performance.now() - t0;
+  return sink > 0 ? ms : ms; // the result is used, so the loop cannot be optimised away
+}
+
+/** A budget: at least `floorMs`, and never tighter than `factor` x this machine's own reference. */
+function budgetMs(factor: number, floorMs: number): number {
+  let best = Infinity;
+  for (let i = 0; i < 3; i++) best = Math.min(best, referenceMs());
+  return Math.max(floorMs, best * factor);
+}
+
+
 const one = (rgba: number[], adj: Adjustments) => px(adjustImage(imgFrom(1, 1, [rgba]), adj), 0, 0);
 
 describe('engine/adjust — single operators, exact pixels', () => {
@@ -192,8 +214,16 @@ describe('engine/adjust — performance', () => {
    * (it shows up as seconds, or as the wrong pixels the rest of this file already pins), and the
    * sibling filter stack budgets 1500 ms for the same kind of work.
    */
-  const STACK_BUDGET_MS = 1500;
-  it('a full adjustment stack on 4000×3000 stays under 1.5 s even on a loaded runner', () => {
+  /**
+ * The budget for a full adjustment stack over 4000x3000 (12 MP).
+ *
+ * Measured: **269 ms** beside two background loaders, **296 ms** beside six, and the same engine
+ * takes the same work on an idle machine — the swing between those numbers is the machine, which is
+ * why this is a multiple of the reference measured in this test (~45x, floored at 1200 ms, about 4x
+ * the calm measurement). A stack rewritten to allocate per pixel fails it anywhere.
+ */
+const STACK_BUDGET_MS = budgetMs(45, 1200);
+  it('a full adjustment stack on 4000×3000 stays inside a budget that scales with the machine', () => {
     const stack: Adjustments = {
       exposure: 10, brightness: 5, contrast: 15, highlights: -20, shadows: 25, whites: 5, blacks: -5, gamma: 10,
       temperature: 12, tint: 4, saturation: 10, vibrance: 20, hue: 8,
@@ -201,17 +231,20 @@ describe('engine/adjust — performance', () => {
     };
     const warm = randomImg(256, 256, 1);
     adjustImage(warm, stack);
-    const big = bigImg(4000, 3000);
-    // Best of up to five runs: the suite runs files in parallel, so a single run can be
-    // slowed by a neighbour; the fastest run is the engine's own cost.
+    // Three samples, a FRESH image each time: every operator re-reads the input bytes, and a buffer
+    // warmed by a previous run would flatter the number. The fastest run is the engine's own cost.
     let best = Infinity;
-    for (let run = 0; run < 5 && best >= STACK_BUDGET_MS; run++) {
+    const samples: string[] = [];
+    for (let run = 0; run < 3; run++) {
+      const img = bigImg(4000, 3000);
       const t0 = performance.now();
-      adjustImage(big, stack, { out: big });
-      best = Math.min(best, performance.now() - t0);
+      adjustImage(img, stack, { out: img });
+      const ms = performance.now() - t0;
+      samples.push(ms.toFixed(0));
+      best = Math.min(best, ms);
     }
     // eslint-disable-next-line no-console
-    console.log(`[perf] full adjustment stack 4000×3000: ${best.toFixed(0)} ms`);
+    console.log(`[perf] full adjustment stack 4000×3000: best ${best.toFixed(0)} ms of [${samples.join(', ')}] ms (budget ${STACK_BUDGET_MS.toFixed(0)} ms)`);
     expect(best).toBeLessThan(STACK_BUDGET_MS);
   });
 });

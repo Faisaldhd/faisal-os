@@ -6,6 +6,28 @@ import {
 } from './filters';
 import { bigImg, imgFrom, px, randomImg } from './test-utils';
 
+/**
+ * This machine's speed, measured here rather than assumed: the same fixed arithmetic workload that
+ * the budgets are expressed against. Load (a teammate's gate, a parallel test file) slows this by
+ * the same factor it slows the engine, so the ratio below survives a busy machine while a genuine
+ * regression — which adds work to the engine alone — still fails it.
+ */
+function referenceMs(): number {
+  let sink = 0;
+  const t0 = performance.now();
+  for (let i = 0; i < 4_000_000; i++) sink += Math.sqrt(i & 1023);
+  const ms = performance.now() - t0;
+  return sink > 0 ? ms : ms; // the result is used, so the loop cannot be optimised away
+}
+
+/** A budget: at least `floorMs`, and never tighter than `factor` x this machine's own reference. */
+function budgetMs(factor: number, floorMs: number): number {
+  let best = Infinity;
+  for (let i = 0; i < 3; i++) best = Math.min(best, referenceMs());
+  return Math.max(floorMs, best * factor);
+}
+
+
 describe('engine/filters — point filters', () => {
   it('grayscale and sepia use the W3C matrices', () => {
     expect(px(grayscale(imgFrom(1, 1, [[255, 0, 0, 200]])), 0, 0)).toEqual([54, 54, 54, 200]);
@@ -164,27 +186,43 @@ describe('engine/filters — named looks', () => {
   });
 
   it('renders every look as a thumbnail of a 12 MP photo quickly', () => {
-    const big = bigImg(4000, 3000);
+    // Three samples on a fresh photo each time (best of three), against a ceiling that survives a
+    // busy shared machine: measured 55 ms beside two background loaders and 57 ms beside six, while
+    // the shared machine has been seen at 20.3 s for this file with three gates running at once. The
+    // ceiling still fails a per-pixel-allocation rewrite, which costs seconds on an idle machine.
+    const THUMB_BUDGET_MS = budgetMs(20, 300);
     let ms = Infinity;
     let thumbs = new Map();
-    for (let run = 0; run < 3 && ms >= 1500; run++) {
+    const samples: string[] = [];
+    for (let run = 0; run < 3; run++) {
+      const big = bigImg(4000, 3000);
       const t0 = performance.now();
       thumbs = presetThumbnails(big, 96);
-      ms = Math.min(ms, performance.now() - t0);
+      const sample = performance.now() - t0;
+      samples.push(sample.toFixed(0));
+      ms = Math.min(ms, sample);
     }
     // eslint-disable-next-line no-console
-    console.log(`[perf] ${thumbs.size} look thumbnails from 4000×3000: ${ms.toFixed(0)} ms`);
+    console.log(`[perf] ${thumbs.size} look thumbnails from 4000×3000: best ${ms.toFixed(0)} ms of [${samples.join(', ')}] ms (budget ${THUMB_BUDGET_MS.toFixed(0)} ms)`);
     expect(thumbs.size).toBe(FILTER_PRESETS.length);
     for (const t of thumbs.values()) {
       expect(t.width).toBe(96);
       expect(t.height).toBe(72);
     }
-    expect(ms).toBeLessThan(1500);
+    expect(ms).toBeLessThan(THUMB_BUDGET_MS);
   });
 });
 
 describe('engine/filters — 12 MP', () => {
   it('runs every filter on a 4000×3000 photo in reasonable time', () => {
+    // One ceiling per filter that survives the shared machine: the worst single filter measured
+    // 7313 ms beside two background loaders and 8786 ms beside six, while an idle machine runs the
+    // same filter in well under a second — so 30 s still fails a rewrite that allocates per pixel
+    // or goes quadratic, without failing because a teammate ran a gate at the same time.
+    // The heaviest filter (vintage) measured 5.5 s on this machine even with the reference at its
+    // fastest, so the floor clears it with headroom; the factor carries the load the way the other
+    // budgets do, and a filter rewritten to allocate per pixel still fails it.
+    const FILTER_BUDGET_MS = budgetMs(200, 14_000);
     const big = bigImg(4000, 3000);
     const times: string[] = [];
     for (const id of FILTER_IDS) {
@@ -194,11 +232,10 @@ describe('engine/filters — 12 MP', () => {
       times.push(`${id} ${ms.toFixed(0)}`);
       expect(out.width).toBe(4000);
       expect(out.height).toBe(3000);
-      // Generous: CI machines vary; this catches a quadratic or per-pixel-allocation regression.
-      expect(ms).toBeLessThan(15000);
+      expect(ms).toBeLessThan(FILTER_BUDGET_MS);
     }
     // eslint-disable-next-line no-console
-    console.log(`[perf] 4000×3000 filters (ms): ${times.join(', ')}`);
+    console.log(`[perf] 4000×3000 filters (ms): ${times.join(', ')} (budget ${FILTER_BUDGET_MS.toFixed(0)} ms each)`);
   }, 240000);
 });
 

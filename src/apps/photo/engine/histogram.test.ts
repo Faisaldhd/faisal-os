@@ -2,6 +2,28 @@ import { describe, expect, it } from 'vitest';
 import { histogram, lumaIndex, percentile } from './histogram';
 import { bigImg, imgFrom } from './test-utils';
 
+/**
+ * This machine's speed, measured here rather than assumed: the same fixed arithmetic workload that
+ * the budgets are expressed against. Load (a teammate's gate, a parallel test file) slows this by
+ * the same factor it slows the engine, so the ratio below survives a busy machine while a genuine
+ * regression — which adds work to the engine alone — still fails it.
+ */
+function referenceMs(): number {
+  let sink = 0;
+  const t0 = performance.now();
+  for (let i = 0; i < 4_000_000; i++) sink += Math.sqrt(i & 1023);
+  const ms = performance.now() - t0;
+  return sink > 0 ? ms : ms; // the result is used, so the loop cannot be optimised away
+}
+
+/** A budget: at least `floorMs`, and never tighter than `factor` x this machine's own reference. */
+function budgetMs(factor: number, floorMs: number): number {
+  let best = Infinity;
+  for (let i = 0; i < 3; i++) best = Math.min(best, referenceMs());
+  return Math.max(floorMs, best * factor);
+}
+
+
 describe('engine/histogram', () => {
   it('counts exact bins for R, G, B and fixed-point luma', () => {
     const img = imgFrom(4, 1, [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255], [10, 10, 10, 255]]);
@@ -54,18 +76,25 @@ describe('engine/histogram', () => {
   });
 
   it('is fast on 12 MP', () => {
-    const big = bigImg(4000, 3000);
-    histogram(big, 64);
+    // Warm-up, then three samples on a FRESH photo each time (best of three). Measured: 48 ms beside
+    // two background loaders and 46 ms beside six; the ceiling leaves room for the 15x swing a
+    // shared machine shows (see the formula engine's budget) and still fails a per-pixel histogram.
+    histogram(bigImg(4000, 3000), 64);
+    const HISTOGRAM_BUDGET_MS = budgetMs(12, 150);
     let ms = Infinity;
-    let h = histogram(big, 1000);
-    for (let run = 0; run < 3 && ms >= 300; run++) {
+    let h = histogram(bigImg(4000, 3000), 1000);
+    const samples: string[] = [];
+    for (let run = 0; run < 3; run++) {
+      const img = bigImg(4000, 3000);
       const t0 = performance.now();
-      h = histogram(big);
-      ms = Math.min(ms, performance.now() - t0);
+      h = histogram(img);
+      const sample = performance.now() - t0;
+      samples.push(sample.toFixed(0));
+      ms = Math.min(ms, sample);
     }
     // eslint-disable-next-line no-console
-    console.log(`[perf] histogram 4000×3000: ${ms.toFixed(0)} ms`);
+    console.log(`[perf] histogram 4000×3000: best ${ms.toFixed(0)} ms of [${samples.join(', ')}] ms (budget ${HISTOGRAM_BUDGET_MS.toFixed(0)} ms)`);
     expect(h.count).toBe(12_000_000);
-    expect(ms).toBeLessThan(300);
+    expect(ms).toBeLessThan(HISTOGRAM_BUDGET_MS);
   });
 });
