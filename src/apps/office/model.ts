@@ -13,6 +13,7 @@ import type { Deck } from './impress/deck';
 import { MAX_COLS, extensionOf } from '../viewer/formats';
 import type { DocBlock } from './writer/types';
 import type { RevisionLog } from './writer/revisions';
+import type { PivotPlacement } from './grid/pivot';
 import { diffText, replaceText } from './writer/docops';
 import { shiftSheetFormat, type SheetFormat } from './grid/sheetfmt';
 import type { AutoFilterColumn } from './grid/autofilter';
@@ -131,6 +132,12 @@ export interface SheetsModel {
    * can move the file's own cells instead of rebuilding it (`grid/structure.ts`).
    */
   structure?: StructOp[];
+  /**
+   * The pivots inserted in this session, per sheet: where each table was written and what it was
+   * built from. The TABLE itself is ordinary cells (so it saves like every other cell); this is
+   * only what lets the panel offer Refresh and say when the source has moved on.
+   */
+  pivots?: Record<number, readonly PivotPlacement[]>;
   /**
    * The AutoFilter the owner set, per sheet, as the file spells it (`grid/autofilter.ts`): the
    * save writes it as `<autoFilter>` after `</sheetData>`, and the reader fills it back at open.
@@ -460,6 +467,28 @@ export function chartsEdit(sheet: number, before: readonly ChartObject[], after:
   };
   return {
     key: 'charts:' + sheet,
+    apply: (m) => put(m, after),
+    revert: (m) => put(m, before),
+  };
+}
+
+/**
+ * An edit that sets one sheet's inserted pivots, so Refresh can find what it wrote and one Ctrl+Z
+ * takes the record back with the cells.
+ */
+export function pivotsEdit(sheet: number, before: readonly PivotPlacement[], after: readonly PivotPlacement[]): Edit {
+  const put = (m: OfficeModel, list: readonly PivotPlacement[]): OfficeModel => {
+    if (m.kind !== 'xlsx' && m.kind !== 'csv') return m;
+    const all: Record<number, readonly PivotPlacement[]> = { ...(m.pivots ?? {}) };
+    if (list.length) all[sheet] = list;
+    else delete all[sheet];
+    const out: SheetsModel = { ...m };
+    if (Object.keys(all).length) out.pivots = all;
+    else delete out.pivots;
+    return out;
+  };
+  return {
+    key: 'pivots:' + sheet,
     apply: (m) => put(m, after),
     revert: (m) => put(m, before),
   };
