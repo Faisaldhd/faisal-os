@@ -97,10 +97,13 @@ export function startShow(host: HTMLElement, deck: Deck, start: number, presente
       const node = canvas.querySelector<HTMLElement>(`[data-uid="${shape.uid}"]`);
       node?.classList.remove('is-pending');
       if (node && i === state.step - 1 && !entering && shape.anim === 'fade') node.classList.add('is-fadein');
+      if (node && i === state.step - 1 && !entering && shape.anim === 'fly') node.classList.add('is-flyin');
     });
     const { frame } = fitSlide(deck, canvas, width);
     if (entering && slide.transition === 'fade') frame.classList.add('is-enter-fade');
     if (entering && slide.transition === 'push') frame.classList.add('is-enter-push');
+    if (entering && slide.transition === 'wipe') frame.classList.add('is-enter-wipe');
+    if (entering && slide.transition === 'cover') frame.classList.add('is-enter-cover');
     main.replaceChildren(frame);
     entering = false;
     if (presenter) {
@@ -173,7 +176,13 @@ export function startShow(host: HTMLElement, deck: Deck, start: number, presente
     else return;
     ev.preventDefault();
   });
-  main.addEventListener('click', () => forward());
+  main.addEventListener('click', (ev) => {
+    // A shape with a link opens its address (web and mail only, checked when it was set) in a
+    // new tab instead of moving the show on.
+    const link = (ev.target as Element | null)?.closest<HTMLElement>('[data-link]')?.dataset.link;
+    if (link && !ended && /^(https?:|mailto:)/i.test(link)) { window.open(link, '_blank', 'noopener,noreferrer'); return; }
+    forward();
+  });
   main.addEventListener('contextmenu', (ev) => { ev.preventDefault(); back(); });
 
   host.append(show);

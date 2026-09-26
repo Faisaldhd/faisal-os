@@ -20,8 +20,8 @@ export const EMU_PER_PT = 12700;
 export const DEFAULT_CX = 12192000;
 export const DEFAULT_CY = 6858000;
 
-export type Transition = 'none' | 'fade' | 'push' | 'other';
-export type Anim = 'fade' | 'appear' | null;
+export type Transition = 'none' | 'fade' | 'push' | 'wipe' | 'cover' | 'other';
+export type Anim = 'fade' | 'appear' | 'fly' | null;
 export type Align = 'l' | 'ctr' | 'r' | 'just';
 export type ShapeKind = 'text' | 'shape' | 'pic' | 'line' | 'group' | 'frame';
 
@@ -44,6 +44,8 @@ export interface DeckPara {
    * model holds is the field, and what the canvas draws is the slide's own number.
    */
   field?: 'slidenum' | null;
+  /** The paragraph's own Latin typeface (`<a:latin>` of its runs); absent/null = inherited. */
+  font?: string | null;
 }
 
 export interface DeckImage {
@@ -113,6 +115,11 @@ export interface DeckShape {
   anim: Anim;
   /** Cannot be moved or edited here (a shape inside mc:AlternateContent). */
   locked: boolean;
+  /**
+   * The web address a click on the shape opens in the show (`<a:hlinkClick>` on its `cNvPr`, with
+   * an external hyperlink relationship). Absent or null = no link.
+   */
+  link?: string | null;
 }
 
 export interface DeckSlide {
@@ -183,6 +190,8 @@ export interface Deck {
   masters: DeckMaster[];
   /** Theme colours by scheme name (dk1, lt1, accent1, …) as #RRGGBB. */
   scheme: Record<string, string>;
+  /** The theme's heading and body Latin fonts; absent when the file names none. */
+  fonts?: { major: string; minor: string } | null;
 }
 
 let uidCounter = 0;
@@ -369,6 +378,21 @@ export function readScheme(xml: string | null): Record<string, string> {
   return scheme;
 }
 
+/** The heading (major) and body (minor) Latin typefaces of a theme part, when it names both. */
+export function readFonts(xml: string | null): { major: string; minor: string } | null {
+  if (!xml) return null;
+  const doc = parsePart(xml);
+  const fs = doc.roots.flatMap((r) => elementsOf(r, 'fontScheme'))[0];
+  const face = (name: string): string | null => {
+    const latin = childPath(fs, name, 'latin');
+    const v = latin ? attr(xml, latin, 'typeface') : null;
+    return v ? decodeXml(v) : null;
+  };
+  const major = face('majorFont');
+  const minor = face('minorFont');
+  return major && minor ? { major, minor } : null;
+}
+
 /* ────────────────────────────── inheritance ────────────────────────────── */
 
 interface PhInfo { type: string; idx: string | null; xfrm: Xfrm | null; size: number | null; anchor: 't' | 'ctr' | 'b' | null; text?: string }
@@ -539,6 +563,8 @@ function readParas(ctx: Ctx, txBody: XmlElement | null, isBodyPh: boolean): Deck
     const fld = p.children.find((c) => localName(c.name) === 'fld');
     const field = fld && attr(xml, fld, 'type') === 'slidenum' ? 'slidenum' : null;
     const text = field ? '' : paraText(xml, p);
+    const latin = child(rPr, 'latin');
+    const face = latin ? attr(xml, latin, 'typeface') : null;
     out.push({
       text,
       size: Number.isFinite(sz) && sz > 0 ? sz / 100 : null,
@@ -550,6 +576,7 @@ function readParas(ctx: Ctx, txBody: XmlElement | null, isBodyPh: boolean): Deck
       align: algn === 'ctr' || algn === 'r' || algn === 'just' || algn === 'l' ? algn : algn === 'dist' ? 'just' : null,
       bullet: explicitBullet || (isBodyPh && !noBullet && !!ctx.master?.bodyBullet && text.trim() !== ''),
       ...(field ? { field } : {}),
+      ...(face && !face.startsWith('+') ? { font: decodeXml(face) } : {}),
     });
   }
   return out;
@@ -591,8 +618,28 @@ function readLine(ctx: Ctx, spPr: XmlElement | null, style: XmlElement | null, s
   shape.arrow = !!tail && !['none', null].includes(attr(xml, tail, 'type'));
 }
 
+/** The external address a shape's `cNvPr` links to (`<a:hlinkClick r:id>`), or null. */
+function readLink(ctx: Ctx, cNvPr: XmlElement | null): string | null {
+  const click = child(cNvPr, 'hlinkClick');
+  const rid = click ? attrLocal(ctx.xml, click, 'id') : null;
+  const rel = rid ? ctx.rels.find((r) => r.id === rid && r.type === 'hyperlink' && r.external) : undefined;
+  return rel ? decodeXml(rel.target) : null;
+}
+
 /** One top-level (or grouped) shape element, or null for something that is not a shape. */
 function readShape(ctx: Ctx, el: XmlElement, origin: number | null): DeckShape | null {
+  const shape = readShapeOnly(ctx, el, origin);
+  if (shape && shape.kind !== 'group' && name0(el) !== 'AlternateContent') {
+    const nv = el.children.find((c) => /^nv/.test(localName(c.name)));
+    const link = readLink(ctx, child(nv, 'cNvPr'));
+    if (link) shape.link = link;
+  }
+  return shape;
+}
+
+const name0 = (el: XmlElement): string => localName(el.name);
+
+function readShapeOnly(ctx: Ctx, el: XmlElement, origin: number | null): DeckShape | null {
   const { xml, scheme } = ctx;
   const name = localName(el.name);
   if (name === 'AlternateContent') {
@@ -727,10 +774,10 @@ function readTransition(xml: string, root: XmlElement): Transition {
   const kind = t?.children.find((c) => !['sndAc', 'extLst'].includes(localName(c.name)));
   if (!kind) return t ? 'other' : 'none';
   const name = localName(kind.name);
-  return name === 'fade' ? 'fade' : name === 'push' ? 'push' : 'other';
+  return name === 'fade' ? 'fade' : name === 'push' ? 'push' : name === 'wipe' ? 'wipe' : name === 'cover' ? 'cover' : 'other';
 }
 
-/** Entrance effects by shape id: presetID 10 is Fade, anything else is drawn as Appear. */
+/** Entrance effects by shape id: presetID 10 is Fade, 2 is Fly In, anything else is drawn as Appear. */
 function readTiming(xml: string, root: XmlElement): Map<number, Anim> {
   const out = new Map<number, Anim>();
   const timing = child(root, 'timing');
@@ -740,7 +787,8 @@ function readTiming(xml: string, root: XmlElement): Map<number, Anim> {
     const tgt = elementsOf(cTn, 'spTgt')[0];
     const spid = tgt ? Number(attr(xml, tgt, 'spid')) : NaN;
     if (!Number.isFinite(spid) || out.has(spid)) continue;
-    out.set(spid, attr(xml, cTn, 'presetID') === '10' ? 'fade' : 'appear');
+    const preset = attr(xml, cTn, 'presetID');
+    out.set(spid, preset === '10' ? 'fade' : preset === '2' ? 'fly' : 'appear');
   }
   return out;
 }
@@ -798,7 +846,9 @@ export async function readDeck(bytes: Uint8Array): Promise<Deck> {
   const cy = num(presXml, sldSz, 'cy', DEFAULT_CY) || DEFAULT_CY;
 
   const themeRel = presRels.find((r) => r.type === 'theme');
-  const scheme = readScheme(themeRel ? await text(archive, themeRel.target) : null);
+  const themeXml = themeRel ? await text(archive, themeRel.target) : null;
+  const scheme = readScheme(themeXml);
+  const fonts = readFonts(themeXml);
 
   const media = new Map<string, Uint8Array>();
   const templates = new Map<string, Template>();
@@ -882,7 +932,7 @@ export async function readDeck(bytes: Uint8Array): Promise<Deck> {
       transition: readTransition(xml, root),
     });
   }
-  return { cx, cy, slides, layouts, masters, scheme };
+  return { cx, cy, slides, layouts, masters, scheme, fonts };
 }
 
 /** The plain paragraphs of every slide (non-blank, in shape order), for the text model. */
