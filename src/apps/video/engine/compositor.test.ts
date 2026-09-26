@@ -204,3 +204,53 @@ describe('clipRect', () => {
     expect(clipRect({ x: 3000, y: 0, width: 10, height: 10 }, FRAME).width).toBe(0);
   });
 });
+
+/**
+ * The effects must be drawn by THIS function, because it is the one both the preview and the
+ * frame-by-frame MP4 export call: an effect that lived in the player would export none, and one
+ * that lived in the exporter would preview none. These assertions are the "both paths" proof.
+ */
+describe('clip effects on the shared draw path', () => {
+  const withFx = (fx: Partial<MediaClip['effects']>) => {
+    const p = twoClips();
+    // The effects belong to the MAIN track's clip: patching `tracks[0]` would patch whichever
+    // track happens to be first and leave the picture untouched.
+    const main = p.tracks.find((t) => t.kind === 'main')!;
+    const clip = { ...main.clips[0] as MediaClip, start: 0, out: 4, in: 0, speed: 1, effects: { fadeIn: 0, fadeOut: 0, blur: 0, dark: 0, ...fx } };
+    return { ...p, tracks: p.tracks.map((t) => (t.id === main.id ? { ...t, clips: [clip] } : t)) };
+  };
+
+  it('paints a full black cover at the start of a fade in, and none after it', () => {
+    const { ctx, calls } = fakeContext();
+    const project = withFx({ fadeIn: 1 });
+    composeFrame(ctx, project, 0, FRAME, provider());
+    const black = calls.filter((c) => c.op === 'fillRect' && c.fill === '#000000' && c.alpha > 0.9);
+    expect(black.length).toBeGreaterThan(0);
+    const { ctx: ctx2, calls: calls2 } = fakeContext();
+    composeFrame(ctx2, project, 2, FRAME, provider());
+    const veiled = calls2.filter((c) => c.op === 'fillRect' && c.fill === '#000000' && c.alpha > 0.01 && c.args[2] !== FRAME.width);
+    expect(veiled).toHaveLength(0);
+  });
+
+  it('applies the blur through the canvas filter while drawing the clip', () => {
+    const { ctx, calls } = fakeContext();
+    composeFrame(ctx, withFx({ blur: 1 }), 2, FRAME, provider());
+    const filtered = draws(calls).filter((c) => (c.filter ?? '').includes('blur('));
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].filter).toMatch(/blur\(1[0-9.]+px\)/);
+  });
+
+  it('draws the dark frame as four bands inside the clip, and needs no filter support', () => {
+    const { ctx, calls } = fakeContext(false);
+    composeFrame(ctx, withFx({ dark: 1 }), 2, FRAME, provider());
+    const bands = calls.filter((c) => c.op === 'fillRect' && c.fill === '#000000' && c.alpha > 0.4 && c.alpha < 0.95);
+    expect(bands.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('draws nothing extra when the clip has no effects', () => {
+    const { ctx, calls } = fakeContext();
+    composeFrame(ctx, withFx({}), 2, FRAME, provider());
+    expect(draws(calls)).toHaveLength(1);
+    expect((draws(calls)[0].filter ?? 'none')).toBe('none');
+  });
+});

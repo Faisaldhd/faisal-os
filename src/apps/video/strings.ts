@@ -373,6 +373,15 @@ defineStrings('video', {
     outsideHome: 'الحفظ مسموح داخل مجلد المستخدم فقط',
     frameSaved: 'حُفظ الإطار في {path}.',
 
+    /* مؤثرات الصورة (تُرسم في المعاينة والتصدير معًا) */
+    effectsTitle: 'مؤثرات الصورة',
+    fxFadeIn: 'تلاشٍ من الأسود',
+    fxFadeOut: 'تلاشٍ إلى الأسود',
+    fxBlur: 'تمويه',
+    fxDark: 'إطار داكن',
+    fxClear: 'إزالة المؤثرات',
+    effectsNote: 'تُطبَّق على هذا المقطع في المعاينة وفي التصدير معًا.',
+
     shortcutsTitle: 'اختصارات لوحة المفاتيح',
     shortcutsNote: 'الاختصارات تعمل داخل نافذة الاستوديو فقط، ولا تعمل أثناء الكتابة في حقل نص.',
     key_playPause: 'تشغيل / إيقاف',
@@ -788,6 +797,15 @@ defineStrings('video', {
     quotaFile: 'the file is larger than the storage limit ({max})',
     outsideHome: 'saving is only allowed inside the user folder',
     frameSaved: 'Frame saved to {path}.',
+
+    /* Picture effects (drawn in the preview and in the export alike) */
+    effectsTitle: 'Picture effects',
+    fxFadeIn: 'Fade up from black',
+    fxFadeOut: 'Fade down to black',
+    fxBlur: 'Blur',
+    fxDark: 'Dark frame',
+    fxClear: 'Clear effects',
+    effectsNote: 'Applies to this clip in the preview and in the export together.',
 
     shortcutsTitle: 'Keyboard shortcuts',
     shortcutsNote: 'Shortcuts work inside the Studio window only, and not while typing in a text field.',
