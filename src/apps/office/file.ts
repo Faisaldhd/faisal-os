@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Office — the bridge between a file's bytes and the editable model.
  *
  * Reading is the viewer's readers, unchanged and unchanged-able from here
@@ -113,7 +113,7 @@ export function writeDelimited(rows: readonly (readonly string[])[], delimiter: 
 export function serializeModel(model: OfficeModel): Uint8Array {
   switch (model.kind) {
     case 'docx': return writeDocx(model.paragraphs, model.formats);
-    case 'xlsx': return writeXlsx(model.grids, model.formulas, model.sheetFormats, model.autoFilters, model.condRules);
+    case 'xlsx': return writeXlsx(model.grids, model.formulas, model.sheetFormats, model.autoFilters, model.condRules, model.charts);
     case 'csv': return utf8(writeDelimited(model.grids[0]?.rows ?? [], model.delimiter));
     case 'pptx': return writePptx(model.slides);
     default: return utf8(model.text);

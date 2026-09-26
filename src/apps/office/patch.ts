@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Office — the surgical save (الحفظ الجراحي).
  *
  * The old save rebuilt the whole package from the text model, which is why a
@@ -151,6 +151,9 @@ export async function patchPackage(
       // The same is true of conditional formatting, and for the same reason: the rules and the
       // `<dxfs>` they point at are not something a cell-level patch carries.
       if (!sameCondRules(baseline.condRules, current.condRules)) return null;
+      // Charts live in parts of their own (drawing + chart + their rels), which a cell patch cannot
+      // carry either: a chart that moved or changed takes the rebuild.
+      if (!sameJson(baseline.charts, current.charts)) return null;
       return await patchXlsx(archive, baseline, current);
     }
     if (baseline.kind !== 'pptx' || current.kind !== 'pptx') return null;
@@ -166,6 +169,15 @@ export async function patchPackage(
 
 function isSheets(model: OfficeModel): model is SheetsModel {
   return model.kind === 'xlsx' || model.kind === 'csv';}
+
+/** True when both books carry the same per-sheet value (charts are compared by shape). */
+function sameJson<T>(a: Record<number, readonly T[]> | undefined, b: Record<number, readonly T[]> | undefined): boolean {
+  const sheets = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})].map(Number));
+  for (const sheet of sheets) {
+    if (JSON.stringify(a?.[sheet] ?? []) !== JSON.stringify(b?.[sheet] ?? [])) return false;
+  }
+  return true;
+}
 
 /** True when both books carry the same conditional-formatting rules on every sheet. */
 function sameCondRules(
