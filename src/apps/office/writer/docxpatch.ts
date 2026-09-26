@@ -26,10 +26,31 @@ import type { DocModel, ParagraphFormat } from '../model';
 import { sameFormat } from '../model';
 import { PPR_ORDER, RPR_ORDER, insertPointIn, loadPart, textElement, textParts, type PatchResult } from '../patch';
 import { addRelationship, ensureDefault, ensureOverride, MIME_OF, relsPathOf } from '../pkg';
+import {
+  NOTES_CONTENT_TYPE, NOTES_PART, buildNotesPart, noteReferenceRunXml, type NoteKind,
+} from './footnotes';
+import type { NoteInfo } from './types';
 import { jcValue, xmlText } from '../xml';
 import { attrLocal, elementsOf, localName, paragraphElements, parsePart, type XmlEdit, type XmlElement } from '../xmlscan';
 import { entryData, rebuildZip, readRawZip, utf8, writeZip, type RawZip } from '../zip';
 import { contentTypes } from '../ooxml';
+
+/** The inside of a run's `<w:rPr>`, so a regenerated reference keeps the formatting it had. */
+function rprInside(xml: string): string {
+  const match = /<w:rPr>([\s\S]*?)<\/w:rPr>/.exec(xml);
+  return match ? match[1] : '';
+}
+
+/** Every note of one kind in the document, in reading order. */
+function notesOf(model: DocModel, kind: NoteKind): NoteInfo[] {
+  const out: NoteInfo[] = [];
+  for (const block of model.blocks ?? []) {
+    for (const run of block.runs) {
+      if (run.t === 'opaque' && run.kind === 'note' && run.note?.kind === kind) out.push(run.note);
+    }
+  }
+  return out;
+}
 import { hasArabic } from './docops';
 import type { Revision } from './revisions';
 import { readDocxDocument } from './docxread';
@@ -232,6 +253,10 @@ function trackedRunsMarkup(
 
 function opaqueMarkup(run: OpaqueRun, ctx: Context): string {
   if (run.newImage) return ctx.imageRun(run);
+  // A note reference is always generated from the note's current id: inserting or deleting a note
+  // renumbers the rest, and a reference written back verbatim would still point at the old id.
+  // The run's own formatting is carried over from the markup it was read from.
+  if (run.note) return noteReferenceRunXml(run.note, rprInside(run.xml));
   if (!run.xml) {
     if (run.kind === 'page') return '<w:r><w:br w:type="page"/></w:r>';
     if (run.kind === 'break') return '<w:r><w:br/></w:r>';
@@ -624,6 +649,24 @@ export async function patchDocxRich(
       additions.set('word/numbering.xml', utf8(numberingXml));
       relsXml = addRelationship(relsXml ?? null, 'numbering', 'numbering.xml').xml;
       ctXml = ensureOverride(ctXml ?? contentTypes([]), '/word/numbering.xml', 'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml');
+    }
+  }
+
+  /* footnotes / endnotes: the note's text lives in its own part, the reference in the body */
+  for (const kind of ['footnote', 'endnote'] as const) {
+    const notes = notesOf(current, kind);
+    // A file whose notes this app did not read keeps its part untouched: never delete notes that
+    // are not in the model.
+    if (!notes.length) continue;
+    const partPath = NOTES_PART[kind];
+    const before = (await loadPart(archive, partPath))?.xml ?? null;
+    const xml = buildNotesPart(kind, notes);
+    if (xml === before) continue;
+    if (before) replacements.set(partPath, utf8(xml));
+    else {
+      additions.set(partPath, utf8(xml));
+      relsXml = addRelationship(relsXml ?? null, kind === 'footnote' ? 'footnotes' : 'endnotes', kind === 'footnote' ? 'footnotes.xml' : 'endnotes.xml').xml;
+      ctXml = ensureOverride(ctXml ?? contentTypes([]), `/${partPath}`, NOTES_CONTENT_TYPE[kind]);
     }
   }
 
