@@ -159,7 +159,7 @@ describe('the number format the owner chose', () => {
     expect(shown(h.wrap, 2, 1)).toBe('2');
     // The picker is the Data tab's own control; a number format is view-level state.
     const percent = formatChoices().find((c) => c.value.includes('%'))!.value;
-    (ribbonControl(h.editor, 'data', 'numfmt') as unknown as { onChange: (v: string) => void }).onChange(percent);
+    (ribbonControl(h.editor, 'home', 'numfmt') as unknown as { onChange: (v: string) => void }).onChange(percent);
     expect(shown(h.wrap, 2, 1)).toContain('%');
 
     nameBoxTo(h.editor, 'A1');                             // insert above everything
@@ -176,7 +176,7 @@ describe('the number format the owner chose', () => {
     h.editor.render();
     nameBoxTo(h.editor, 'B3');                             // model row 2, column 1
     const percent = formatChoices().find((c) => c.value.includes('%'))!.value;
-    (ribbonControl(h.editor, 'data', 'numfmt') as unknown as { onChange: (v: string) => void }).onChange(percent);
+    (ribbonControl(h.editor, 'home', 'numfmt') as unknown as { onChange: (v: string) => void }).onChange(percent);
     expect(shown(h.wrap, 2, 1)).toContain('%');
 
     nameBoxTo(h.editor, 'A3');                             // the cursor's column is A: insert at 0

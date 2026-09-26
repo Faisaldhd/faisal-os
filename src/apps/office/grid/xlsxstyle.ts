@@ -149,7 +149,8 @@ export function addCellStyles(stylesXml: string | null, requests: readonly Style
     const openXf = baseXf.xml.slice(0, baseXf.el.openEnd - baseXf.el.start);
     const set: Record<string, string | null> = {};
 
-    if (format.bold !== undefined || format.italic !== undefined || format.underline !== undefined || format.color !== undefined) {
+    if (format.bold !== undefined || format.italic !== undefined || format.underline !== undefined || format.strike !== undefined
+      || format.color !== undefined || format.font || format.size) {
       const src = one(all(fonts)[xfAttr('fontId')] ?? all(fonts)[0]);
       const kids = childMap(src.xml, src.el);
       const toggle = (name: string, on: boolean | undefined): void => {
@@ -160,6 +161,15 @@ export function addCellStyles(stylesXml: string | null, requests: readonly Style
       toggle('b', format.bold);
       toggle('i', format.italic);
       toggle('u', format.underline);
+      toggle('strike', format.strike);
+      // A family or size of null means "the file's own": nothing to write.
+      if (format.size && Number.isFinite(format.size)) kids.set('sz', `<${prefix}sz val="${Math.round(format.size * 2) / 2}"/>`);
+      if (format.font) {
+        kids.set('name', `<${prefix}name val="${format.font.replace(/[<>&"]/g, '')}"/>`);
+        // The theme's scheme would override a family chosen by hand.
+        kids.delete('scheme');
+        kids.delete('family');
+      }
       if (format.color !== undefined) {
         if (format.color) kids.set('color', `<${prefix}color rgb="${argb(format.color)}"/>`);
         else kids.delete('color');
@@ -302,6 +312,21 @@ export interface SheetLookEdits {
   rows?: ReadonlyMap<number, number | null>;
   /** Column → px (null: back to the default width). */
   cols?: ReadonlyMap<number, number | null>;
+  /** The sheet's whole list of merged ranges; undefined leaves the file's `<mergeCells>` alone. */
+  merges?: ReadonlyArray<{ r0: number; c0: number; r1: number; c1: number }>;
+}
+
+/** What follows `<mergeCells>` in a worksheet (CT_Worksheet order): a new one goes before these. */
+const AFTER_MERGES = ['phoneticPr', 'conditionalFormatting', 'dataValidations', 'hyperlinks', 'printOptions', 'pageMargins', 'pageSetup',
+  'headerFooter', 'rowBreaks', 'colBreaks', 'customProperties', 'cellWatches', 'ignoredErrors', 'smartTags', 'drawing', 'legacyDrawing',
+  'legacyDrawingHF', 'picture', 'oleObjects', 'controls', 'webPublishItems', 'tableParts', 'extLst'];
+
+/** The `<mergeCells>` element for a list of ranges ('' for none). */
+export function mergeCellsXml(merges: ReadonlyArray<{ r0: number; c0: number; r1: number; c1: number }>, prefix = ''): string {
+  const real = merges.filter((m) => m.r1 > m.r0 || m.c1 > m.c0);
+  if (!real.length) return '';
+  const refs = real.map((m) => `<${prefix}mergeCell ref="${cellName(m.r0, m.c0)}:${cellName(m.r1, m.c1)}"/>`).join('');
+  return `<${prefix}mergeCells count="${real.length}">${refs}</${prefix}mergeCells>`;
 }
 
 /** The `s` of every cell the part has, by "row:col" (the reader's addressing). */
@@ -456,6 +481,17 @@ export function applySheetLook(xml: string, look: SheetLookEdits): string {
       if (cells.some((x) => attr(xml, x.el, 'r') === null)) throw new Error('xlsx: cells are not addressed by r');
       const at = after ? after.el.start : close;
       edits.push({ start: at, end: at, xml: cellMarkup(r, c, s) });
+    }
+  }
+
+  if (look.merges) {
+    const markup = mergeCellsXml(look.merges, prefix);
+    const existing = elements(doc, 'mergeCells')[0];
+    if (existing) edits.push({ start: existing.start, end: existing.end, xml: markup });
+    else if (markup) {
+      const next = root.children.find((c) => AFTER_MERGES.includes(localName(c.name)));
+      const at = next ? next.start : xml.lastIndexOf('<', root.end - 1);
+      edits.push({ start: at, end: at, xml: markup });
     }
   }
 

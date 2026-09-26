@@ -61,7 +61,7 @@ import type { Revision } from './writer/revisions';
 import { patchDocxRich } from './writer/docxpatch';
 import { patchDeck } from './impress/deckpatch';
 import { addRelationship, ensureOverride } from './pkg';
-import { sameCellFormat, type CellFormat } from './grid/sheetfmt';
+import { sameCellFormat, type CellFormat, type SheetFormat } from './grid/sheetfmt';
 import { addCellStyles, applySheetLook, cellStyleIds } from './grid/xlsxstyle';
 import type { AutoFilterColumn } from './grid/autofilter';
 import type { CondRule } from './calc/index';
@@ -898,6 +898,8 @@ interface LookChange {
   cells: Map<string, CellFormat>;
   rows: Map<number, number | null>;
   cols: Map<number, number | null>;
+  /** The sheet's new merge list, when the owner merged or unmerged. */
+  merges?: NonNullable<SheetFormat['merges']>;
 }
 
 /**
@@ -927,7 +929,8 @@ function lookChanges(baseline: SheetsModel, current: SheetsModel): Map<number, L
         target.set(k, a[k] ?? null);
       }
     }
-    if (change.cells.size || change.rows.size || change.cols.size) out.set(s, change);
+    if (JSON.stringify(before?.merges ?? null) !== JSON.stringify(after?.merges ?? null)) change.merges = after?.merges ?? [];
+    if (change.cells.size || change.rows.size || change.cols.size || change.merges) out.set(s, change);
   }
   return out;
 }
@@ -939,6 +942,7 @@ function resetFor(before: CellFormat | undefined, after: CellFormat | undefined)
   if (before.bold !== undefined && after?.bold === undefined) out.bold = false;
   if (before.italic !== undefined && after?.italic === undefined) out.italic = false;
   if (before.underline !== undefined && after?.underline === undefined) out.underline = false;
+  if (before.strike !== undefined && after?.strike === undefined) out.strike = false;
   if (before.color !== undefined && after?.color === undefined) out.color = null;
   if (before.fill !== undefined && after?.fill === undefined) out.fill = null;
   if (before.hAlign !== undefined && after?.hAlign === undefined) out.hAlign = null;
@@ -978,7 +982,7 @@ async function writeLooks(
       stylesXml = added.xml;
       keys.forEach((key, i) => cells.set(key, added.ids[i]));
     }
-    replacements.set(path, utf8(applySheetLook(xml, { cells, rows: change.rows, cols: change.cols })));
+    replacements.set(path, utf8(applySheetLook(xml, { cells, rows: change.rows, cols: change.cols, merges: change.merges })));
   }
   if (stylesXml !== null && stylesXml !== (stylesPart?.xml ?? null)) {
     (stylesPart ? replacements : additions).set(stylesPath, utf8(stylesXml));

@@ -209,7 +209,7 @@ export function writeXlsx(
     const cells = new Map(keys.map((key, k) => [key, added.ids[k]]));
     const rows = new Map(Object.entries(fmt.rows ?? {}).map(([k, v]) => [Number(k), v]));
     const cols = new Map(Object.entries(fmt.cols ?? {}).map(([k, v]) => [Number(k), v]));
-    return applySheetLook(xml, { cells, rows, cols });
+    return applySheetLook(xml, { cells, rows, cols, merges: fmt.merges });
   });
 
   // Charts: each sheet with charts gets a drawing part, that drawing gets its chart parts, and the

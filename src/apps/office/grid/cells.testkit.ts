@@ -39,7 +39,7 @@ export function rawAt(root: ParentNode, r: number, c: number): string | undefine
 
 /** The floating editor, when an entry is open. */
 export function openEditor(root: ParentNode): HTMLInputElement | null {
-  return root.querySelector<HTMLInputElement>('.fo-celleditor');
+  return root.querySelector<HTMLInputElement>('.fo-celleditor:not(.is-idle)');
 }
 
 /**

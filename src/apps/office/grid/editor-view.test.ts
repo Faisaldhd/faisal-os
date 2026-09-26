@@ -51,12 +51,39 @@ const nextColumnKey = (h: ReturnType<typeof harness>): string =>
   (h.editor.element.classList.contains('is-rtl-sheet') ? 'ArrowLeft' : 'ArrowRight');
 
 describe('the grid keyboard', () => {
-  it('has no text field per cell: one editor, opened only while typing', () => {
+  it('has no text field per cell: one editor, waiting unseen on the active cell', () => {
     const h = harness();
-    expect(h.wrap.querySelectorAll('input').length).toBe(0);
+    const fields = h.wrap.querySelectorAll('input');
+    expect(fields.length).toBe(1);                          // one for the whole sheet, not one per cell
+    expect(fields[0].classList.contains('is-idle')).toBe(true);
+    expect(fields[0].closest('.fo-td')?.classList.contains('is-active')).toBe(true);
     expect(h.wrap.tabIndex).toBe(0);
     h.key('x');
     expect(h.wrap.querySelectorAll('input').length).toBe(1);
+    expect(openEditor(h.wrap)?.value).toBe('x');
+  });
+
+  it('a character that arrives without a key (an input method, dictation) opens the entry', () => {
+    const h = harness();
+    clickCell(cellEl(h.wrap, 2, 0)!);
+    const waiting = h.wrap.querySelector<HTMLInputElement>('.fo-celleditor.is-idle')!;
+    expect(waiting.closest('.fo-td')).toBe(cellEl(h.wrap, 2, 0));   // it follows the active cell
+    waiting.value = 'إجمالي';
+    waiting.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(openEditor(h.wrap)).toBe(waiting);
+    h.key('Enter', {}, waiting);
+    expect(h.model().grids[0].rows[2][0]).toBe('إجمالي');
+  });
+
+  it('arrows reaching the waiting editor move the cell, and a typed key stays in it', () => {
+    const h = harness();
+    clickCell(cellEl(h.wrap, 1, 1)!);
+    const waiting = h.wrap.querySelector<HTMLInputElement>('.fo-celleditor.is-idle')!;
+    h.key('ArrowDown', {}, waiting);
+    expect(h.nameBox.value).toBe('B3');
+    const typed = new KeyboardEvent('keydown', { key: 'q', bubbles: true, cancelable: true });
+    h.wrap.querySelector<HTMLInputElement>('.fo-celleditor')!.dispatchEvent(typed);
+    expect(typed.defaultPrevented).toBe(false);             // the browser types it into the editor
   });
 
   it('moves with the arrows and names the cell in the name box', () => {

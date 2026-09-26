@@ -74,7 +74,7 @@ describe('choosing a number format', () => {
     const h = harness(sheet());
     selectCell(h.editor, 'B2');                            // model row 1, column 1 ('2')
     expect(shown(h.wrap, 1, 1)).toBe('2');
-    ribbonControl(h.editor, 'data', 'numfmt').onChange(PERCENT());
+    ribbonControl(h.editor, 'home', 'numfmt').onChange(PERCENT());
 
     expect(h.model().sheetFormats?.[0]?.cells?.['1:1']).toMatchObject({ numFmt: PERCENT() });
     expect(shown(h.wrap, 1, 1)).toContain('%');            // and the screen shows it at once
@@ -85,9 +85,9 @@ describe('choosing a number format', () => {
   it('takes it away again when General is chosen, so no false format is saved', () => {
     const h = harness(sheet());
     selectCell(h.editor, 'B2');
-    ribbonControl(h.editor, 'data', 'numfmt').onChange(THOUSANDS());
+    ribbonControl(h.editor, 'home', 'numfmt').onChange(THOUSANDS());
     expect(h.model().sheetFormats?.[0]?.cells?.['1:1']?.numFmt).toBe(THOUSANDS());
-    ribbonControl(h.editor, 'data', 'numfmt').onChange('General');
+    ribbonControl(h.editor, 'home', 'numfmt').onChange('General');
     // `null` is the model's "remove it": the save writes the default `xf` for that cell.
     expect(h.model().sheetFormats?.[0]?.cells?.['1:1']).toMatchObject({ numFmt: null });
     expect(shown(h.wrap, 1, 1)).toBe('2');
@@ -96,7 +96,7 @@ describe('choosing a number format', () => {
   it('leaves a filter-hidden row alone: the format goes to the model row on screen', () => {
     const h = harness(sheet());
     selectCell(h.editor, 'B2');
-    ribbonControl(h.editor, 'data', 'numfmt').onChange(PERCENT());
+    ribbonControl(h.editor, 'home', 'numfmt').onChange(PERCENT());
     expect(h.model().sheetFormats?.[0]?.cells?.['1:1']?.numFmt).toBe(PERCENT());
     expect(h.model().sheetFormats?.[0]?.cells?.['0:1']).toBeUndefined();
   });
@@ -106,7 +106,7 @@ describe('what the model holds reaches the file and comes back', () => {
   it('writes a builtin number format as its own numFmtId, and the reader shows it', async () => {
     const h = harness(sheet());
     selectCell(h.editor, 'B2');
-    ribbonControl(h.editor, 'data', 'numfmt').onChange(PERCENT());   // 0% is builtin 9
+    ribbonControl(h.editor, 'home', 'numfmt').onChange(PERCENT());   // 0% is builtin 9
     const model = h.model();
 
     const saved = writeXlsx(model.grids, model.formulas, model.sheetFormats);
@@ -129,7 +129,7 @@ describe('what the model holds reaches the file and comes back', () => {
     const custom = '#,##0.00 "ر.س"';
     const h = harness(sheet());
     selectCell(h.editor, 'B2');
-    ribbonControl(h.editor, 'data', 'numfmt').onChange(custom);
+    ribbonControl(h.editor, 'home', 'numfmt').onChange(custom);
     const model = h.model();
 
     const saved = writeXlsx(model.grids, model.formulas, model.sheetFormats);
@@ -147,8 +147,8 @@ describe('what the model holds reaches the file and comes back', () => {
   it('writes nothing for a format the owner took back to General', async () => {
     const h = harness(sheet());
     selectCell(h.editor, 'B2');
-    ribbonControl(h.editor, 'data', 'numfmt').onChange(PERCENT());
-    ribbonControl(h.editor, 'data', 'numfmt').onChange('General');
+    ribbonControl(h.editor, 'home', 'numfmt').onChange(PERCENT());
+    ribbonControl(h.editor, 'home', 'numfmt').onChange('General');
     const model = h.model();
     const saved = writeXlsx(model.grids, model.formulas, model.sheetFormats);
     const styles = new TextDecoder().decode((await entryData(readRawZip(saved), 'xl/styles.xml')) ?? new Uint8Array());
