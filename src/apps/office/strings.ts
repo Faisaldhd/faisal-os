@@ -678,7 +678,7 @@ defineStrings('office', {
     filterHidden: 'مُصفّى: {n} صفًا مخفيًا',
     filterShown: 'مُصفّى: {n} من {total} صفًا',
     filterAllShown: 'كل الصفوف ظاهرة',
-    filterViewOnly: 'التصفية للعرض فقط ولا تُحفظ في ملف .xlsx بعد.',
+    filterSaved: 'تُحفظ التصفية في الملف (autoFilter) وتُقرأ عند الفتح.',
 
     condScale: 'سلّم لوني',
     condBars: 'أشرطة بيانات',
@@ -700,7 +700,6 @@ defineStrings('office', {
     numTime: 'وقت',
     numScientific: 'علمي',
     numText: 'نص',
-    numFormatViewOnly: 'تنسيق الأرقام للعرض فقط ولا يُحفظ في ملف .xlsx بعد.',
 
     chartInsert: 'مخطط',
     chartTitle: 'إدراج مخطط',
@@ -764,7 +763,7 @@ defineStrings('office', {
     filterHidden: 'Filtered: {n} rows hidden',
     filterShown: 'Filtered: {n} of {total} rows',
     filterAllShown: 'All rows are shown',
-    filterViewOnly: 'Filtering is view-level only and is not written to the .xlsx yet.',
+    filterSaved: 'The filter is written to the file (autoFilter) and read back at open.',
 
     condScale: 'Colour scale',
     condBars: 'Data bars',
@@ -786,7 +785,6 @@ defineStrings('office', {
     numTime: 'Time',
     numScientific: 'Scientific',
     numText: 'Text',
-    numFormatViewOnly: 'Number formats are view-level only and are not written to the .xlsx yet.',
 
     chartInsert: 'Chart',
     chartTitle: 'Insert a chart',

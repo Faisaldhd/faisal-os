@@ -63,6 +63,7 @@ import { patchDeck } from './impress/deckpatch';
 import { addRelationship, ensureOverride } from './pkg';
 import { sameCellFormat, type CellFormat } from './grid/sheetfmt';
 import { addCellStyles, applySheetLook, cellStyleIds } from './grid/xlsxstyle';
+import type { AutoFilterColumn } from './grid/autofilter';
 import { shiftFormulasIn, shiftSheetPart, workbookBlocks, type StructOp } from './grid/structure';
 import {
   formulaAt, gridWidth, insertColumn, insertRow, removeColumn, removeRow, sameFormat, type DeckModel, type DocModel, type Grid, type OfficeKind, type OfficeModel,
@@ -141,6 +142,11 @@ export async function patchPackage(
     }
     if (kind === 'xlsx') {
       if (!isSheets(baseline) || !isSheets(current) || current.kind !== 'xlsx') return null;
+      // The AutoFilter is an element of its own, written whole after `</sheetData>`. A surgical
+      // patch carries cell values and styles, not that element, so a change to the filter takes the
+      // rebuild — which writes it, and warns the owner first — rather than saving a file that
+      // quietly disagrees with the screen.
+      if (!sameAutoFilter(baseline.autoFilters, current.autoFilters)) return null;
       return await patchXlsx(archive, baseline, current);
     }
     if (baseline.kind !== 'pptx' || current.kind !== 'pptx') return null;
@@ -155,7 +161,24 @@ export async function patchPackage(
 }
 
 function isSheets(model: OfficeModel): model is SheetsModel {
-  return model.kind === 'xlsx' || model.kind === 'csv';
+  return model.kind === 'xlsx' || model.kind === 'csv';}
+
+/** True when both books carry the same AutoFilter on every sheet (so the patch can keep the file). */
+function sameAutoFilter(
+  a: Record<number, readonly AutoFilterColumn[]> | undefined,
+  b: Record<number, readonly AutoFilterColumn[]> | undefined,
+): boolean {
+  const sheets = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})].map(Number));
+  for (const sheet of sheets) {
+    const left = a?.[sheet] ?? [];
+    const right = b?.[sheet] ?? [];
+    if (left.length !== right.length) return false;
+    for (let i = 0; i < left.length; i++) {
+      if (left[i].col !== right[i].col) return false;
+      if (left[i].keys.join('\u0000') !== right[i].keys.join('\u0000')) return false;
+    }
+  }
+  return true;
 }
 
 export async function loadPart(archive: RawZip, name: string): Promise<{ bytes: Uint8Array; xml: string } | null> {
