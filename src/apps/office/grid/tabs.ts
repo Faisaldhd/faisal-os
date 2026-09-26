@@ -149,7 +149,7 @@ export function calcTabs(c: CalcCommands): RibbonTab[] {
             value: () => String(style()?.size ?? 11),
             onChange: (v) => c.setSize(Number(v)),
           },
-          { type: 'button', id: 'bold', icon: 'bold', label: t('office.bold'), enabled: fmt, pressed: () => !!style()?.bold, run: () => c.toggle('bold') },
+          { type: 'button', id: 'bold', phone: true, icon: 'bold', label: t('office.bold'), enabled: fmt, pressed: () => !!style()?.bold, run: () => c.toggle('bold') },
           { type: 'button', id: 'italic', icon: 'italic', label: t('office.italic'), enabled: fmt, pressed: () => !!style()?.italic, run: () => c.toggle('italic') },
           { type: 'button', id: 'underline', icon: 'underline', label: t('office.underline'), enabled: fmt, pressed: () => !!style()?.underline, run: () => c.toggle('underline') },
           { type: 'button', id: 'strike', icon: 'strike', label: t('office.formatStrike'), enabled: fmt, pressed: () => !!style()?.strike, run: () => c.toggle('strike') },
@@ -163,7 +163,7 @@ export function calcTabs(c: CalcCommands): RibbonTab[] {
               { label: t('office.bordersNone'), run: () => c.borders('none') },
             ],
           },
-          { type: 'color', id: 'fillcolor', icon: 'fill', label: t('office.fillColor'), palette: PALETTE, noneLabel: t('office.noFill'), enabled: fmt, value: () => style()?.fill ?? null, onPick: (hex) => c.setFill(hex) },
+          { type: 'color', id: 'fillcolor', phone: true, icon: 'fill', label: t('office.fillColor'), palette: PALETTE, noneLabel: t('office.noFill'), enabled: fmt, value: () => style()?.fill ?? null, onPick: (hex) => c.setFill(hex) },
           { type: 'color', id: 'fontcolor', icon: 'textColor', label: t('office.fontColor'), palette: PALETTE, noneLabel: t('office.automatic'), enabled: fmt, value: () => style()?.color ?? null, onPick: (hex) => c.setColor(hex) },
         ],
       },
@@ -226,9 +226,9 @@ export function calcTabs(c: CalcCommands): RibbonTab[] {
       },
       {
         label: t('office.groupEditing'), controls: [
-          { type: 'button', id: 'autosum', icon: 'sum', label: t('office.autoSum'), enabled: c.canFormula, run: () => c.autoSum('SUM') },
+          { type: 'button', id: 'autosum', phone: true, icon: 'sum', label: t('office.autoSum'), enabled: c.canFormula, run: () => c.autoSum('SUM') },
           { type: 'menu', id: 'autofns', icon: 'fx', label: t('office.autoFunctions'), enabled: c.canFormula, items: autoItems },
-          { type: 'menu', id: 'sortfilter', icon: 'filter', label: t('office.sortFilter'), enabled: c.editable, items: sortFilterItems },
+          { type: 'menu', id: 'sortfilter', phone: true, icon: 'filter', label: t('office.sortFilter'), enabled: c.editable, items: sortFilterItems },
           { type: 'button', id: 'find', icon: 'find', label: t('office.findReplace'), run: () => c.find() },
         ],
       },
@@ -255,7 +255,7 @@ export function calcTabs(c: CalcCommands): RibbonTab[] {
       },
       {
         label: t('office.groupFunctions'), controls: [
-          { type: 'button', id: 'insertfn', icon: 'fx', label: t('office.insertFunction'), showLabel: true, enabled: c.canFormula, run: () => c.insertFunction() },
+          { type: 'button', id: 'insertfn', phone: true, icon: 'fx', label: t('office.insertFunction'), showLabel: true, enabled: c.canFormula, run: () => c.insertFunction() },
         ],
       },
     ],

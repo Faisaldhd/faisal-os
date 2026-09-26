@@ -971,8 +971,12 @@
   .fo-calc .fo-namebox { width: 72px; }
   .fo-calc .fo-namebox, .fo-calc .fo-fxinput { min-height: 44px; }
 }
+/* Phone: while an entry is open the formula bar sits right on top of the on-screen keyboard. */
+.fo-calc.is-kbd .fo-fxbar { position: fixed; inset-inline: 0; z-index: 70; background: var(--app-glass-strong); box-shadow: 0 -4px 16px rgba(0, 0, 0, .25); }
 @media (pointer: coarse) {
   .fo-calc .fo-td { height: 44px; }
+  /* A 44px row reads better with its text in the middle (a cell's own vertical alignment still wins). */
+  .fo-calc .fo-cellview { align-items: center; }
   .fo-calc .fo-sheettab { min-height: 44px; }
 }
 

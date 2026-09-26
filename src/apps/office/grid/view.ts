@@ -72,6 +72,7 @@ import { chartPlacement, chartSource, chartTitleFrom, draggedChart, resizedChart
 import { cellMatches, findAll, removeDuplicates, replaceInCell, type CellHit, type FindOptions } from './find';
 import { checklistFor, conditionFrom, itemText, selectAllState, setVisible, toggleItem, visibleItems } from './filterpopup';
 import './strings';
+import { barTopAboveKeyboard, keyboardInset } from './phone';
 
 /** Columns drawn past the data on an editable sheet, so a sheet still looks like one. */
 const PAD_ROWS = 30;
@@ -1122,6 +1123,13 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     fillTarget = null;
     fillPreview = [];
     try { fillHandle.setPointerCapture(ev.pointerId); } catch { /* no capture outside a browser */ }
+  });
+  // With the pointer captured (always so for a finger) the cells get no enter events: the handle
+  // itself asks which cell is under the pointer, so a touch drag previews and fills like a mouse.
+  fillHandle.addEventListener('pointermove', (ev) => {
+    if (!filling || typeof document.elementFromPoint !== 'function') return;
+    const hit = cellOf(document.elementFromPoint(ev.clientX, ev.clientY));
+    if (hit) enterCell(hit.row, hit.col);
   });
 
   /** Marks the cells the release would write. Preview only — the model is untouched. */
@@ -2888,6 +2896,20 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   // Redraw the window on every scroll (passive: the wheel is never blocked) and whenever the
   // viewport changes size, so a resized window draws the rows that really fit.
   scroll.addEventListener('scroll', () => updateWindow(), { passive: true });
+
+  // On a phone the formula bar rides on top of the on-screen keyboard while an entry is open.
+  const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+  function liftBar(): void {
+    const typing = !!editAt || document.activeElement === fx;
+    const inset = vv ? keyboardInset(window.innerHeight, vv.height, vv.offsetTop) : 0;
+    const lift = typing && inset > 0 && !!vv;
+    root.classList.toggle('is-kbd', lift);
+    fxbar.style.top = lift && vv ? `${barTopAboveKeyboard(vv.height, vv.offsetTop, fxbar.offsetHeight || 52)}px` : '';
+  }
+  vv?.addEventListener('resize', liftBar);
+  vv?.addEventListener('scroll', liftBar);
+  root.addEventListener('focusin', liftBar);
+  root.addEventListener('focusout', () => setTimeout(liftBar, 0));
   sizes = observeSize(scroll, () => {
     // A wider window draws the extra columns that now fit; the rows follow the height.
     if (table && columnsToDraw(dataCols, ctx.editable() ? 3 : 0, PAD_COLS, MAX_COLS, viewportWidth(), widthOf) > cols) renderGrid();
@@ -2908,6 +2930,8 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     },
     dispose(): void {
       document.removeEventListener('pointerup', onPointerUp);
+      vv?.removeEventListener('resize', liftBar);
+      vv?.removeEventListener('scroll', liftBar);
       sizes?.disconnect();
       sizes = null;
       closePanel();
