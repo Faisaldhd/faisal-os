@@ -17,6 +17,7 @@
  * phone and the view where a whole paragraph is formatted at once.
  */
 import { t } from '../../../kernel/i18n';
+import { insertMergeField, openMailMergePanel } from './mailmerge-ui';
 import type { Editor, EditorContext, StatusInfo } from '../editor';
 import type { DocModel, Edit, ParagraphAlign, ParagraphFormat } from '../model';
 import { paragraphEdit } from '../model';
@@ -2042,6 +2043,16 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
               { type: 'button', id: 'pagebreak', icon: 'pageBreak', label: t('office.insertPageBreak'), showLabel: true, enabled: can, run: insertPageBreak },
               { type: 'button', id: 'toc', icon: 'toc', label: t('office.insertToc'), showLabel: true, enabled: can, run: insertToc },
               { type: 'button', id: 'date', icon: 'date', label: t('office.insertDate'), showLabel: true, enabled: can, run: insertDate },
+              {
+                type: 'button', id: 'mailmerge', icon: 'toc', label: t('office.mergeTitle'), showLabel: true, enabled: can,
+                run: () => openMailMergePanel(ctx, {
+                  paragraphs: () => {
+                    const m = ctx.model();
+                    return m && m.kind === 'docx' ? m.paragraphs : [];
+                  },
+                  insertField: (name) => insertMergeField(ctx, name),
+                }),
+              },
             ],
           },
           {
