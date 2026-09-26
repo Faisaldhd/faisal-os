@@ -12,7 +12,32 @@ import { decodeXml, readRels } from '../writer/docxread';
 import { columnName } from '../xml';
 import { parseAutoFilter } from './autofilter';
 import { ourOperator, parseConditionalFormatting, parseDxfs, type ParsedCfRule } from './condfmt-xml';
+import { parseAnchors, parseChartSpace } from './chart-xml';
 import type { CellStyle as CondStyle, CondRule } from '../calc/index';
+import type { ChartObject } from './sheetview';
+
+/** A part target (`../drawings/drawing1.xml`) resolved against the part that names it. */
+function resolveTarget(base: string, target: string): string {
+  const parts = base.split('/').slice(0, -1);
+  for (const piece of target.split('/')) {
+    if (piece === '..') parts.pop();
+    else if (piece !== '.' && piece !== '') parts.push(piece);
+  }
+  return parts.join('/');
+}
+
+/** The rectangle a chart's two references cover: `S!$A$2:$A$4` and `S!$B$2:$B$4` -> rows 1..3. */
+function rangeFromRefs(categoryRef: string | undefined, valueRef: string | undefined): { r0: number; c0: number; r1: number; c1: number } {
+  const cells = [categoryRef, valueRef].flatMap((ref) =>
+    [...((ref ?? '').split('!').pop() ?? '').matchAll(/\$?([A-Z]{1,3})\$?(\d+)/g)].map((m) => ({ row: Number(m[2]) - 1, col: columnIndex(m[1]) })));
+  if (!cells.length) return { r0: 0, c0: 0, r1: 0, c1: 0 };
+  return {
+    r0: Math.min(...cells.map((c) => c.row)),
+    r1: Math.max(...cells.map((c) => c.row)),
+    c0: Math.min(...cells.map((c) => c.col)),
+    c1: Math.max(...cells.map((c) => c.col)),
+  };
+}
 
 /**
  * One `<cfRule>` as this app's own rule, or null when the file's rule is one we cannot show the way
@@ -85,6 +110,8 @@ export interface SheetLook {
   filters?: Map<number, string[]>;
   /** The file's own conditional-formatting rules, in file order (the ones this app can read). */
   condRules?: CondRule[];
+  /** The file's own floating charts, with the place and data the drawing and chart parts state. */
+  charts?: ChartObject[];
 }
 
 export interface BookLook { styles: CellStyle[]; sheets: SheetLook[] }
@@ -261,6 +288,36 @@ export async function readBookLook(bytes: Uint8Array): Promise<BookLook> {
       if (parsedCond.length) {
         const rules = parsedCond.map(({ rule }) => condRuleFrom(rule, rule.dxfId === undefined ? undefined : dxfStyles[rule.dxfId])).filter((r): r is CondRule => r !== null);
         if (rules.length) look.condRules = rules;
+      }
+      // Charts: the sheet points at a drawing part, whose anchors point at the chart parts.
+      const sheetRels = await readRels(archive, path);
+      const drawingRel = [...sheetRels.values()].find((r) => r.type === 'drawing');
+      if (drawingRel) {
+        // `readRels` already resolves a target against the part that names it.
+        const drawingPath = drawingRel.target;
+        const drawingPart = await text(drawingPath);
+        if (drawingPart) {
+          const drawingRels = await readRels(archive, drawingPath);
+          const found: ChartObject[] = [];
+          for (const anchor of parseAnchors(drawingPart)) {
+            const target = anchor.relId ? drawingRels.get(anchor.relId)?.target : undefined;
+            if (!target) continue;
+            const chartPart = await text(target);
+            const parsed = chartPart ? parseChartSpace(chartPart) : null;
+            if (!parsed) continue;
+            found.push({
+              id: `filechart${found.length + 1}`,
+              type: parsed.kind,
+              range: rangeFromRefs(parsed.categoryRef, parsed.valueRef),
+              title: parsed.title,
+              x: anchor.x,
+              y: anchor.y,
+              w: anchor.w || 320,
+              h: anchor.h || 200,
+            });
+          }
+          if (found.length) look.charts = found;
+        }
       }
       const shared = new Map<string, { formula: string; row: number; col: number }>();
       let rowCount = 0;

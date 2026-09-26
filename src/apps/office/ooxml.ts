@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Office — writing Word (.docx) and Excel (.xlsx) packages.
  *
  * Both are ZIP archives of XML parts. Every part written here is built from the
@@ -13,8 +13,10 @@ import { utf8, writeZip, type ZipInput } from './zip';
 import { addCellStyles, addDxfs, applySheetLook, MINIMAL_STYLES } from './grid/xlsxstyle';
 import type { SheetFormat } from './grid/sheetfmt';
 import { autoFilterRef, autoFilterXml, type AutoFilterColumn } from './grid/autofilter';
+import { chartContentType, chartSpaceXml, drawingContentType, drawingElement, drawingRelsXml, drawingXml, withDrawing, type ChartKind, type ChartToWrite } from './grid/chart-xml';
 import { conditionalFormattingXml, dxfBody, sqrefOf } from './grid/condfmt-xml';
 import type { CellStyle, CondRule } from './calc/index';
+import type { ChartObject } from './grid/sheetview';
 import { columnName } from './xml';
 
 /** The style a rule paints with, whatever kind of rule it is (`''` for the ones without one). */
@@ -165,6 +167,7 @@ export function writeXlsx(
   formats?: Record<number, SheetFormat>,
   autoFilters?: Record<number, readonly AutoFilterColumn[]>,
   condRules?: Record<number, readonly CondRule[]>,
+  charts?: Record<number, readonly ChartObject[]>,
 ): Uint8Array {
   const sheets: Grid[] = grids.length ? [...grids] : [{ name: 'Sheet1', rows: [], truncated: false }];
   const taken = new Set<string>();
@@ -174,8 +177,11 @@ export function writeXlsx(
     return name;
   });
 
-  // Formatting: every styled cell gets an xf built over the default one.
+  // Formatting: every styled cell gets an xf built over the default one; and a sheet with charts
+  // gets a drawing part whose number is worked out first, so its worksheet can point at it.
   let styles = MINIMAL_STYLES;
+  const drawingNoOf = new Map<number, number>();
+  for (let i = 0; i < sheets.length; i++) if ((charts?.[i] ?? []).length) drawingNoOf.set(i, drawingNoOf.size + 1);
   const sheetXml = sheets.map((grid, i) => {
     // Conditional formatting: the rules first (they give the dxfs their indices), then the element
     // that points at them, which belongs after the AutoFilter.
@@ -190,7 +196,8 @@ export function writeXlsx(
       const width = grid.rows.reduce((w, row) => Math.max(w, row.length), 0);
       conditional = conditionalFormattingXml(rules, sqrefOf({ r0: 0, c0: 0, r1: Math.max(0, grid.rows.length - 1), c1: Math.max(0, width - 1) }, columnName), ids);
     }
-    const xml = xlsxSheet(grid, i, formulas, autoFilters?.[i], conditional);
+    const drawing = drawingNoOf.has(i) ? drawingElement('rId1') : null;
+    const xml = withDrawing(xlsxSheet(grid, i, formulas, autoFilters?.[i], conditional), drawing);
     const fmt = formats?.[i];
     if (!fmt) return xml;
     const keys = Object.keys(fmt.cells ?? {});
@@ -202,6 +209,57 @@ export function writeXlsx(
     return applySheetLook(xml, { cells, rows, cols });
   });
 
+  // Charts: each sheet with charts gets a drawing part, that drawing gets its chart parts, and the
+  // worksheet points at the drawing (the `<drawing r:id>` above). Parts are numbered per book.
+  const drawingParts: ZipInput[] = [];
+  const chartParts: ZipInput[] = [];
+  const drawingSheets = drawingNoOf;
+  let nextChart = 0;
+  const sheetCharts = sheets.map((grid, i) => {
+    const list = charts?.[i] ?? [];
+    if (!list.length) return null;
+    const written: ChartToWrite[] = list.map((chart) => {
+      const index = nextChart++;
+      const rows = grid.rows;
+      const values: number[] = [];
+      const categories: string[] = [];
+      for (let r = chart.range.r0; r <= chart.range.r1; r++) {
+        const row = rows[r] ?? [];
+        const value = Number((row[chart.range.c1] ?? '').trim());
+        if (!Number.isFinite(value)) continue;           // a header or a blank: no point for it
+        values.push(value);
+        categories.push(row[chart.range.c0] ?? '');
+      }
+      const col = (c: number): string => columnName(c);
+      const ref = (c: number): string => `${names[i]}!$${col(c)}$${chart.range.r0 + 1}:$${col(c)}$${chart.range.r1 + 1}`;
+      return {
+        index,
+        kind: (chart.type === 'line' ? 'line' : chart.type === 'pie' ? 'pie' : 'bar') as ChartKind,
+        title: chart.title,
+        values,
+        categories,
+        valueRef: ref(chart.range.c1),
+        categoryRef: ref(chart.range.c0),
+        x: chart.x,
+        y: chart.y,
+        w: chart.w,
+        h: chart.h,
+      };
+    });
+    return written;
+  });
+  for (const [sheet, drawingNo] of drawingSheets) {
+    const written = sheetCharts[sheet] as ChartToWrite[];
+    drawingParts.push(
+      { name: `xl/drawings/drawing${drawingNo}.xml`, data: utf8(drawingXml(written)) },
+      { name: `xl/drawings/_rels/drawing${drawingNo}.xml.rels`, data: utf8(drawingRelsXml(written)) },
+      { name: `xl/worksheets/_rels/sheet${sheet + 1}.xml.rels`, data: utf8(`${DECL}<Relationships xmlns="${RELS_NS}">` +
+        `<Relationship Id="rId1" Type="${DOC_REL}/drawing" Target="../drawings/drawing${drawingNo}.xml"/>` +
+        '</Relationships>') },
+    );
+    for (const chart of written) chartParts.push({ name: `xl/charts/chart${chart.index + 1}.xml`, data: utf8(chartSpaceXml(chart)) });
+  }
+
   const parts: ZipInput[] = [
     {
       name: '[Content_Types].xml',
@@ -210,6 +268,8 @@ export function writeXlsx(
         '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>',
         ...sheets.map((_, i) =>
           `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`),
+        ...[...drawingSheets.values()].map((n) => `<Override PartName="/xl/drawings/drawing${n}.xml" ContentType="${drawingContentType}"/>`),
+        ...chartParts.map((_, i) => `<Override PartName="/xl/charts/chart${i + 1}.xml" ContentType="${chartContentType}"/>`),
       ])),
     },
     {
@@ -234,6 +294,8 @@ export function writeXlsx(
     },
     { name: 'xl/styles.xml', data: utf8(styles) },
     ...sheets.map((_, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: utf8(sheetXml[i]) })),
+    ...drawingParts,
+    ...chartParts,
   ];
   return writeZip(parts);
 }
