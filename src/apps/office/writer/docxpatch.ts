@@ -173,6 +173,20 @@ export function paraPropsMarkup(
       out = setChildren(out, 'pPr', PPR_ORDER, new Map([['spacing', `<w:spacing w:line="${value}" w:lineRule="auto"/>`]]));
     }
   }
+  if (differs('indent')) {
+    // Only the start edge changes: a hanging or first-line indent and the end edge stay as they were.
+    const doc = parsePart(out || '<w:pPr></w:pPr>');
+    const ind = child(doc.roots[0], 'ind');
+    const value = f.indent ? Math.round(f.indent * 20) : null;
+    if (ind) {
+      let open = out.slice(ind.start, ind.end).replace(/\s+w:(start|left)(Chars)?="[^"]*"/g, '');
+      if (value) open = open.replace(/^<w:ind/, `<w:ind w:start="${value}"`);
+      if (/^<w:ind\s*\/>$/.test(open)) open = '';
+      out = `${out.slice(0, ind.start)}${open}${out.slice(ind.end)}`;
+    } else if (value) {
+      out = setChildren(out, 'pPr', PPR_ORDER, new Map([['ind', `<w:ind w:start="${value}"/>`]]));
+    }
+  }
   return out;
 }
 
@@ -761,7 +775,7 @@ export function charProps(runs: readonly Run[]): string {
 }
 
 function sameParagraph(a: ParagraphFormat | undefined, b: ParagraphFormat | undefined): boolean {
-  const keys = ['align', 'dir', 'style', 'list', 'line'] as const;
+  const keys = ['align', 'dir', 'style', 'list', 'line', 'indent'] as const;
   return keys.every((k) => (a?.[k] ?? undefined) === (b?.[k] ?? undefined) || (k === 'list' && (a?.[k] ?? null) === null && (b?.[k] ?? null) === null));
 }
 

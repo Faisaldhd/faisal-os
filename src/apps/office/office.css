@@ -715,6 +715,75 @@
   .fo-writer .fo-panel-tab, .fo-writer .fo-nav-item, .fo-writer .fo-link { min-height: 44px; }
 }
 
+/* WPS-style Writer: styles gallery, ruler, header/footer bands, columns, reading mode, phone bar */
+.fo-writer { position: relative; }
+.faisal-office[data-kind="docx"] .fo-stylechip {
+  appearance: none; flex: none; display: flex; align-items: center; justify-content: center; width: 72px; height: 44px; padding: 0 8px;
+  border: 1px solid var(--app-hairline); border-radius: 6px; background: #fff; color: #1a1d26; cursor: pointer; overflow: hidden;
+  transition: border-color 140ms var(--fo-ease), box-shadow 140ms var(--fo-ease);
+}
+.faisal-office[data-kind="docx"] .fo-stylechip:hover { border-color: var(--app-blue); }
+.faisal-office[data-kind="docx"] .fo-stylechip[aria-pressed="true"] { border-color: var(--app-copper); box-shadow: inset 0 -2px 0 var(--app-copper); }
+.faisal-office[data-kind="docx"] .fo-stylechip:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+.faisal-office[data-kind="docx"] .fo-stylechip:disabled { opacity: .5; cursor: default; }
+.faisal-office[data-kind="docx"] .fo-stylechip-sample { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2; max-width: 100%; }
+.fo-writer .fo-ruler { position: sticky; top: 0; z-index: 3; height: 20px; margin: 0 auto 8px; background: #d5d9e2; border-radius: 3px; box-shadow: 0 1px 2px rgba(0, 0, 0, .2); overflow: hidden; direction: ltr; }
+.fo-writer .fo-ruler-text { position: absolute; top: 0; bottom: 0; background: #fff; }
+.fo-writer .fo-ruler-tick { position: absolute; bottom: 0; width: 1px; height: 4px; background: #8a8f9c; }
+.fo-writer .fo-ruler-tick.is-major { height: 8px; }
+.fo-writer .fo-ruler-num { position: absolute; top: 1px; transform: translateX(-50%); font: 9px/1 var(--faisal-font, sans-serif); color: #5d6372; font-variant-numeric: tabular-nums; }
+.fo-writer .fo-header, .fo-writer .fo-footer { pointer-events: auto; border-radius: 4px; cursor: text; transition: box-shadow 140ms var(--fo-ease); }
+.fo-writer .fo-header:hover, .fo-writer .fo-footer:hover { box-shadow: 0 0 0 1px rgba(91, 141, 239, .45); }
+.fo-writer .fo-header { display: flex; flex-direction: column; justify-content: flex-end; }
+.fo-writer .fo-colrule { position: absolute; width: 0; border-inline-start: 1px dashed #c9cdd6; }
+.fo-writer .fo-colbreak { border-top-style: dotted; }
+.fo-writer .fo-op-field { color: inherit; border-bottom: 1px dotted #9aa3b5; }
+.fo-writer.is-reading .fo-flow { caret-color: transparent; }
+.fo-writer .fo-wreading { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-block-end: 1px solid var(--app-hairline); color: var(--app-text-2); background: var(--app-glass); }
+.fo-writer .fo-wreading-label { flex: 1; font-weight: 600; }
+.fo-writer .fo-wphone { display: none; }
+.faisal-office[data-kind="docx"]:has(.fo-writer.is-reading) .fo-ribbon { display: none; }
+.faisal-office[data-kind="docx"] .fo-ctxanchor { position: absolute; width: 0; height: 0; pointer-events: none; }
+.faisal-office[data-kind="docx"] .fo-symbols { display: grid; grid-template-columns: repeat(8, 36px); gap: 4px; }
+.faisal-office[data-kind="docx"] .fo-symbol { appearance: none; width: 36px; height: 36px; border: 1px solid var(--app-hairline); border-radius: 6px; background: transparent; color: var(--app-text); font: 16px/1 var(--fo-doc-font); cursor: pointer; }
+.faisal-office[data-kind="docx"] .fo-symbol:hover { background: var(--app-blue-soft); }
+.faisal-office[data-kind="docx"] .fo-symbol:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+.faisal-office[data-kind="docx"] .fo-form-error { margin: 0; min-height: 16px; font-size: 12px; color: var(--app-danger); }
+.faisal-office[data-kind="docx"] .fo-form-error:empty { display: none; }
+.faisal-office[data-kind="docx"] .fo-form-hint { margin: 0; font-size: 12px; color: var(--app-text-3); }
+.faisal-office[data-kind="docx"] .fo-wphone-colors { grid-template-columns: repeat(6, 44px); }
+.faisal-office[data-kind="docx"] .fo-wphone-colors .fo-swatch { width: 44px; height: 44px; }
+@media (pointer: coarse) {
+  .faisal-office[data-kind="docx"] .fo-symbols { grid-template-columns: repeat(6, 44px); }
+  .faisal-office[data-kind="docx"] .fo-symbol { width: 44px; height: 44px; }
+}
+@container office (max-width: 700px) {
+  .faisal-office[data-kind="docx"] .fo-phonebar { display: none; }
+  .fo-writer .fo-ruler { display: none; }
+  .fo-writer .fo-wphone {
+    display: flex; gap: 4px; padding: 4px 8px; flex: none; border-block-start: 1px solid var(--app-hairline);
+    background: var(--app-glass-strong);
+  }
+  .fo-writer .fo-wphone .fo-btn { flex: 1 1 0; min-width: 0; min-height: 52px; height: auto; flex-direction: column; gap: 2px; padding: 4px; font-size: 13px; }
+  .fo-writer .fo-wphone .fo-btn-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fo-writer .fo-wphone[data-mode="read"] .fo-btn.is-primary { flex: 2 1 0; flex-direction: row; gap: 8px; }
+  .fo-writer .fo-wphone-note { flex: 2; align-self: center; text-align: center; color: var(--app-text-2); font-size: 13px; }
+}
+
+/* The Writer's ribbon is laid out like WPS: two rows of small tools per group, big labelled buttons
+   (icon above its words), and every tab the same height, so switching tabs never moves the page. */
+.faisal-office[data-kind="docx"] .fo-toolpanel { min-height: 88px; }
+.faisal-office[data-kind="docx"] .fo-group[data-mode="full"] .fo-btn.has-label { flex-direction: column; gap: 4px; min-height: 68px; padding: 4px 8px; font-size: 12px; }
+.faisal-office[data-kind="docx"] .fo-group:has(> .fo-group-tools > [data-control="font"]) > .fo-group-tools { flex-wrap: wrap; width: 320px; row-gap: 4px; align-content: center; }
+.faisal-office[data-kind="docx"] .fo-group:has(> .fo-group-tools > [data-control="bullets"]) > .fo-group-tools { flex-wrap: wrap; width: 212px; row-gap: 4px; align-content: center; }
+.faisal-office[data-kind="docx"] .fo-group:has(> .fo-group-tools > [data-control="find"]) > .fo-group-tools { flex-wrap: wrap; width: 68px; row-gap: 4px; align-content: center; }
+.faisal-office[data-kind="docx"] .fo-group:has(> .fo-group-tools > [data-control="paste"]) > .fo-group-tools { display: grid; grid-template-columns: auto 32px; grid-template-rows: 32px 32px; gap: 4px; align-content: center; }
+.faisal-office[data-kind="docx"] .fo-group-tools > [data-control="paste"] { grid-row: span 2; }
+.faisal-office[data-kind="docx"] .fo-group[data-mode="full"] .fo-group-tools > [data-control="paste"].has-label { min-height: 68px; }
+.faisal-office[data-kind="docx"] .fo-groupdrop .fo-group-tools { width: auto; max-width: 336px; }
+.faisal-office[data-kind="docx"] .fo-stylegallery { display: grid; grid-template-rows: repeat(2, 32px); grid-auto-flow: column; grid-auto-columns: 72px; gap: 4px; max-width: 300px; overflow-x: auto; overflow-y: hidden; }
+.faisal-office[data-kind="docx"] .fo-stylegallery .fo-stylechip { height: 32px; }
+
 /* ═══════════════════════════════ app: calc ═══════════════════════════════ */
 
 .fo-calc { flex: 1; min-height: 0; display: flex; flex-direction: column; }

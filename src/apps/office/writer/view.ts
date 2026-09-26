@@ -19,7 +19,7 @@
 import { t } from '../../../kernel/i18n';
 import { insertMergeField, openMailMergePanel } from './mailmerge-ui';
 import type { Editor, EditorContext, StatusInfo } from '../editor';
-import type { DocModel, Edit, ParagraphAlign, ParagraphFormat } from '../model';
+import type { DocModel, Edit, OfficeModel, ParagraphAlign, ParagraphFormat } from '../model';
 import { paragraphEdit } from '../model';
 import { button, clamp, el, observeSize } from '../ui/dom';
 import { icon } from '../ui/icons';
@@ -43,6 +43,20 @@ import {
 } from './revisions';
 import { shellConfirm } from '../../../shell/dialog';
 import { blockText, type DocBlock, type OpaqueRun, type Run, type RunProps } from './types';
+import { shortcutOf, typedDirection, type WriterCommand } from './keys';
+import {
+  DEFAULT_PAGE, MARGINS, PAGES_FIELD, PAGE_FIELD, PAPERS, hfDisplay, hfText, marginsOf, orientationOf, paperOf,
+  withColumns, withMargins, withOrientation, withPaper,
+  type HeaderFooterSetup, type HfSetup, type MarginName, type PageSetup, type PaperName,
+} from './layout';
+import { tableOp, type TableOp } from './tableops';
+import { paginateColumns } from './paginate';
+import { textOfRange } from './docops';
+import { xmlText } from '../xml';
+import { textElement } from '../patch';
+import { NARROW_BREAKPOINT } from '../ui/dom';
+import { menuList } from '../ui/popover';
+import './strings';
 
 interface Pos { b: number; o: number }
 interface Sel { from: Pos; to: Pos; collapsed: boolean }
@@ -60,6 +74,23 @@ const HIGHLIGHTS: Record<string, string> = {
 };
 const HL_BY_HEX = Object.fromEntries(Object.entries(HIGHLIGHTS).map(([k, v]) => [v, k]));
 const GAP = 24;
+const LINES = [1, 1.15, 1.5, 2, 2.5, 3];
+/** The symbols the Insert › Symbol grid offers (Latin, maths, currency, arrows, Arabic punctuation). */
+const SYMBOLS = [
+  '©', '®', '™', '§', '¶', '°', '±', '×', '÷', '≠', '≈', '≤', '≥', '∞', '√', '∑', 'π', 'µ',
+  '€', '£', '¥', '¢', '﷼', '←', '→', '↑', '↓', '↔', '•', '…', '—', '–', '«', '»', '‰', '✓',
+  '✗', '★', '☆', '♥', '☎', '✉', '٪', '؟', '،', '؛', '﴾', '﴿',
+];
+type ShapeKind = 'rect' | 'rounded' | 'ellipse' | 'arrow' | 'line' | 'star';
+const SHAPES: ReadonlyArray<[ShapeKind, string]> = [
+  ['rect', 'office.wShapeRect'], ['rounded', 'office.wShapeRounded'], ['ellipse', 'office.wShapeEllipse'],
+  ['arrow', 'office.wShapeArrow'], ['line', 'office.wShapeLine'], ['star', 'office.wShapeStar'],
+];
+
+/** A `<w:br w:type="column"/>` run: the text moves on to the next column. */
+function isColumnBreak(run: OpaqueRun): boolean {
+  return run.kind !== 'page' && /<w:br\b[^>]*w:type="column"/.test(run.xml);
+}
 
 /** CSS text-align for a Word alignment: left/right are logical in a right-to-left paragraph. */
 export function cssAlign(align: ParagraphAlign | undefined): string {
@@ -161,6 +192,15 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
   let caretPage = 0;
   let wordToken = 0;
   let selectedImage: { b: number; run: number } | null = null;
+  /** Where `pending` (formatting chosen with no selection) applies: it is dropped once the caret moves. */
+  let pendingAt: Pos | null = null;
+  /** Reading mode: the page is shown, nothing is editable (the phone opens a document this way). */
+  let reading = false;
+  /** True while the phone layout's editing tools are open (the owner pressed Edit). */
+  let phoneEditing = false;
+  /** The phone layout (a narrow window) was seen: it starts in reading mode once. */
+  let narrowSeen = false;
+  let showRuler = true;
   const mediaUrls = new Map<string, string>();
   const newUrls = new WeakMap<Uint8Array, string>();
   const opaqueText = new WeakMap<HTMLElement, string>();
@@ -188,12 +228,21 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
   flow.setAttribute('aria-label', t('office.documentBody'));
   flow.spellcheck = true;
   stage.append(pageLayer, flow);
-  canvas.append(stage);
+  const ruler = el('div', 'fo-ruler');
+  ruler.setAttribute('aria-hidden', 'true');
+  canvas.append(ruler, stage);
   const draft = el('div', 'fo-draft');
   draft.hidden = true;
   const side = el('aside', 'fo-side');
   side.hidden = true;
-  main.append(canvas, draft);
+  // The phone's bottom bar: an Edit button while reading, the compact editing tools while editing.
+  const phoneBar = el('div', 'fo-wphone');
+  phoneBar.setAttribute('role', 'toolbar');
+  phoneBar.setAttribute('aria-label', t('office.wMobileTools'));
+  // Reading mode on a desktop window: one clear way back to editing.
+  const readingBar = el('div', 'fo-wreading');
+  readingBar.hidden = true;
+  main.append(readingBar, canvas, draft, phoneBar);
   root.append(main, side);
 
   /* ─────────────────────────── the look of a paragraph ─────────────────────────── */
@@ -208,7 +257,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     return lookOf(tpl, seen);
   }
 
-  interface ParaView { dir: 'rtl' | 'ltr'; /** Direction guessed from the text for display (the file states none). */ autoDir: boolean; align: ParagraphAlign | undefined; text: TextLook; marker?: string; spaceBefore: number; spaceAfter: number; line?: number; lineExact: boolean; indStart: number; indEnd: number; firstLine: number; outline?: number; shade?: string }
+  interface ParaView { dir: 'rtl' | 'ltr'; /** Direction guessed from the text for display (the file states none). */ autoDir: boolean; /** The file or the owner states a direction (else the page uses `dir="auto"`). */ stated: boolean; align: ParagraphAlign | undefined; text: TextLook; marker?: string; spaceBefore: number; spaceAfter: number; line?: number; lineExact: boolean; indStart: number; indEnd: number; firstLine: number; outline?: number; shade?: string }
 
   function paraView(i: number, counters: Map<string, number>): ParaView {
     const m = doc();
@@ -237,6 +286,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     return {
       dir,
       autoDir,
+      stated: stated !== undefined,
       align: format.align !== undefined ? format.align ?? undefined : para.align,
       text: styled.text,
       marker,
@@ -244,7 +294,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       spaceAfter: para.after ?? (look ? 0 : 8),
       line: format.line ?? para.line,
       lineExact: format.line ? false : !!para.lineExact,
-      indStart: (para.indStart ?? 0) + listIndent,
+      indStart: (format.indent !== undefined ? format.indent ?? 0 : para.indStart ?? 0) + listIndent,
       indEnd: para.indEnd ?? 0,
       firstLine: para.firstLine ?? (listIndent ? -18 : 0),
       outline: format.style !== undefined ? styled.outline : pl?.outline,
@@ -333,6 +383,11 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       span.append(el('span', 'fo-pagebreak-label', t('office.pageBreak')));
       return span;
     }
+    if (isColumnBreak(run)) {
+      span.classList.add('fo-pagebreak', 'fo-colbreak');
+      span.append(el('span', 'fo-pagebreak-label', t('office.wColumnBreak')));
+      return span;
+    }
     if (run.kind === 'note' && run.note) {
       // A note reference is drawn as the number the reader sees. The badge is a MARKER, never text:
       // `reconcile()` and `locate()` read the paragraph back from the page and skip exactly the
@@ -379,7 +434,9 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     const view = paraView(i, counters);
     const p = el('div', 'fo-p');
     p.dataset.i = String(i);
-    p.dir = view.dir;
+    // A paragraph whose direction nothing states reads like `dir="auto"`: Arabic right-to-left,
+    // English left-to-right, each by its own first letter.
+    p.dir = view.stated ? view.dir : 'auto';
     // Without w:bidi, Word's left/right are physical edges even for Arabic text.
     p.style.textAlign = view.autoDir && (view.align === 'left' || view.align === 'right') ? view.align : cssAlign(view.align);
     p.style.fontFamily = fontStack(view.dir === 'rtl' ? view.text.fontCs ?? view.text.font : view.text.font);
@@ -767,18 +824,56 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     paginateTimer = window.setTimeout(() => { paginateTimer = 0; layoutPages(); }, 60);
   }
 
-  function pageGeometry(): { w: number; h: number; top: number; bottom: number; left: number; right: number } {
-    const p = look?.page ?? { w: 595.3, h: 841.9, top: 72, bottom: 72, left: 72, right: 72 };
-    return { w: p.w * PX, h: p.h * PX, top: p.top * PX, bottom: p.bottom * PX, left: p.left * PX, right: p.right * PX };
+  /** The page the document is laid out on: the owner's setup, else the file's section, else A4. */
+  function pageSetup(): PageSetup {
+    const own = doc()?.page;
+    if (own) return own;
+    const p = look?.page;
+    return p ? { w: p.w, h: p.h, top: p.top, bottom: p.bottom, left: p.left, right: p.right, header: p.header, footer: p.footer, cols: p.cols, colGap: p.colGap } : DEFAULT_PAGE;
+  }
+
+  function pageGeometry(): { w: number; h: number; top: number; bottom: number; left: number; right: number; cols: number; colGap: number } {
+    const p = pageSetup();
+    return { w: p.w * PX, h: p.h * PX, top: p.top * PX, bottom: p.bottom * PX, left: p.left * PX, right: p.right * PX, cols: Math.max(1, p.cols), colGap: p.colGap * PX };
+  }
+
+  /** The document's default header and footer: the owner's, else the file's. */
+  function hfNow(): HeaderFooterSetup {
+    const own = doc()?.headerFooter;
+    if (own) return own;
+    const of = (hf: { lines: Array<{ text: string; align?: ParagraphAlign }> } | undefined): HfSetup | null =>
+      hf?.lines.length ? { text: hfText(hf.lines), align: hf.lines[0].align ?? 'left' } : null;
+    return { header: of(look?.headers.default), footer: of(look?.footers.default) };
+  }
+
+  /** The body's direction, which a header or footer written here follows. */
+  function docRtl(): boolean {
+    return paraView(0, new Map()).dir === 'rtl';
   }
 
   function headerFooter(kind: 'headers' | 'footers', page: number): HTMLElement | null {
+    const cls = kind === 'headers' ? 'fo-header' : 'fo-footer';
+    const own = doc()?.headerFooter;
+    // A first-page header the file keeps (titlePg) still shows on the first page.
+    if (own && !(page === 0 && look?.page.titlePage)) {
+      const hf = own[kind === 'headers' ? 'header' : 'footer'];
+      if (!hf) return null;
+      const box = el('div', cls);
+      const rtl = docRtl();
+      for (const line of hf.text.split('\n')) {
+        const row = el('div', 'fo-hfline', hfDisplay(line, page + 1, pageCount));
+        row.dir = rtl ? 'rtl' : 'ltr';
+        row.style.textAlign = cssAlign(hf.align);
+        box.append(row);
+      }
+      return box;
+    }
     const set = look?.[kind];
     const hf = page === 0 && look?.page.titlePage ? set?.first : set?.default;
     if (!hf) return null;
-    const box = el('div', kind === 'headers' ? 'fo-header' : 'fo-footer');
+    const box = el('div', cls);
     for (const line of hf.lines) {
-      const row = el('div', 'fo-hfline', line.text.replace(/\u0001/g, String(page + 1)).replace(/\u0002/g, String(pageCount)));
+      const row = el('div', 'fo-hfline', hfDisplay(line.text, page + 1, pageCount));
       row.dir = line.rtl ? 'rtl' : 'ltr';
       row.style.textAlign = cssAlign(line.align);
       if (line.size) row.style.fontSize = `${line.size}pt`;
@@ -787,47 +882,130 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     return box;
   }
 
+  /** The margin band above or below a page's text: a double-click there edits the header or footer. */
+  function hfZone(kind: 'headers' | 'footers', g: ReturnType<typeof pageGeometry>, page: number): HTMLElement {
+    const setup = pageSetup();
+    const box = headerFooter(kind, page) ?? el('div', `${kind === 'headers' ? 'fo-header' : 'fo-footer'} is-empty`);
+    box.title = t(kind === 'headers' ? 'office.wHeader' : 'office.wFooter');
+    if (kind === 'headers') box.style.top = `${setup.header * PX}px`;
+    else box.style.bottom = `${setup.footer * PX}px`;
+    box.style.insetInline = `${g.left}px ${g.right}px`;
+    const band = kind === 'headers' ? g.top - setup.header * PX : g.bottom - setup.footer * PX;
+    box.style.minHeight = `${Math.max(12, band - 4)}px`;
+    box.addEventListener('dblclick', () => { if (can() && !reading) openHeaderFooter(kind === 'headers' ? 'header' : 'footer'); });
+    return box;
+  }
+
   function layoutPages(): void {
     const g = pageGeometry();
+    const cols = fluid ? 1 : g.cols;
+    const colWidth = (g.w - g.left - g.right - (cols - 1) * g.colGap) / cols;
     stage.style.width = fluid ? '' : `${g.w}px`;
-    flow.style.width = fluid ? '' : `${g.w - g.left - g.right}px`;
+    flow.style.width = fluid ? '' : `${colWidth}px`;
     flow.style.insetInlineStart = '';
     flow.style.left = fluid ? '' : `${g.left}px`;
     flow.style.top = fluid ? '' : `${g.top}px`;
+    flow.style.height = '';
+    for (const unit of units) { unit.style.top = ''; unit.style.insetInlineStart = ''; unit.style.position = ''; }
     if (fluid) {
       for (const unit of units) unit.style.marginTop = '';
       pageLayer.replaceChildren();
       pageCount = 1;
       stage.style.height = '';
+      renderRuler();
       ctx.refresh();
       return;
     }
     const heights = units.map((u) => u.offsetHeight);
     const breaks = new Set<number>();
-    units.forEach((u, k) => { if (u.querySelector(':scope > .fo-pagebreak, :scope .fo-p > .fo-pagebreak') && k + 1 < units.length) breaks.add(k + 1); });
-    const result = paginate(heights, { height: g.h, gap: GAP, top: 0, bottom: g.top + g.bottom }, breaks);
+    const columnBreaks = new Set<number>();
     units.forEach((u, k) => {
-      const want = result.pushes[k] ? `${result.pushes[k]}px` : '';
-      if (u.style.marginTop !== want) u.style.marginTop = want;
+      if (k + 1 >= units.length) return;
+      if (u.querySelector(':scope > .fo-pagebreak:not(.fo-colbreak), :scope .fo-p > .fo-pagebreak:not(.fo-colbreak)')) breaks.add(k + 1);
+      else if (u.querySelector(':scope > .fo-colbreak, :scope .fo-p > .fo-colbreak')) columnBreaks.add(k + 1);
     });
-    pageCount = result.pages;
+    const stride = g.h + GAP;
+    let pages: number;
+    if (cols > 1) {
+      // Newspaper columns: each block is moved (relatively, never in the DOM) to its column's slot.
+      const content = g.h - g.top - g.bottom;
+      const laid = paginateColumns(heights, content, cols, breaks, columnBreaks);
+      let natural = 0;
+      units.forEach((u, k) => {
+        const slot = laid.slots[k];
+        if (u.style.marginTop) u.style.marginTop = '';
+        u.style.position = 'relative';
+        u.style.top = `${slot.page * stride + slot.y - natural}px`;
+        u.style.insetInlineStart = `${slot.col * (colWidth + g.colGap)}px`;
+        natural += heights[k];
+      });
+      pages = laid.pages;
+      pageOfUnit = laid.slots.map((slot) => slot.page);
+      flow.style.height = `${Math.max(0, pages * g.h + (pages - 1) * GAP - g.top - g.bottom)}px`;
+    } else {
+      const result = paginate(heights, { height: g.h, gap: GAP, top: 0, bottom: g.top + g.bottom }, breaks);
+      units.forEach((u, k) => {
+        const want = result.pushes[k] ? `${result.pushes[k]}px` : '';
+        if (u.style.marginTop !== want) u.style.marginTop = want;
+      });
+      pages = result.pages;
+      pageOfUnit = result.pageOf;
+    }
+    pageCount = pages;
     const layer: HTMLElement[] = [];
-    for (let k = 0; k < result.pages; k++) {
+    for (let k = 0; k < pages; k++) {
       const page = el('div', 'fo-page');
-      page.style.top = `${k * (g.h + GAP)}px`;
+      page.style.top = `${k * stride}px`;
       page.style.height = `${g.h}px`;
-      const header = headerFooter('headers', k);
-      if (header) { header.style.top = `${(look?.page.header ?? 36) * PX}px`; header.style.insetInline = `${g.left}px ${g.right}px`; page.append(header); }
-      const footer = headerFooter('footers', k);
-      if (footer) { footer.style.bottom = `${(look?.page.footer ?? 36) * PX}px`; footer.style.insetInline = `${g.left}px ${g.right}px`; page.append(footer); }
+      page.append(hfZone('headers', g, k), hfZone('footers', g, k));
+      for (let c = 1; c < cols; c++) {
+        const rule = el('div', 'fo-colrule');
+        rule.style.insetInlineStart = `${g.left + c * colWidth + (c - 0.5) * g.colGap}px`;
+        rule.style.top = `${g.top}px`;
+        rule.style.bottom = `${g.bottom}px`;
+        page.append(rule);
+      }
       layer.push(page);
     }
     pageLayer.replaceChildren(...layer);
-    stage.style.height = `${result.pages * g.h + (result.pages - 1) * GAP}px`;
-    pageOfUnit = result.pageOf;
+    stage.style.height = `${pages * g.h + (pages - 1) * GAP}px`;
     updateCaretPage();
+    renderRuler();
     ctx.refresh();
   }
+
+  /** The horizontal ruler over the page: the text area between the margins, a tick every half centimetre. */
+  function renderRuler(): void {
+    const g = pageGeometry();
+    ruler.hidden = !showRuler || fluid || mode !== 'page' || reading;
+    if (ruler.hidden) return;
+    ruler.replaceChildren();
+    ruler.style.width = `${g.w}px`;
+    ruler.style.zoom = String(zoom);
+    const rtl = docRtl();
+    const text = el('div', 'fo-ruler-text');
+    // Word's left and right margins are physical edges of the page, in either direction.
+    text.style.left = `${g.left}px`;
+    text.style.right = `${g.right}px`;
+    ruler.append(text);
+    const half = (72 / 2.54) * PX / 2;
+    const origin = rtl ? g.w - g.right : g.left;
+    const span = rtl ? origin : g.w - origin;
+    const before = rtl ? g.w - origin : origin;
+    for (let k = -Math.floor(before / half); k * half <= span; k++) {
+      const x = rtl ? origin - k * half : origin + k * half;
+      const major = k % 2 === 0;
+      const tick = el('div', major ? 'fo-ruler-tick is-major' : 'fo-ruler-tick');
+      tick.style.left = `${x}px`;
+      ruler.append(tick);
+      if (major && k > 0) {
+        const n = el('span', 'fo-ruler-num', String(k / 2));
+        n.style.left = `${x}px`;
+        ruler.append(n);
+      }
+    }
+  }
+
   let pageOfUnit: number[] = [];
 
   function updateCaretPage(): void {
@@ -842,6 +1020,12 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     root.classList.toggle('is-fluid', fluid);
     if (fitWidth && width > 0 && !fluid) zoom = clamp((width - 48) / g.w, 0.5, 1);
     stage.style.zoom = fluid ? '' : String(zoom);
+    // A phone opens the document to read it first; its Edit button brings the editing tools.
+    const narrow = isNarrow();
+    if (narrow && !narrowSeen) { narrowSeen = true; setReading(true); }
+    else if (!narrow && narrowSeen) { narrowSeen = false; if (reading) setReading(false); }
+    readingBar.hidden = !reading || narrow;
+    renderPhoneBar();
     schedulePaginate();
   }
 
@@ -918,14 +1102,35 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     return total;
   }
 
+  /**
+   * A selection boundary as a paragraph position. A boundary inside a paragraph is read from its
+   * text; one that sits BETWEEN paragraphs (Select All puts both ends on the flow itself, a triple
+   * click ends on a table cell) is the start of the first paragraph after it, or the end of the
+   * last one before it — so a selection made that way is formatted, not silently ignored.
+   */
+  function posOf(node: Node, offset: number): Pos | null {
+    const p = paraOf(node);
+    if (p && flow.contains(p)) return { b: Number(p.dataset.i), o: offsetIn(p, node, offset) };
+    if (node !== flow && !flow.contains(node)) return null;
+    const point = document.createRange();
+    try { point.setStart(node, offset); } catch { return null; }
+    let last: number | null = null;
+    for (let b = 0; b < paraEls.length; b++) {
+      const para = paraEls[b];
+      if (!para) continue;
+      // The paragraph starts at or after the boundary: the boundary is its start.
+      if (point.comparePoint(para, 0) >= 0) return { b, o: 0 };
+      last = b;
+    }
+    return last === null ? null : { b: last, o: (doc()?.paragraphs[last] ?? '').length };
+  }
+
   function readSel(): Sel | null {
     const s = window.getSelection();
     if (!s || !s.rangeCount || !s.anchorNode || !s.focusNode) return null;
-    const pa = paraOf(s.anchorNode);
-    const pf = paraOf(s.focusNode);
-    if (!pa || !pf || !flow.contains(pa) || !flow.contains(pf)) return null;
-    const a: Pos = { b: Number(pa.dataset.i), o: offsetIn(pa, s.anchorNode, s.anchorOffset) };
-    const f: Pos = { b: Number(pf.dataset.i), o: offsetIn(pf, s.focusNode, s.focusOffset) };
+    const a = posOf(s.anchorNode, s.anchorOffset);
+    const f = posOf(s.focusNode, s.focusOffset);
+    if (!a || !f) return null;
     const forward = a.b < f.b || (a.b === f.b && a.o <= f.o);
     const from = forward ? a : f;
     const to = forward ? f : a;
@@ -1035,8 +1240,14 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     if (!sel) return;
     lastSel = sel;
     draftPara = null;
-    if (!sel.collapsed || pending) pending = sel.collapsed ? pending : null;
+    // Formatting picked with no selection belongs to the spot where it was picked: a selection,
+    // or a caret moved elsewhere, drops it — it never leaks into the next lines.
+    if (pending && (!sel.collapsed || !pendingAt || pendingAt.b !== sel.from.b || pendingAt.o !== sel.from.o)) {
+      pending = null;
+      pendingAt = null;
+    }
     updateCaretPage();
+    renderPhoneBar();
     ctx.refresh();
   }
 
@@ -1089,10 +1300,10 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       merged = { ...merged, runs: formatRange(merged.runs, sel.from.o, sel.from.o + text.length, applied) };
     }
     let format = formatAt(sel.from.b);
-    // A new, empty paragraph typed in Arabic becomes a right-to-left paragraph.
-    if (!blockText(first) && first.id >= (look?.paras.length ?? 0) && startsRtl(text) === true && paraView(sel.from.b, new Map()).dir === 'ltr') {
-      format = { ...(format ?? {}), dir: 'rtl' };
-    }
+    // The first letters typed into a paragraph set its direction, like `dir="auto"`: Arabic reads
+    // right-to-left and English left-to-right, and the file says so too (w:bidi), so Word agrees.
+    const turn = sel.from.b === sel.to.b ? typedDirection(beforeText, text, paraView(sel.from.b, new Map()).dir) : null;
+    if (turn) format = { ...(format ?? {}), dir: turn };
     if (/\s/.test(text)) wordToken++;
     // Tracked: the deletion (what the edit removed) and the insertion (what it typed), in the
     // paragraph's own coordinates. A burst of typing merges into one revision inside the log.
@@ -1104,8 +1315,9 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       if (text) revLog = record(revLog, { kind: 'insert', block: first.id, at: sel.from.o, text });
       renderReview();
     }
-    const key = sel.collapsed && sel.from.b === sel.to.b ? `type:${first.id}:${wordToken}` : undefined;
+    const key = sel.collapsed && sel.from.b === sel.to.b && !turn ? `type:${first.id}:${wordToken}` : undefined;
     pending = null;
+    pendingAt = null;
     commitSplice(sel.from.b, sel.to.b - sel.from.b + 1, [merged], [format], { b: sel.from.b, o: sel.from.o + text.length }, key);
   }
 
@@ -1358,9 +1570,10 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
 
   /** The formatting the toolbar shows: the selection's runs over the paragraph's style. */
   function currentProps(): RunProps & { rtl?: boolean } {
-    const sel = targetRange();
     const m = doc();
-    if (!sel || !m?.blocks) return {};
+    if (!m?.blocks) return {};
+    // No caret yet: the toolbar shows the first paragraph's font, never an empty box.
+    const sel = targetRange() ?? { from: { b: 0, o: 0 }, to: { b: 0, o: 0 }, collapsed: true };
     const base = baseLookAt(sel.from.b);
     const rtl = paraView(sel.from.b, new Map()).dir === 'rtl';
     const blocks = m.blocks;
@@ -1376,6 +1589,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       hl: props.hl,
       sz: props.sz ?? (rtl ? base.szCs ?? base.sz : base.sz) ?? 11,
       font: props.font ?? (rtl ? base.fontCs ?? base.font : base.font) ?? 'Calibri',
+      va: props.va,
       rtl,
     };
   }
@@ -1386,6 +1600,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     if (!sel || !m?.blocks || !ctx.editable()) return;
     if (sel.collapsed && draftPara === null) {
       pending = { ...(pending ?? {}) };
+      pendingAt = { ...sel.from };
       for (const [k, v] of Object.entries(patch)) (pending as Record<string, unknown>)[k] = v ?? undefined;
       ctx.refresh();
       return;
@@ -1530,20 +1745,25 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       const url = URL.createObjectURL(file);
       const img = new Image();
       img.onload = () => {
-        const g = pageGeometry();
-        const maxPt = (g.w - g.left - g.right) / PX;
-        let w = img.naturalWidth * 0.75;
-        let h = img.naturalHeight * 0.75;
-        if (w > maxPt) { h = (h * maxPt) / w; w = maxPt; }
         URL.revokeObjectURL(url);
-        const run: Run = { t: 'opaque', text: '', xml: '', kind: 'image', newImage: { data, ext, w: Math.round(w), h: Math.round(h), name: file.name } };
-        const format = currentFormat();
-        insertBlocksAfter([{ id: nextId++, runs: [run, { t: 'text', text: '', props: {} }] }], [{ align: 'center', ...(format.dir === 'rtl' ? { dir: 'rtl' } : {}) }]);
+        placePicture(data, ext, img.naturalWidth * 0.75, img.naturalHeight * 0.75, file.name);
       };
       img.onerror = () => { URL.revokeObjectURL(url); ctx.setStatus(t('office.imageFailed')); };
       img.src = url;
     });
     input.click();
+  }
+
+  /** A picture (a file, or a drawn shape) in its own centred paragraph after the caret, never wider than the text. */
+  function placePicture(data: Uint8Array, ext: 'png' | 'jpeg' | 'gif', wPt: number, hPt: number, name: string): void {
+    const g = pageGeometry();
+    const maxPt = (g.w - g.left - g.right) / PX / Math.max(1, g.cols);
+    let w = wPt;
+    let h = hPt;
+    if (w > maxPt) { h = (h * maxPt) / w; w = maxPt; }
+    const run: Run = { t: 'opaque', text: '', xml: '', kind: 'image', newImage: { data, ext, w: Math.round(w), h: Math.round(h), name } };
+    const format = currentFormat();
+    insertBlocksAfter([{ id: nextId++, runs: [run, { t: 'text', text: '', props: {} }] }], [{ align: 'center', ...(format.dir === 'rtl' ? { dir: 'rtl' } : {}) }]);
   }
 
   function insertPageBreak(): void {
@@ -1727,6 +1947,745 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     if (!sel) return;
     const text = new Intl.DateTimeFormat(document.documentElement.lang === 'ar' ? 'ar-SA-u-nu-latn' : 'en-GB', { dateStyle: 'long' }).format(new Date());
     insertText(sel, text);
+  }
+
+  /* ─────────────────────────── clipboard ─────────────────────────── */
+
+  function selectedText(): string {
+    const sel = targetRange();
+    if (!sel || sel.collapsed) return '';
+    return textOfRange(blocksNow(), sel.from, sel.to);
+  }
+
+  /** Copy (and for Cut, delete) the selection: the system clipboard gets its plain text. */
+  async function copySelection(cut: boolean): Promise<void> {
+    const sel = targetRange();
+    const text = selectedText();
+    if (!sel || !text) return;
+    try { await navigator.clipboard.writeText(text); } catch {
+      try { document.execCommand('copy'); } catch { /* nothing more to try */ }
+    }
+    if (cut && can() && !reading) deleteRange(sel);
+  }
+
+  async function pasteFromClipboard(): Promise<void> {
+    const sel = targetRange();
+    if (!sel || !can() || reading) return;
+    let text = '';
+    try { text = await navigator.clipboard.readText(); } catch { ctx.setStatus(t('office.wPasteFailed')); return; }
+    if (text) pasteText(sel, text);
+  }
+
+  /* ─────────────────────────── more formatting ─────────────────────────── */
+
+  function toggleScript(va: 'superscript' | 'subscript'): void {
+    applyRun({ va: currentProps().va === va ? null : va });
+  }
+
+  /** Clear formatting: every direct character property goes back to the paragraph style's. */
+  function clearFormatting(): void {
+    applyRun({ b: null, i: null, u: null, strike: null, color: null, hl: null, sz: null, font: null, va: null });
+  }
+
+  /** The start indent a paragraph has now, in points (its own, else its style's). */
+  function indentOf(b: number): number {
+    const own = formatAt(b)?.indent;
+    if (own !== undefined) return own ?? 0;
+    return lookOf(blocksNow()[b])?.para.indStart ?? 0;
+  }
+
+  /** Indent or outdent by half an inch (36pt), as Word's buttons do. */
+  function changeIndent(step: 1 | -1): void {
+    const sel = targetRange();
+    if (!sel) return;
+    const now = indentOf(sel.from.b);
+    const next = Math.max(0, Math.min(288, (step > 0 ? Math.floor(now / 36 + 1e-6) + 1 : Math.ceil(now / 36 - 1e-6) - 1) * 36));
+    setParaFormat({ indent: next || null });
+  }
+
+  /* ─────────────────────────── links, symbols, shapes, breaks ─────────────────────────── */
+
+  /** Puts one run at the caret (a selection is replaced first), in one undoable edit. */
+  function insertRunAtCaret(run: Run): void {
+    let sel = targetRange();
+    if (!sel || !can() || reading) return;
+    if (!sel.collapsed) { deleteRange(sel); sel = lastSel ?? sel; }
+    const pos = sel.from;
+    const block = blocksNow()[pos.b];
+    if (!block || block.locked) return;
+    const offset = clamp(pos.o, 0, blockText(block).length);
+    const runs = splitRunsAt(block.runs, offset);
+    runs.splice(runIndexAt(runs, offset), 0, run);
+    commitSplice(pos.b, 1, [{ ...block, runs }], [formatAt(pos.b)], { b: pos.b, o: offset + run.text.length });
+  }
+
+  function textField(label: string, value: string, type = 'text'): { row: HTMLElement; input: HTMLInputElement; value(): string } {
+    const row = el('label', 'fo-field');
+    row.append(el('span', 'fo-field-label', label));
+    const input = el('input', 'fo-input');
+    input.type = type;
+    input.value = value;
+    input.dir = 'auto';
+    row.append(input);
+    return { row, input, value: () => input.value };
+  }
+
+  function selectField(label: string, options: ReadonlyArray<{ value: string; label: string }>, value: string): { row: HTMLElement; value(): string } {
+    const row = el('label', 'fo-field');
+    row.append(el('span', 'fo-field-label', label));
+    const select = el('select', 'fo-select');
+    for (const o of options) { const op = el('option', undefined, o.label); op.value = o.value; select.append(op); }
+    if (!options.some((o) => o.value === value)) { const op = el('option', undefined, value); op.value = value; select.append(op); }
+    select.value = value;
+    row.append(select);
+    return { row, value: () => select.value };
+  }
+
+  function checkField(label: string, checked: boolean): { row: HTMLElement; value(): boolean } {
+    const row = el('label', 'fo-check');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = checked;
+    row.append(box, el('span', undefined, label));
+    return { row, value: () => box.checked };
+  }
+
+  function decimalField(label: string, value: number, min: number, max: number, step = 0.1): { row: HTMLElement; value(): number } {
+    const f = textField(label, String(Math.round(value * 100) / 100), 'number');
+    f.input.min = String(min);
+    f.input.max = String(max);
+    f.input.step = String(step);
+    f.input.dir = 'ltr';
+    return { row: f.row, value: () => { const n = Number(f.input.value); return Number.isFinite(n) ? clamp(n, min, max) : value; } };
+  }
+
+  /** A link as a HYPERLINK field: it needs no relationship, so it survives both saves and Word shows it as a link. */
+  function linkRun(href: string, text: string): OpaqueRun {
+    const xml = `<w:fldSimple w:instr=" HYPERLINK &quot;${xmlText(href)}&quot; "><w:r><w:rPr><w:color w:val="0563C1"/><w:u w:val="single"/></w:rPr>${textElement('w:t', null, text)}</w:r></w:fldSimple>`;
+    return { t: 'opaque', kind: 'link', text, xml };
+  }
+
+  function openLinkDialog(): void {
+    if (!can() || reading) return;
+    const keep = targetRange();
+    const body = el('div', 'fo-form');
+    const url = textField(t('office.wLinkUrl'), 'https://', 'url');
+    url.input.dir = 'ltr';
+    const text = textField(t('office.wLinkText'), selectedText().replace(/\n/g, ' '));
+    const error = el('p', 'fo-form-error');
+    error.setAttribute('role', 'alert');
+    body.append(url.row, text.row, error);
+    openModal({
+      title: t('office.wLinkTitle'), body, okLabel: t('office.insert'), cancelLabel: t('office.cancel'), host: ctx.host(),
+      onOk: () => {
+        const href = url.value().trim();
+        if (!/^(https?:\/\/|mailto:)[^\s"<>]+$/i.test(href)) { error.textContent = t('office.wLinkBad'); return false; }
+        if (keep) lastSel = keep;
+        insertRunAtCaret(linkRun(href, (text.value().trim() || href).replace(/\n/g, ' ')));
+        return true;
+      },
+    });
+  }
+
+  /** The ribbon node of a control (the visible one), to open a chooser next to it. */
+  function anchorFor(id: string): HTMLElement {
+    return [...ctx.host().querySelectorAll<HTMLElement>(`[data-control="${id}"]`)].find((n) => n.offsetParent !== null) ?? ctx.host();
+  }
+
+  function openSymbols(anchor: HTMLElement): void {
+    const keep = targetRange();
+    const grid = el('div', 'fo-symbols');
+    for (const symbol of SYMBOLS) {
+      const b = el('button', 'fo-symbol', symbol);
+      b.type = 'button';
+      b.setAttribute('aria-label', symbol);
+      b.addEventListener('click', () => {
+        pop.close();
+        if (keep) { lastSel = keep; insertText(keep, symbol); }
+      });
+      grid.append(b);
+    }
+    const pop = openPopover(anchor, grid, { label: t('office.wSymbolTitle') });
+  }
+
+  /** A shape is drawn once into a picture (PNG) and placed like any picture. */
+  function shapePng(kind: ShapeKind): Promise<Uint8Array | null> {
+    const c = document.createElement('canvas');
+    c.width = 320;
+    c.height = 200;
+    const g = c.getContext('2d');
+    if (!g) return Promise.resolve(null);
+    g.fillStyle = '#5B8DEF';
+    g.strokeStyle = '#2F5DB8';
+    g.lineWidth = 6;
+    g.lineJoin = 'round';
+    g.beginPath();
+    if (kind === 'rect') g.rect(8, 8, 304, 184);
+    else if (kind === 'rounded') g.roundRect(8, 8, 304, 184, 28);
+    else if (kind === 'ellipse') g.ellipse(160, 100, 150, 90, 0, 0, Math.PI * 2);
+    else if (kind === 'arrow') { g.moveTo(8, 70); g.lineTo(200, 70); g.lineTo(200, 12); g.lineTo(312, 100); g.lineTo(200, 188); g.lineTo(200, 130); g.lineTo(8, 130); g.closePath(); }
+    else if (kind === 'line') { g.moveTo(12, 188); g.lineTo(308, 12); }
+    else {
+      for (let k = 0; k < 10; k++) {
+        const r = k % 2 ? 40 : 96;
+        const a = -Math.PI / 2 + (k * Math.PI) / 5;
+        if (k) g.lineTo(160 + r * Math.cos(a), 104 + r * Math.sin(a)); else g.moveTo(160 + r * Math.cos(a), 104 + r * Math.sin(a));
+      }
+      g.closePath();
+    }
+    if (kind !== 'line') g.fill();
+    g.stroke();
+    return new Promise((resolve) => {
+      c.toBlob((blob) => { if (!blob) { resolve(null); return; } void blob.arrayBuffer().then((buf) => resolve(new Uint8Array(buf))); }, 'image/png');
+    });
+  }
+
+  async function insertShape(kind: ShapeKind): Promise<void> {
+    if (!can() || reading) return;
+    const data = await shapePng(kind);
+    if (!data) { ctx.setStatus(t('office.imageFailed')); return; }
+    placePicture(data, 'png', 180, 112, `${kind}.png`);
+  }
+
+  function insertColumnBreak(): void {
+    insertBlocksAfter([{ id: nextId++, runs: [{ t: 'opaque', text: '\n', xml: '<w:r><w:br w:type="column"/></w:r>', kind: 'break' }] }, emptyBlock(nextId++)], [undefined, undefined]);
+  }
+
+  /**
+   * A cross-reference to a heading: the heading gets a bookmark (once), and a REF field to it goes
+   * at the caret, showing the heading's text — Word updates it when the heading changes.
+   */
+  function insertCrossRef(target: number): void {
+    const m = doc();
+    const sel = targetRange();
+    if (!m?.blocks || !sel || !can() || reading) return;
+    const next = m.blocks.slice();
+    const heading = next[target];
+    if (!heading) return;
+    const text = blockText(heading).trim();
+    let name = '';
+    for (const run of heading.runs) {
+      const found = run.t === 'opaque' ? /<w:bookmarkStart\b[^>]*w:name="(_Ref\d+)"/.exec(run.xml) : null;
+      if (found) { name = found[1]; break; }
+    }
+    if (!name) {
+      let id = 100;
+      for (const block of next) for (const run of block.runs) {
+        const found = run.t === 'opaque' ? /<w:bookmarkStart\b[^>]*w:id="(\d+)"/.exec(run.xml) : null;
+        if (found) id = Math.max(id, Number(found[1]) + 1);
+      }
+      name = `_Ref${String(Date.now() % 1e9).padStart(9, '0')}`;
+      next[target] = {
+        ...heading,
+        runs: [
+          { t: 'opaque', kind: 'mark', text: '', xml: `<w:bookmarkStart w:id="${id}" w:name="${name}"/>` },
+          ...heading.runs,
+          { t: 'opaque', kind: 'mark', text: '', xml: `<w:bookmarkEnd w:id="${id}"/>` },
+        ],
+      };
+    }
+    const pos = sel.from;
+    const block = next[pos.b];
+    if (!block || block.locked) return;
+    const offset = clamp(pos.o, 0, blockText(block).length);
+    const runs = splitRunsAt(block.runs, offset);
+    const field: OpaqueRun = { t: 'opaque', kind: 'field', text, xml: `<w:fldSimple w:instr=" REF ${name} \\h "><w:r>${textElement('w:t', null, text)}</w:r></w:fldSimple>` };
+    runs.splice(runIndexAt(runs, offset), 0, field);
+    next[pos.b] = { ...block, runs };
+    const edit = noteEdit(next, 'xref');
+    if (!edit) return;
+    ctx.commit(edit);
+    renderFlow();
+    setCaret({ b: pos.b, o: offset + text.length });
+    ctx.refresh();
+  }
+
+  /* ─────────────────────────── page layout ─────────────────────────── */
+
+  /** One undoable edit that sets a document-level value (the page setup, the header and footer). */
+  function setDocValue<K extends 'page' | 'headerFooter'>(key: K, value: DocModel[K]): void {
+    const m = doc();
+    if (!m || !can()) return;
+    const before = m[key];
+    const put = (x: OfficeModel, v: DocModel[K] | undefined): OfficeModel => {
+      if (x.kind !== 'docx') return x;
+      const y: DocModel = { ...x };
+      if (v === undefined) delete y[key]; else y[key] = v;
+      return y;
+    };
+    ctx.commit({ apply: (x) => put(x, value), revert: (x) => put(x, before) });
+    applyZoom();
+    layoutPages();
+    ctx.refresh();
+  }
+
+  function setPage(next: PageSetup): void {
+    if (next === pageSetup()) return;
+    setDocValue('page', next);
+  }
+
+  function openCustomMargins(): void {
+    const page = pageSetup();
+    const cm = (pt: number): number => pt / (72 / 2.54);
+    const body = el('div', 'fo-form');
+    const top = decimalField(t('office.wMarginTop'), cm(page.top), 0, 10);
+    const bottom = decimalField(t('office.wMarginBottom'), cm(page.bottom), 0, 10);
+    const left = decimalField(t('office.wMarginLeft'), cm(page.left), 0, 10);
+    const right = decimalField(t('office.wMarginRight'), cm(page.right), 0, 10);
+    const error = el('p', 'fo-form-error');
+    error.setAttribute('role', 'alert');
+    body.append(top.row, bottom.row, left.row, right.row, error);
+    openModal({
+      title: t('office.wMargins'), body, okLabel: t('office.close'), cancelLabel: t('office.cancel'), host: ctx.host(),
+      onOk: () => {
+        const pt = (v: number): number => Math.round(v * (72 / 2.54) * 10) / 10;
+        const next = withMargins(page, { top: pt(top.value()), bottom: pt(bottom.value()), left: pt(left.value()), right: pt(right.value()) });
+        if (next === page) { error.textContent = t('office.wMarginsBad'); return false; }
+        setPage(next);
+        return true;
+      },
+    });
+  }
+
+  function setHeaderFooter(next: HeaderFooterSetup): void {
+    setDocValue('headerFooter', next);
+  }
+
+  /** The header and footer dialog: their text ({PAGE} and {PAGES} stand for the numbers) and alignment. */
+  function openHeaderFooter(focus: 'header' | 'footer'): void {
+    if (!can() || reading) return;
+    const now = hfNow();
+    const shown = (hf: HfSetup | null): string => (hf?.text ?? '').split(PAGE_FIELD).join('{PAGE}').split(PAGES_FIELD).join('{PAGES}');
+    const stored = (value: string): string => value.replace(/\{PAGES\}/gi, PAGES_FIELD).replace(/\{PAGE\}/gi, PAGE_FIELD);
+    const rtl = docRtl();
+    const visualOf = (hf: HfSetup | null): string => {
+      const a = hf?.align ?? 'center';
+      return a === 'center' || a === 'justify' ? 'center' : logicalAlign(a, rtl);
+    };
+    const aligns = [
+      { value: 'right', label: t('office.formatAlignRight') },
+      { value: 'center', label: t('office.formatAlignCenter') },
+      { value: 'left', label: t('office.formatAlignLeft') },
+    ];
+    const body = el('div', 'fo-form');
+    const header = textField(t('office.wHeaderText'), shown(now.header));
+    const headerAlign = selectField(t('office.wHfAlign'), aligns, visualOf(now.header));
+    const footer = textField(t('office.wFooterText'), shown(now.footer));
+    const footerAlign = selectField(t('office.wHfAlign'), aligns, visualOf(now.footer));
+    const pageNo = checkField(t('office.wHfPageNo'), (now.footer?.text ?? '').includes(PAGE_FIELD));
+    body.append(header.row, headerAlign.row, footer.row, footerAlign.row, pageNo.row, el('p', 'fo-form-hint', t('office.wHfFieldsHint')));
+    openModal({
+      title: t('office.wHeaderFooterTitle'), body, okLabel: t('office.close'), cancelLabel: t('office.cancel'), host: ctx.host(),
+      onOk: () => {
+        const make = (value: string, visual: string): HfSetup | null => {
+          const text = stored(value).trim();
+          return text ? { text, align: logicalAlign(visual as ParagraphAlign, rtl) } : null;
+        };
+        let foot = make(footer.value(), footerAlign.value());
+        if (pageNo.value() && !foot?.text.includes(PAGE_FIELD)) foot = { text: foot ? `${foot.text} ${PAGE_FIELD}` : PAGE_FIELD, align: foot?.align ?? 'center' };
+        if (!pageNo.value() && foot) foot = foot.text.replace(/[\u0001\u0002]/g, '').trim() ? { ...foot, text: foot.text.replace(/\s*[\u0001\u0002]/g, '').trim() } : null;
+        setHeaderFooter({ header: make(header.value(), headerAlign.value()), footer: foot });
+        return true;
+      },
+    });
+    (focus === 'footer' ? footer.input : header.input).focus();
+  }
+
+  /** Page numbers from the ribbon: a centred number at the top or the bottom, "Page X of Y", or none. */
+  function pageNumbers(preset: 'bottom' | 'top' | 'ofTotal' | 'remove'): void {
+    const now = hfNow();
+    const strip = (hf: HfSetup | null): HfSetup | null => {
+      if (!hf) return null;
+      const text = hf.text.split('\n').map((line) => line.replace(/[\u0001\u0002]/g, '').replace(new RegExp(`\\s*(${t('office.wPageWord')}|${t('office.wOfWord')})\\s*$`), '').trim()).filter(Boolean).join('\n');
+      return text ? { ...hf, text } : null;
+    };
+    const withNumber = (hf: HfSetup | null, field: string): HfSetup => {
+      const kept = strip(hf);
+      return { text: kept ? `${kept.text}\n${field}` : field, align: 'center' };
+    };
+    if (preset === 'remove') setHeaderFooter({ header: strip(now.header), footer: strip(now.footer) });
+    else if (preset === 'top') setHeaderFooter({ header: withNumber(now.header, PAGE_FIELD), footer: strip(now.footer) });
+    else if (preset === 'bottom') setHeaderFooter({ header: strip(now.header), footer: withNumber(now.footer, PAGE_FIELD) });
+    else setHeaderFooter({ header: strip(now.header), footer: withNumber(now.footer, `${t('office.wPageWord')} ${PAGE_FIELD} ${t('office.wOfWord')} ${PAGES_FIELD}`) });
+  }
+
+  /* ─────────────────────────── table rows and columns ─────────────────────────── */
+
+  /** The paragraphs of the new (this-session) table the caret is in. */
+  function tableRange(b: number): { start: number; end: number } | null {
+    const blocks = blocksNow();
+    const table = blocks[b]?.cell?.table;
+    if (table === undefined) return null;
+    let start = b;
+    while (start > 0 && blocks[start - 1].cell?.table === table) start--;
+    let end = b + 1;
+    while (end < blocks.length && blocks[end].cell?.table === table) end++;
+    return { start, end };
+  }
+
+  function runTableOp(op: TableOp): void {
+    const sel = targetRange();
+    const m = doc();
+    if (!sel || !m?.blocks || !can() || reading) return;
+    const range = tableRange(sel.from.b);
+    const cell = m.blocks[sel.from.b]?.cell;
+    if (!range || !cell) return;
+    const items = m.blocks.slice(range.start, range.end).map((block, i) => ({ block, format: m.formats?.[range.start + i] }));
+    const out = tableOp(items, op, cell.row, cell.col, () => nextId++);
+    if (!out) { deleteTable(); return; }
+    const size = out[0].block.cell as NonNullable<DocBlock['cell']>;
+    const row = op === 'rowBelow' ? cell.row + 1 : Math.min(cell.row, size.rows - 1);
+    const col = op === 'colAfter' ? cell.col + 1 : Math.min(cell.col, size.cols - 1);
+    commitSplice(range.start, range.end - range.start, out.map((x) => x.block), out.map((x) => x.format), null);
+    const at = out.findIndex((x) => x.block.cell?.row === row && x.block.cell?.col === col);
+    setCaret({ b: range.start + Math.max(0, at), o: 0 });
+    ctx.refresh();
+  }
+
+  function deleteTable(): void {
+    const sel = targetRange();
+    const m = doc();
+    if (!sel || !m?.blocks || !can() || reading) return;
+    const range = tableRange(sel.from.b);
+    if (!range) return;
+    const all = range.end - range.start === m.blocks.length;
+    commitSplice(range.start, range.end - range.start, all ? [emptyBlock(nextId++)] : [], all ? [undefined] : [], null);
+    const left = blocksNow().length;
+    setCaret({ b: Math.min(range.start, left - 1), o: 0 });
+    ctx.refresh();
+  }
+
+  /* ─────────────────────────── font and paragraph dialogs ─────────────────────────── */
+
+  function openFontDialog(): void {
+    const keep = targetRange();
+    if (!keep || !can() || reading) return;
+    const now = currentProps();
+    const base = baseLookAt(keep.from.b);
+    const body = el('div', 'fo-form');
+    const family = selectField(t('office.fontName'), FONTS.map((f) => ({ value: f, label: f })), now.font ?? 'Calibri');
+    const size = selectField(t('office.formatSize'), SIZES.map((n) => ({ value: String(n), label: String(n) })), String(now.sz ?? 11));
+    const toggles = (['b', 'i', 'u', 'strike'] as const).map((key) => ({
+      key, field: checkField(t({ b: 'office.formatBold', i: 'office.formatItalic', u: 'office.formatUnderline', strike: 'office.formatStrike' }[key]), now[key] === true),
+    }));
+    body.append(family.row, size.row, ...toggles.map((x) => x.field.row));
+    openModal({
+      title: t('office.wFontTitle'), body, okLabel: t('office.close'), cancelLabel: t('office.cancel'), host: ctx.host(),
+      onOk: () => {
+        const patch: PropsPatch = {};
+        if (family.value() !== now.font) patch.font = family.value();
+        const sz = Number(size.value());
+        if (sz > 0 && sz !== now.sz) patch.sz = sz;
+        for (const { key, field } of toggles) {
+          const want = field.value();
+          if (want !== (now[key] === true)) patch[key] = want === (base[key] === true) ? null : want;
+        }
+        lastSel = keep;
+        if (Object.keys(patch).length) applyRun(patch);
+        return true;
+      },
+    });
+  }
+
+  function openParagraphDialog(): void {
+    const keep = targetRange();
+    if (!keep || !can() || reading) return;
+    const now = currentFormat();
+    const body = el('div', 'fo-form');
+    const alignF = selectField(t('office.wHfAlign'), [
+      { value: 'right', label: t('office.formatAlignRight') }, { value: 'center', label: t('office.formatAlignCenter') },
+      { value: 'left', label: t('office.formatAlignLeft') }, { value: 'justify', label: t('office.formatAlignJustify') },
+    ], now.align);
+    const dirF = selectField(t('office.wDirection'), [
+      { value: 'rtl', label: t('office.dirRtl') }, { value: 'ltr', label: t('office.dirLtr') },
+    ], now.dir);
+    const lineF = selectField(t('office.lineSpacing'), LINES.map((n) => ({ value: String(n), label: String(n) })), String(now.line ?? 1.15));
+    const indentF = decimalField(t('office.wIndentPt'), indentOf(keep.from.b), 0, 288, 1);
+    body.append(alignF.row, dirF.row, lineF.row, indentF.row);
+    openModal({
+      title: t('office.wParagraphTitle'), body, okLabel: t('office.close'), cancelLabel: t('office.cancel'), host: ctx.host(),
+      onOk: () => {
+        const dir = dirF.value() === 'rtl' ? 'rtl' : 'ltr';
+        const logicalRtl = dir === 'rtl' && (now.logicalRtl || now.dir !== dir);
+        const indent = Math.round(indentF.value());
+        lastSel = keep;
+        setParaFormat({
+          align: logicalAlign(alignF.value() as ParagraphAlign, logicalRtl),
+          dir,
+          line: Number(lineF.value()) || null,
+          indent: indent || null,
+        }, keep);
+        return true;
+      },
+    });
+  }
+
+  /* ─────────────────────────── the context menu ─────────────────────────── */
+
+  /** Right-click (or the menu key): the editing menu at the pointer, a bottom sheet on a phone. */
+  function openContextMenu(x: number, y: number): void {
+    const office = root.closest<HTMLElement>('.faisal-office') ?? ctx.host();
+    const box = office.getBoundingClientRect();
+    const anchor = el('span', 'fo-ctxanchor');
+    anchor.style.left = `${x - box.left}px`;
+    anchor.style.top = `${y - box.top}px`;
+    office.append(anchor);
+    const sel = targetRange();
+    const hasSel = !!sel && !sel.collapsed;
+    const edit = can() && !reading;
+    const block = sel ? blocksNow()[sel.from.b] : undefined;
+    const inNew = !!block?.cell;
+    const inFile = !inNew && !!lookOf(block)?.cell;
+    const withIcon = (name: 'cut' | 'copy' | 'paste' | 'font' | 'lineSpacing' | 'link' | 'rowAdd' | 'colAdd' | 'rowDelete' | 'colDelete' | 'trash'): SVGSVGElement => icon(name);
+    const items: Array<MenuItem | 'sep'> = [
+      { label: t('office.wCut'), hint: 'Ctrl+X', icon: withIcon('cut'), disabled: !hasSel || !edit, run: () => { void copySelection(true); } },
+      { label: t('office.wCopy'), hint: 'Ctrl+C', icon: withIcon('copy'), disabled: !hasSel, run: () => { void copySelection(false); } },
+      { label: t('office.wPaste'), hint: 'Ctrl+V', icon: withIcon('paste'), disabled: !edit, run: () => { void pasteFromClipboard(); } },
+      'sep',
+      { label: t('office.wFont'), icon: withIcon('font'), disabled: !edit, run: openFontDialog },
+      { label: t('office.wParagraph'), icon: withIcon('lineSpacing'), disabled: !edit, run: openParagraphDialog },
+      { label: t('office.wLink'), hint: 'Ctrl+K', icon: withIcon('link'), disabled: !edit, run: openLinkDialog },
+    ];
+    if (inNew || inFile) {
+      const ok = inNew && edit;
+      items.push('sep',
+        { label: t('office.wRowAbove'), icon: withIcon('rowAdd'), disabled: !ok, run: () => runTableOp('rowAbove') },
+        { label: t('office.wRowBelow'), icon: withIcon('rowAdd'), disabled: !ok, run: () => runTableOp('rowBelow') },
+        { label: t('office.wColBefore'), icon: withIcon('colAdd'), disabled: !ok, run: () => runTableOp('colBefore') },
+        { label: t('office.wColAfter'), icon: withIcon('colAdd'), disabled: !ok, run: () => runTableOp('colAfter') },
+        { label: t('office.wDeleteRow'), icon: withIcon('rowDelete'), disabled: !ok, run: () => runTableOp('deleteRow') },
+        { label: t('office.wDeleteCol'), icon: withIcon('colDelete'), disabled: !ok, run: () => runTableOp('deleteCol') },
+        { label: t('office.wDeleteTable'), icon: withIcon('trash'), disabled: !ok, danger: true, run: deleteTable },
+      );
+      if (inFile) ctx.setStatus(t('office.wTableFileOnly'));
+    }
+    items.push('sep', { label: t('office.wSelectAll'), hint: 'Ctrl+A', run: selectAll });
+    const pop = openPopover(anchor, menuList(items, () => pop.close()), {
+      label: t('office.wContextMenu'),
+      onClose: () => { anchor.remove(); if (mode === 'page') flow.focus({ preventScroll: true }); },
+    });
+  }
+
+  flow.addEventListener('contextmenu', (ev) => {
+    if (!doc()) return;
+    ev.preventDefault();
+    let { clientX: x, clientY: y } = ev;
+    if (!x && !y) {
+      // The menu key: open at the caret.
+      const r = window.getSelection()?.rangeCount ? window.getSelection()?.getRangeAt(0).getBoundingClientRect() : null;
+      x = r?.left ?? 0;
+      y = r?.bottom ?? 0;
+    }
+    openContextMenu(x, y);
+  });
+
+  /* ─────────────────────────── commands (keyboard and phone) ─────────────────────────── */
+
+  function docEnds(): { start: Pos; end: Pos } | null {
+    const m = doc();
+    const n = m?.blocks?.length ?? 0;
+    if (!m || !n) return null;
+    return { start: { b: 0, o: 0 }, end: { b: n - 1, o: (m.paragraphs[n - 1] ?? '').length } };
+  }
+
+  function selectAll(): void {
+    const ends = docEnds();
+    if (!ends || mode !== 'page') return;
+    flow.focus({ preventScroll: true });
+    setCaret(ends.start, ends.end);
+    ctx.refresh();
+  }
+
+  /** Ctrl+Home / Ctrl+End (with Shift they extend the selection), scrolled into view. */
+  function goToEdge(end: boolean, extend: boolean): void {
+    const ends = docEnds();
+    if (!ends || mode !== 'page') return;
+    const keep = lastSel;
+    flow.focus({ preventScroll: true });
+    if (!extend || !keep) setCaret(end ? ends.end : ends.start);
+    else if (end) setCaret(keep.from, ends.end);
+    else setCaret(ends.start, keep.to);
+    const target = end ? paraEls[paraEls.length - 1] : paraEls[0];
+    target?.scrollIntoView({ block: 'nearest' });
+    if (!end) canvas.scrollTop = 0;
+    ctx.refresh();
+  }
+
+  /** Runs a command exactly as its ribbon button does. Returns false when it does not apply here. */
+  function runCommand(cmd: WriterCommand): boolean {
+    const editing = can() && !reading;
+    switch (cmd) {
+      case 'bold': if (!editing) return false; toggle('b'); return true;
+      case 'italic': if (!editing) return false; toggle('i'); return true;
+      case 'underline': if (!editing) return false; toggle('u'); return true;
+      case 'strike': if (!editing) return false; toggle('strike'); return true;
+      case 'superscript': if (!editing) return false; toggleScript('superscript'); return true;
+      case 'subscript': if (!editing) return false; toggleScript('subscript'); return true;
+      case 'clearFormat': if (!editing) return false; clearFormatting(); return true;
+      case 'alignLeft': if (!editing) return false; align('left'); return true;
+      case 'alignCenter': if (!editing) return false; align('center'); return true;
+      case 'alignRight': if (!editing) return false; align('right'); return true;
+      case 'alignJustify': if (!editing) return false; align('justify'); return true;
+      case 'indent': if (!editing) return false; changeIndent(1); return true;
+      case 'outdent': if (!editing) return false; changeIndent(-1); return true;
+      case 'link': if (!editing) return false; openLinkDialog(); return true;
+      case 'pageBreak': if (!editing) return false; insertPageBreak(); return true;
+      case 'docStart': goToEdge(false, false); return true;
+      case 'docEnd': goToEdge(true, false); return true;
+      case 'docStartExtend': goToEdge(false, true); return true;
+      case 'docEndExtend': goToEdge(true, true); return true;
+      case 'selectAll': if (mode !== 'page') return false; selectAll(); return true;
+      case 'find': openFind(false, findAnchor()); return true;
+      case 'replace': if (!editing) return false; openFind(true, findAnchor()); return true;
+      case 'print': printDoc(); return true;
+      default: return false;
+    }
+  }
+
+  /* ─────────────────────────── reading mode and the phone ─────────────────────────── */
+
+  function isNarrow(): boolean {
+    const office = root.closest<HTMLElement>('.faisal-office');
+    const width = office?.clientWidth ?? root.clientWidth;
+    return width > 0 && width < NARROW_BREAKPOINT;
+  }
+
+  /** Reading mode: the pages alone, nothing editable. The phone opens every document this way. */
+  function setReading(on: boolean): void {
+    reading = on;
+    if (on) phoneEditing = false;
+    root.classList.toggle('is-reading', on);
+    flow.contentEditable = ctx.editable() && !on ? 'true' : 'false';
+    readingBar.hidden = !on || isNarrow();
+    renderReadingBar();
+    renderRuler();
+    renderPhoneBar();
+    ctx.refresh();
+  }
+
+  function renderReadingBar(): void {
+    const label = el('span', 'fo-wreading-label', t('office.wReadingMode'));
+    const edit = button('edit', t('office.wEdit'), () => { setReading(false); flow.focus({ preventScroll: true }); }, { showLabel: true, primary: true });
+    edit.disabled = !ctx.editable();
+    readingBar.replaceChildren(icon('reading'), label, edit);
+  }
+
+  /** What the phone's editing bar is about right now: a selection, a table cell, or the caret. */
+  function phoneContext(): 'read' | 'selection' | 'table' | 'caret' {
+    if (reading || !phoneEditing) return 'read';
+    const sel = targetRange();
+    if (sel && !sel.collapsed) return 'selection';
+    if (sel && blocksNow()[sel.from.b]?.cell) return 'table';
+    return 'caret';
+  }
+
+  let phoneShown = '';
+  function renderPhoneBar(force = false): void {
+    const kind = phoneContext();
+    const sig = `${kind}:${ctx.editable()}:${can()}`;
+    if (!force && sig === phoneShown) return;
+    phoneShown = sig;
+    const tools: HTMLElement[] = [];
+    const add = (name: Parameters<typeof button>[0], label: string, run: (anchor: HTMLElement) => void, opts: { primary?: boolean; disabled?: boolean; pressed?: boolean } = {}): void => {
+      const b = button(name, label, () => run(b), { showLabel: true, keepFocus: true, primary: opts.primary, toggle: opts.pressed !== undefined, cls: 'fo-wphone-btn' });
+      if (opts.pressed !== undefined) b.setAttribute('aria-pressed', String(opts.pressed));
+      b.disabled = !!opts.disabled;
+      tools.push(b);
+    };
+    if (kind === 'read') {
+      add('navigator', t('office.navigator'), () => { sideOpen = !(sideOpen && sideTab === 'nav'); sideTab = 'nav'; renderSide(); });
+      add('find', t('office.find'), (a) => openFind(false, a));
+      if (ctx.editable()) add('edit', t('office.wEdit'), () => { phoneEditing = true; setReading(false); flow.focus({ preventScroll: true }); }, { primary: true });
+      else tools.push(el('span', 'fo-wphone-note', t('office.wReadOnlyFile')));
+    } else {
+      if (kind === 'selection') {
+        const p = currentProps();
+        add('bold', t('office.formatBold'), () => { toggle('b'); renderPhoneBar(true); }, { pressed: p.b === true });
+        add('italic', t('office.formatItalic'), () => { toggle('i'); renderPhoneBar(true); }, { pressed: p.i === true });
+        add('underline', t('office.formatUnderline'), () => { toggle('u'); renderPhoneBar(true); }, { pressed: p.u === true });
+      } else if (kind === 'table') {
+        add('undo', t('office.undo'), () => ctx.undo());
+        add('table', t('office.wTableOps'), (a) => openPhoneSheet(a, 'table'));
+      } else {
+        add('undo', t('office.undo'), () => ctx.undo());
+        add('redo', t('office.redo'), () => ctx.redo());
+      }
+      add('font', t('office.wMobileFormat'), (a) => openPhoneSheet(a, 'format'));
+      if (kind !== 'selection') add('plus', t('office.wMobileInsert'), (a) => openPhoneSheet(a, 'insert'));
+      add('check', t('office.wDoneEditing'), () => { phoneEditing = false; setReading(true); }, { primary: true });
+    }
+    phoneBar.replaceChildren(...tools);
+    phoneBar.dataset.mode = kind;
+  }
+
+  /** The phone's bottom sheets: formatting, inserting, and a table's rows and columns — large targets only. */
+  function openPhoneSheet(anchor: HTMLElement, which: 'format' | 'insert' | 'table'): void {
+    const box = el('div', 'fo-sheet-ribbon');
+    const group = (label: string): HTMLElement => { box.append(el('div', 'fo-sheet-group', label)); const g = el('div', 'fo-sheet-grid'); box.append(g); return g; };
+    const act = (g: HTMLElement, name: Parameters<typeof button>[0], label: string, run: () => void, pressed?: boolean): void => {
+      const b = button(name, label, () => { pop.close(); run(); }, { showLabel: true, keepFocus: true, toggle: pressed !== undefined });
+      if (pressed !== undefined) b.setAttribute('aria-pressed', String(pressed));
+      g.append(b);
+    };
+    if (which === 'format') {
+      const p = currentProps();
+      const f = currentFormat();
+      const font = group(t('office.groupFont'));
+      const size = el('select', 'fo-select');
+      size.setAttribute('aria-label', t('office.formatSize'));
+      for (const n of SIZES) { const op = el('option', undefined, String(n)); op.value = String(n); size.append(op); }
+      size.value = String(p.sz ?? 11);
+      size.addEventListener('change', () => { const n = Number(size.value); if (n > 0) applyRun({ sz: n }); });
+      font.append(size);
+      act(font, 'bold', t('office.formatBold'), () => toggle('b'), p.b === true);
+      act(font, 'italic', t('office.formatItalic'), () => toggle('i'), p.i === true);
+      act(font, 'underline', t('office.formatUnderline'), () => toggle('u'), p.u === true);
+      act(font, 'strike', t('office.formatStrike'), () => toggle('strike'), p.strike === true);
+      act(font, 'clearFormat', t('office.wClearFormat'), clearFormatting);
+      const colors = group(t('office.textColor'));
+      for (const hex of ['000000', 'C00000', 'C8894B', '00B050', '0070C0', '7030A0']) {
+        const sw = el('button', 'fo-swatch');
+        sw.type = 'button';
+        sw.style.background = `#${hex}`;
+        sw.setAttribute('aria-label', `#${hex}`);
+        sw.title = `#${hex}`;
+        sw.addEventListener('mousedown', (ev) => ev.preventDefault());
+        sw.addEventListener('click', () => { pop.close(); applyRun({ color: hex }); });
+        colors.append(sw);
+      }
+      colors.classList.add('fo-wphone-colors');
+      const para = group(t('office.groupParagraph'));
+      act(para, 'alignRight', t('office.formatAlignRight'), () => align('right'), f.align === 'right');
+      act(para, 'alignCenter', t('office.formatAlignCenter'), () => align('center'), f.align === 'center');
+      act(para, 'alignLeft', t('office.formatAlignLeft'), () => align('left'), f.align === 'left');
+      act(para, 'alignJustify', t('office.formatAlignJustify'), () => align('justify'), f.align === 'justify');
+      act(para, 'bullets', t('office.bullets'), () => setParaFormat({ list: f.list === 'bullet' ? null : 'bullet' }), f.list === 'bullet');
+      act(para, 'numbers', t('office.numbering'), () => setParaFormat({ list: f.list === 'number' ? null : 'number' }), f.list === 'number');
+      act(para, 'rtl', t('office.dirRtl'), () => setParaFormat({ dir: 'rtl' }), f.dir === 'rtl');
+      act(para, 'ltr', t('office.dirLtr'), () => setParaFormat({ dir: 'ltr' }), f.dir === 'ltr');
+      const styles = group(t('office.groupStyles'));
+      for (const item of styleItems()) act(styles, 'styles', item.label, item.run, item.checked);
+    } else if (which === 'insert') {
+      const g = group(t('office.tabInsert'));
+      act(g, 'table', t('office.insertTable'), askTable);
+      act(g, 'image', t('office.insertImage'), insertImage);
+      act(g, 'link', t('office.wLink'), openLinkDialog);
+      act(g, 'pageBreak', t('office.insertPageBreak'), insertPageBreak);
+      act(g, 'pageNumber', t('office.wPageNumber'), () => pageNumbers('bottom'));
+      act(g, 'footnote', t('office.insertFootnote'), () => insertNoteAt('footnote'));
+      act(g, 'date', t('office.insertDate'), insertDate);
+      act(g, 'symbol', t('office.wSymbol'), () => openSymbols(anchor));
+    } else {
+      const g = group(t('office.wTableOps'));
+      act(g, 'rowAdd', t('office.wRowAbove'), () => runTableOp('rowAbove'));
+      act(g, 'rowAdd', t('office.wRowBelow'), () => runTableOp('rowBelow'));
+      act(g, 'colAdd', t('office.wColBefore'), () => runTableOp('colBefore'));
+      act(g, 'colAdd', t('office.wColAfter'), () => runTableOp('colAfter'));
+      act(g, 'rowDelete', t('office.wDeleteRow'), () => runTableOp('deleteRow'));
+      act(g, 'colDelete', t('office.wDeleteCol'), () => runTableOp('deleteCol'));
+      act(g, 'trash', t('office.wDeleteTable'), deleteTable);
+    }
+    const pop = openPopover(anchor, box, { label: t(which === 'format' ? 'office.wMobileFormat' : which === 'insert' ? 'office.wMobileInsert' : 'office.wTableOps'), sheet: true });
   }
 
   /* ─────────────────────────── find & replace ─────────────────────────── */
@@ -1959,70 +2918,305 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     return key[id] ? t(key[id]) : name;
   }
 
+  /** The look a style gallery chip previews: the style's own font, size, weight and colour. */
+  function styleLook(id: string): TextLook {
+    if (look) return resolveStyle(look.styles, id).text;
+    const preset: Record<string, TextLook> = {
+      Title: { sz: 28, color: '17365D' }, Subtitle: { sz: 15, i: true, color: '595959' },
+      Heading1: { sz: 18, b: true, color: '1F3864' }, Heading2: { sz: 14, b: true, color: '2F5496' },
+      Heading3: { sz: 12, b: true, color: '1F3763' }, Quote: { i: true, color: '404040' },
+    };
+    return preset[id] ?? {};
+  }
+
+  /** The styles gallery: each chip is drawn in its own style (a live preview), the current one marked. */
+  function styleGallery(): Control {
+    const chips: HTMLElement[] = [];
+    const ids = ['Normal', 'Title', 'Subtitle', 'Heading1', 'Heading2', 'Heading3', 'Quote'];
+    return {
+      type: 'custom', id: 'stylegallery', label: t('office.wStyleGallery'), enabled: can,
+      render: () => {
+        const box = el('div', 'fo-stylegallery');
+        box.setAttribute('role', 'group');
+        box.setAttribute('aria-label', t('office.wStyleGallery'));
+        for (const id of ids) {
+          const chip = el('button', 'fo-stylechip');
+          chip.type = 'button';
+          chip.dataset.style = id;
+          const name = styleLabel(id, id);
+          chip.title = name;
+          chip.setAttribute('aria-pressed', 'false');
+          const sample = el('span', 'fo-stylechip-sample', name);
+          const s = styleLook(id);
+          sample.style.fontFamily = fontStack(s.font);
+          sample.style.fontSize = `${clamp(Math.round((s.sz ?? 11) * 1.05), 12, 16)}px`;
+          if (s.b) sample.style.fontWeight = '700';
+          if (s.i) sample.style.fontStyle = 'italic';
+          if (s.color && s.color !== '000000') sample.style.color = `#${s.color}`;
+          chip.append(sample);
+          chip.addEventListener('mousedown', (ev) => ev.preventDefault());
+          chip.addEventListener('click', () => applyStyle(id));
+          chips.push(chip);
+          box.append(chip);
+        }
+        return box;
+      },
+      sync: () => {
+        const current = currentFormat().style;
+        const enabled = can() && !reading;
+        for (let k = chips.length - 1; k >= 0; k--) {
+          const chip = chips[k];
+          if (!chip.isConnected) { chips.splice(k, 1); continue; }
+          chip.setAttribute('aria-pressed', String(chip.dataset.style === current));
+          (chip as HTMLButtonElement).disabled = !enabled;
+        }
+      },
+    };
+  }
+
   function tabs(): RibbonTab[] {
     const fontOptions = (): Array<{ value: string; label: string }> => FONTS.map((f) => ({ value: f, label: f }));
+    const edit = (): boolean => can() && !reading;
+    const inNewTable = (): boolean => { const sel = targetRange(); return edit() && !!sel && !!blocksNow()[sel.from.b]?.cell; };
+    const page = (): PageSetup => pageSetup();
+    const marginItem = (name: MarginName, key: string): MenuItem => ({
+      label: t(key), checked: marginsOf(page()) === name, run: () => setPage(withMargins(page(), MARGINS[name])),
+    });
+    const paperItem = (name: PaperName): MenuItem => ({
+      label: `${name} (${Math.round(PAPERS[name][0] / 72 * 25.4)} × ${Math.round(PAPERS[name][1] / 72 * 25.4)} mm)`,
+      checked: paperOf(page()) === name, run: () => setPage(withPaper(page(), name)),
+    });
     return [
       ctx.fileTab(),
       {
         id: 'home', label: t('office.tabHome'), groups: [
           {
+            label: t('office.wGroupClipboard'), controls: [
+              { type: 'button', id: 'paste', icon: 'paste', label: t('office.wPaste'), showLabel: true, enabled: edit, run: () => { void pasteFromClipboard(); } },
+              { type: 'button', id: 'cut', icon: 'cut', label: t('office.wCut'), enabled: edit, run: () => { void copySelection(true); } },
+              { type: 'button', id: 'copy', icon: 'copy', label: t('office.wCopy'), enabled: () => !!doc(), run: () => { void copySelection(false); } },
+            ],
+          },
+          {
             label: t('office.groupFont'), controls: [
-              { type: 'select', id: 'font', label: t('office.fontName'), cls: 'fo-fontname', width: 150, enabled: can, options: fontOptions, value: () => currentProps().font ?? '', onChange: (v) => applyRun({ font: v }) },
+              { type: 'select', id: 'font', label: t('office.fontName'), cls: 'fo-fontname', width: 240, enabled: edit, options: fontOptions, value: () => currentProps().font ?? 'Calibri', onChange: (v) => applyRun({ font: v }) },
               {
-                type: 'select', id: 'size', label: t('office.formatSize'), cls: 'faisal-office-fsize', width: 72, enabled: can,
+                type: 'select', id: 'size', label: t('office.formatSize'), cls: 'faisal-office-fsize', width: 72, enabled: edit,
                 options: () => SIZES.map((s) => ({ value: String(s), label: String(s) })),
-                value: () => String(currentProps().sz ?? ''),
+                value: () => String(currentProps().sz ?? 11),
                 onChange: (v) => { const n = Number(v); if (n > 0) applyRun({ sz: n }); },
               },
-              { type: 'button', id: 'bold', icon: 'bold', label: t('office.formatBold'), enabled: can, phone: true, pressed: () => currentProps().b === true, run: () => toggle('b') },
-              { type: 'button', id: 'italic', icon: 'italic', label: t('office.formatItalic'), enabled: can, phone: true, pressed: () => currentProps().i === true, run: () => toggle('i') },
-              { type: 'button', id: 'underline', icon: 'underline', label: t('office.formatUnderline'), enabled: can, pressed: () => currentProps().u === true, run: () => toggle('u') },
-              { type: 'button', id: 'strike', icon: 'strike', label: t('office.formatStrike'), enabled: can, pressed: () => currentProps().strike === true, run: () => toggle('strike') },
-              { type: 'color', id: 'color', icon: 'textColor', label: t('office.textColor'), noneLabel: t('office.colorAuto'), palette: PALETTE, enabled: can, phone: true, value: () => currentProps().color ?? '000000', onPick: (hex) => applyRun({ color: hex }) },
-              { type: 'color', id: 'highlight', icon: 'highlight', label: t('office.highlight'), noneLabel: t('office.colorNone'), palette: Object.values(HIGHLIGHTS), enabled: can, value: () => { const h = currentProps().hl; return h ? HIGHLIGHTS[h] ?? null : null; }, onPick: (hex) => applyRun({ hl: hex ? HL_BY_HEX[hex] ?? 'yellow' : null }) },
+              { type: 'button', id: 'bold', icon: 'bold', label: t('office.formatBold'), enabled: edit, pressed: () => currentProps().b === true, run: () => toggle('b') },
+              { type: 'button', id: 'italic', icon: 'italic', label: t('office.formatItalic'), enabled: edit, pressed: () => currentProps().i === true, run: () => toggle('i') },
+              { type: 'button', id: 'underline', icon: 'underline', label: t('office.formatUnderline'), enabled: edit, pressed: () => currentProps().u === true, run: () => toggle('u') },
+              { type: 'button', id: 'strike', icon: 'strike', label: t('office.formatStrike'), enabled: edit, pressed: () => currentProps().strike === true, run: () => toggle('strike') },
+              { type: 'button', id: 'superscript', icon: 'superscript', label: t('office.wSuperscript'), enabled: edit, pressed: () => currentProps().va === 'superscript', run: () => toggleScript('superscript') },
+              { type: 'button', id: 'subscript', icon: 'subscript', label: t('office.wSubscript'), enabled: edit, pressed: () => currentProps().va === 'subscript', run: () => toggleScript('subscript') },
+              { type: 'color', id: 'color', icon: 'textColor', label: t('office.textColor'), noneLabel: t('office.colorAuto'), palette: PALETTE, enabled: edit, value: () => currentProps().color ?? '000000', onPick: (hex) => applyRun({ color: hex }) },
+              { type: 'color', id: 'highlight', icon: 'highlight', label: t('office.highlight'), noneLabel: t('office.colorNone'), palette: Object.values(HIGHLIGHTS), enabled: edit, value: () => { const h = currentProps().hl; return h ? HIGHLIGHTS[h] ?? null : null; }, onPick: (hex) => applyRun({ hl: hex ? HL_BY_HEX[hex] ?? 'yellow' : null }) },
+              { type: 'button', id: 'clearformat', icon: 'clearFormat', label: t('office.wClearFormat'), enabled: edit, run: clearFormatting },
             ],
           },
           {
             label: t('office.groupParagraph'), controls: [
-              { type: 'button', id: 'bullets', icon: 'bullets', label: t('office.bullets'), enabled: can, phone: true, pressed: () => currentFormat().list === 'bullet', run: () => setParaFormat({ list: currentFormat().list === 'bullet' ? null : 'bullet' }) },
-              { type: 'button', id: 'numbers', icon: 'numbers', label: t('office.numbering'), enabled: can, pressed: () => currentFormat().list === 'number', run: () => setParaFormat({ list: currentFormat().list === 'number' ? null : 'number' }) },
-              alignButton('right', 'office.formatAlignRight', 'alignRight', true),
+              { type: 'button', id: 'bullets', icon: 'bullets', label: t('office.bullets'), enabled: edit, pressed: () => currentFormat().list === 'bullet', run: () => setParaFormat({ list: currentFormat().list === 'bullet' ? null : 'bullet' }) },
+              { type: 'button', id: 'numbers', icon: 'numbers', label: t('office.numbering'), enabled: edit, pressed: () => currentFormat().list === 'number', run: () => setParaFormat({ list: currentFormat().list === 'number' ? null : 'number' }) },
+              { type: 'button', id: 'outdent', icon: 'outdent', label: t('office.wOutdent'), enabled: () => edit() && indentOf(targetRange()?.from.b ?? 0) > 0, run: () => changeIndent(-1) },
+              { type: 'button', id: 'indent', icon: 'indent', label: t('office.wIndent'), enabled: edit, run: () => changeIndent(1) },
+              alignButton('right', 'office.formatAlignRight', 'alignRight'),
               alignButton('center', 'office.formatAlignCenter', 'alignCenter'),
               alignButton('left', 'office.formatAlignLeft', 'alignLeft'),
               alignButton('justify', 'office.formatAlignJustify', 'alignJustify'),
-              { type: 'button', id: 'rtl', icon: 'rtl', label: t('office.dirRtl'), enabled: can, pressed: () => currentFormat().dir === 'rtl', run: () => setParaFormat({ dir: 'rtl' }) },
-              { type: 'button', id: 'ltr', icon: 'ltr', label: t('office.dirLtr'), enabled: can, pressed: () => currentFormat().dir === 'ltr', run: () => setParaFormat({ dir: 'ltr' }) },
               {
-                type: 'menu', id: 'line', icon: 'lineSpacing', label: t('office.lineSpacing'), enabled: can,
-                items: () => [1, 1.15, 1.5, 2, 2.5, 3].map((n) => ({ label: String(n), checked: Math.abs((currentFormat().line ?? 1.15) - n) < 0.01, run: () => setParaFormat({ line: n }) })),
+                type: 'menu', id: 'line', icon: 'lineSpacing', label: t('office.lineSpacing'), enabled: edit,
+                items: () => LINES.map((n) => ({ label: String(n), checked: Math.abs((currentFormat().line ?? 1.15) - n) < 0.01, run: () => setParaFormat({ line: n }) })),
               },
+              { type: 'button', id: 'rtl', icon: 'rtl', label: t('office.dirRtl'), enabled: edit, pressed: () => currentFormat().dir === 'rtl', run: () => setParaFormat({ dir: 'rtl' }) },
+              { type: 'button', id: 'ltr', icon: 'ltr', label: t('office.dirLtr'), enabled: edit, pressed: () => currentFormat().dir === 'ltr', run: () => setParaFormat({ dir: 'ltr' }) },
             ],
           },
           {
             label: t('office.groupStyles'), controls: [
-              { type: 'menu', id: 'styles', icon: 'styles', label: t('office.styles'), showLabel: true, enabled: can, items: styleItems },
+              styleGallery(),
+              { type: 'menu', id: 'styles', icon: 'styles', label: t('office.wMoreStyles'), enabled: edit, items: styleItems },
             ],
           },
           {
             label: t('office.groupEditing'), controls: [
               { type: 'button', id: 'find', icon: 'find', label: t('office.find'), enabled: () => !!doc(), run: () => openFind(false, findAnchor()) },
-              { type: 'button', id: 'replace', icon: 'replace', label: t('office.replace'), enabled: can, run: () => openFind(true, findAnchor()) },
+              { type: 'button', id: 'replace', icon: 'replace', label: t('office.replace'), enabled: edit, run: () => openFind(true, findAnchor()) },
+              { type: 'button', id: 'selectall', icon: 'fit', label: t('office.wSelectAll'), enabled: () => !!doc() && mode === 'page', run: selectAll },
             ],
           },
         ],
       },
       {
-        // Review: tracking on/off, the change list, and the verdicts. Everything is a real button
-        // in the ribbon or in the panel, so nothing here depends on a hover or a right-click.
+        id: 'insert', label: t('office.tabInsert'), groups: [
+          {
+            label: t('office.groupPages'), controls: [
+              { type: 'button', id: 'pagebreak', icon: 'pageBreak', label: t('office.insertPageBreak'), showLabel: true, enabled: edit, run: insertPageBreak },
+            ],
+          },
+          {
+            label: t('office.groupTables'), controls: [
+              { type: 'button', id: 'table', icon: 'table', label: t('office.insertTable'), showLabel: true, enabled: edit, run: askTable },
+            ],
+          },
+          {
+            label: t('office.wGroupIllustrations'), controls: [
+              { type: 'button', id: 'image', icon: 'image', label: t('office.insertImage'), showLabel: true, enabled: edit, run: insertImage },
+              {
+                type: 'menu', id: 'shape', icon: 'shape', label: t('office.wShape'), showLabel: true, enabled: edit,
+                items: () => SHAPES.map(([kind, key]) => ({ label: t(key), run: () => { void insertShape(kind); } })),
+              },
+            ],
+          },
+          {
+            label: t('office.wGroupLinks'), controls: [
+              { type: 'button', id: 'link', icon: 'link', label: t('office.wLink'), showLabel: true, enabled: edit, run: openLinkDialog },
+            ],
+          },
+          {
+            label: t('office.wGroupHeaderFooter'), controls: [
+              { type: 'button', id: 'header', icon: 'header', label: t('office.wHeader'), showLabel: true, enabled: edit, run: () => openHeaderFooter('header') },
+              { type: 'button', id: 'footer', icon: 'footer', label: t('office.wFooter'), showLabel: true, enabled: edit, run: () => openHeaderFooter('footer') },
+              {
+                type: 'menu', id: 'pagenumber', icon: 'pageNumber', label: t('office.wPageNumber'), showLabel: true, enabled: edit,
+                items: () => [
+                  { label: t('office.wPageNumberBottom'), run: () => pageNumbers('bottom') },
+                  { label: t('office.wPageNumberTop'), run: () => pageNumbers('top') },
+                  { label: t('office.wPageNumberOfTotal'), run: () => pageNumbers('ofTotal') },
+                  'sep',
+                  { label: t('office.wPageNumberRemove'), run: () => pageNumbers('remove') },
+                ],
+              },
+            ],
+          },
+          {
+            label: t('office.wGroupSymbols'), controls: [
+              { type: 'button', id: 'symbol', icon: 'symbol', label: t('office.wSymbol'), showLabel: true, enabled: edit, run: () => openSymbols(anchorFor('symbol')) },
+              { type: 'button', id: 'date', icon: 'date', label: t('office.insertDate'), showLabel: true, enabled: edit, run: insertDate },
+              {
+                type: 'button', id: 'mailmerge', icon: 'toc', label: t('office.mergeTitle'), showLabel: true, enabled: edit,
+                run: () => openMailMergePanel(ctx, {
+                  paragraphs: () => {
+                    const m = ctx.model();
+                    return m && m.kind === 'docx' ? m.paragraphs : [];
+                  },
+                  insertField: (name) => insertMergeField(ctx, name),
+                }),
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'layout', label: t('office.wTabLayout'), groups: [
+          {
+            label: t('office.wGroupPageSetup'), controls: [
+              {
+                type: 'menu', id: 'margins', icon: 'margins', label: t('office.wMargins'), showLabel: true, enabled: edit,
+                items: () => [
+                  marginItem('normal', 'office.wMarginsNormal'), marginItem('narrow', 'office.wMarginsNarrow'),
+                  marginItem('moderate', 'office.wMarginsModerate'), marginItem('wide', 'office.wMarginsWide'),
+                  'sep', { label: t('office.wMarginsCustom'), checked: marginsOf(page()) === null, run: openCustomMargins },
+                ],
+              },
+              {
+                type: 'menu', id: 'orientation', icon: 'orientation', label: t('office.wOrientation'), showLabel: true, enabled: edit,
+                items: () => (['portrait', 'landscape'] as const).map((o) => ({
+                  label: t(o === 'portrait' ? 'office.wPortrait' : 'office.wLandscape'), checked: orientationOf(page()) === o,
+                  run: () => setPage(withOrientation(page(), o)),
+                })),
+              },
+              {
+                type: 'menu', id: 'pagesize', icon: 'pageSize', label: t('office.wSize'), showLabel: true, enabled: edit,
+                items: () => (Object.keys(PAPERS) as PaperName[]).map(paperItem),
+              },
+              {
+                type: 'menu', id: 'columns', icon: 'columns', label: t('office.wColumns'), showLabel: true, enabled: edit,
+                items: () => [1, 2, 3].map((n) => ({
+                  label: n === 1 ? t('office.wColumnsOne') : n === 2 ? t('office.wColumnsTwo') : t('office.wColumnsN', { n }),
+                  checked: page().cols === n, run: () => setPage(withColumns(page(), n)),
+                })),
+              },
+              {
+                type: 'menu', id: 'breaks', icon: 'pageBreak', label: t('office.wBreaks'), showLabel: true, enabled: edit,
+                items: () => [
+                  { label: t('office.insertPageBreak'), hint: 'Ctrl+Enter', run: insertPageBreak },
+                  { label: t('office.wColumnBreak'), run: insertColumnBreak },
+                ],
+              },
+            ],
+          },
+          {
+            label: t('office.groupParagraph'), controls: [
+              { type: 'button', id: 'layoutoutdent', icon: 'outdent', label: t('office.wOutdent'), enabled: () => edit() && indentOf(targetRange()?.from.b ?? 0) > 0, run: () => changeIndent(-1) },
+              { type: 'button', id: 'layoutindent', icon: 'indent', label: t('office.wIndent'), enabled: edit, run: () => changeIndent(1) },
+            ],
+          },
+          {
+            label: t('office.wTableOps'), controls: [
+              { type: 'button', id: 'rowbelow', icon: 'rowAdd', label: t('office.wRowBelow'), enabled: inNewTable, run: () => runTableOp('rowBelow') },
+              { type: 'button', id: 'colafter', icon: 'colAdd', label: t('office.wColAfter'), enabled: inNewTable, run: () => runTableOp('colAfter') },
+              { type: 'button', id: 'deleterow', icon: 'rowDelete', label: t('office.wDeleteRow'), enabled: inNewTable, run: () => runTableOp('deleteRow') },
+              { type: 'button', id: 'deletecol', icon: 'colDelete', label: t('office.wDeleteCol'), enabled: inNewTable, run: () => runTableOp('deleteCol') },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'references', label: t('office.wTabReferences'), groups: [
+          {
+            label: t('office.wGroupToc'), controls: [
+              { type: 'button', id: 'toc', icon: 'toc', label: t('office.insertToc'), showLabel: true, enabled: edit, run: insertToc },
+            ],
+          },
+          {
+            // A note is inserted at the caret and its text is typed in the panel that opens, so the
+            // whole feature is reachable from the ribbon alone — no hover, no right-click.
+            label: t('office.groupNotes'), controls: [
+              { type: 'button', id: 'footnote', icon: 'footnote', label: t('office.insertFootnote'), showLabel: true, enabled: edit, run: () => insertNoteAt('footnote') },
+              { type: 'button', id: 'endnote', icon: 'endnote', label: t('office.insertEndnote'), showLabel: true, enabled: edit, run: () => insertNoteAt('endnote') },
+              { type: 'button', id: 'notespanel', icon: 'footnote', label: t('office.notesPanel'), showLabel: true, pressed: () => sideOpen && sideTab === 'notes', run: () => { sideOpen = !(sideOpen && sideTab === 'notes'); sideTab = 'notes'; renderSide(); ctx.refresh(); } },
+            ],
+          },
+          {
+            label: t('office.wGroupLinks'), controls: [
+              {
+                type: 'menu', id: 'crossref', icon: 'link', label: t('office.wCrossRef'), showLabel: true, enabled: edit,
+                items: () => {
+                  const list = headings();
+                  if (!list.length) return [{ label: t('office.wCrossRefEmpty'), disabled: true, run: () => undefined }];
+                  return list.map((h) => ({ label: `${'  '.repeat(h.level)}${h.text.length > 48 ? `${h.text.slice(0, 48)}…` : h.text}`, run: () => insertCrossRef(h.b) }));
+                },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        // Review: tracking on/off, the change list, the verdicts, the comments and the word count —
+        // one tab (the file used to show two tabs called Review). Everything is a real button.
         id: 'review', label: t('office.tabReview'), groups: [
+          {
+            label: t('office.groupProofing'), controls: [
+              { type: 'button', id: 'wordcount', icon: 'wordCount', label: t('office.wordCount'), showLabel: true, enabled: () => !!doc(), run: showCounts },
+            ],
+          },
+          {
+            label: t('office.comments'), controls: [
+              { type: 'button', id: 'showcomments', icon: 'comment', label: t('office.showComments'), showLabel: true, pressed: () => sideOpen && sideTab === 'comments', run: () => { sideOpen = !(sideOpen && sideTab === 'comments'); sideTab = 'comments'; renderSide(); } },
+            ],
+          },
           {
             label: t('office.groupTracking'), controls: [
               {
-                type: 'button', id: 'tracking', icon: 'check', label: t('office.revToggle'), showLabel: true, phone: true,
+                type: 'button', id: 'tracking', icon: 'check', label: t('office.revToggle'), showLabel: true,
                 pressed: () => tracking,
                 run: () => { tracking = !tracking; ctx.refresh(); renderFlow(); },
               },
-              { type: 'button', id: 'revpanel', icon: 'comment', label: t('office.revPanel'), showLabel: true, phone: true, enabled: () => revLog.items.length > 0, run: () => toggleReviewPanel(true) },
+              { type: 'button', id: 'revpanel', icon: 'comment', label: t('office.revPanel'), showLabel: true, enabled: () => revLog.items.length > 0, run: () => toggleReviewPanel(true) },
             ],
           },
           {
@@ -2035,62 +3229,18 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
         ],
       },
       {
-        id: 'insert', label: t('office.tabInsert'), groups: [
-          {
-            label: t('office.groupTables'), controls: [
-              { type: 'button', id: 'table', icon: 'table', label: t('office.insertTable'), showLabel: true, enabled: can, run: askTable },
-              { type: 'button', id: 'image', icon: 'image', label: t('office.insertImage'), showLabel: true, enabled: can, run: insertImage },
-            ],
-          },
-          {
-            label: t('office.groupPages'), controls: [
-              { type: 'button', id: 'pagebreak', icon: 'pageBreak', label: t('office.insertPageBreak'), showLabel: true, enabled: can, run: insertPageBreak },
-              { type: 'button', id: 'toc', icon: 'toc', label: t('office.insertToc'), showLabel: true, enabled: can, run: insertToc },
-              { type: 'button', id: 'date', icon: 'date', label: t('office.insertDate'), showLabel: true, enabled: can, run: insertDate },
-              {
-                type: 'button', id: 'mailmerge', icon: 'toc', label: t('office.mergeTitle'), showLabel: true, enabled: can,
-                run: () => openMailMergePanel(ctx, {
-                  paragraphs: () => {
-                    const m = ctx.model();
-                    return m && m.kind === 'docx' ? m.paragraphs : [];
-                  },
-                  insertField: (name) => insertMergeField(ctx, name),
-                }),
-              },
-            ],
-          },
-          {
-            // A note is inserted at the caret and its text is typed in the panel that opens, so the
-            // whole feature is reachable from the ribbon alone — no hover, no right-click.
-            label: t('office.groupNotes'), controls: [
-              { type: 'button', id: 'footnote', icon: 'footnote', label: t('office.insertFootnote'), showLabel: true, enabled: can, run: () => insertNoteAt('footnote') },
-              { type: 'button', id: 'endnote', icon: 'endnote', label: t('office.insertEndnote'), showLabel: true, enabled: can, run: () => insertNoteAt('endnote') },
-            ],
-          },
-        ],
-      },
-      {
-        id: 'review', label: t('office.tabReview'), groups: [
-          {
-            label: t('office.groupProofing'), controls: [
-              { type: 'button', id: 'wordcount', icon: 'wordCount', label: t('office.wordCount'), showLabel: true, enabled: () => !!doc(), run: showCounts },
-            ],
-          },
-          {
-            label: t('office.comments'), controls: [
-              { type: 'button', id: 'showcomments', icon: 'comment', label: t('office.showComments'), showLabel: true, pressed: () => sideOpen && sideTab === 'comments', run: () => { sideOpen = !(sideOpen && sideTab === 'comments'); sideTab = 'comments'; renderSide(); } },
-            ],
-          },
-        ],
-      },
-      {
         id: 'view', label: t('office.tabView'), groups: [
           {
             label: t('office.groupViews'), controls: [
-              { type: 'button', id: 'pageview', icon: 'pageView', label: t('office.pageView'), showLabel: true, pressed: () => mode === 'page', run: () => setMode('page') },
-              { type: 'button', id: 'draftview', icon: 'draft', label: t('office.draftView'), showLabel: true, pressed: () => mode === 'draft', run: () => setMode('draft') },
+              { type: 'button', id: 'pageview', icon: 'pageView', label: t('office.pageView'), showLabel: true, pressed: () => mode === 'page' && !reading, run: () => { setReading(false); setMode('page'); } },
+              { type: 'button', id: 'reading', icon: 'reading', label: t('office.wReadingMode'), showLabel: true, pressed: () => reading, run: () => { setMode('page'); setReading(!reading); } },
+              { type: 'button', id: 'draftview', icon: 'draft', label: t('office.draftView'), showLabel: true, pressed: () => mode === 'draft', run: () => { setReading(false); setMode('draft'); } },
+            ],
+          },
+          {
+            label: t('office.wGroupShow'), controls: [
+              { type: 'button', id: 'ruler', icon: 'ruler', label: t('office.wRuler'), showLabel: true, pressed: () => showRuler, run: () => { showRuler = !showRuler; renderRuler(); } },
               { type: 'button', id: 'navigator', icon: 'navigator', label: t('office.navigator'), showLabel: true, pressed: () => sideOpen && sideTab === 'nav', run: () => { sideOpen = !(sideOpen && sideTab === 'nav'); sideTab = 'nav'; renderSide(); } },
-              { type: 'button', id: 'notespanel', icon: 'footnote', label: t('office.notesPanel'), showLabel: true, pressed: () => sideOpen && sideTab === 'notes', run: () => { sideOpen = !(sideOpen && sideTab === 'notes'); sideTab = 'notes'; renderSide(); ctx.refresh(); } },
             ],
           },
           {
@@ -2151,7 +3301,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     element: root,
     tabs,
     render(): void {
-      flow.contentEditable = ctx.editable() ? 'true' : 'false';
+      flow.contentEditable = ctx.editable() && !reading ? 'true' : 'false';
       const keep = lastSel;
       renderFlow();
       renderDraft();
@@ -2178,17 +3328,17 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       return { parts, zoom: mode === 'page' && !fluid ? { value: zoom, set: setZoom } : undefined };
     },
     onKey(ev: KeyboardEvent): boolean {
-      const mod = ev.ctrlKey || ev.metaKey;
-      if (!mod) return false;
-      const key = ev.key.toLowerCase();
-      if (key === 'b') { toggle('b'); return true; }
-      if (key === 'i') { toggle('i'); return true; }
-      if (key === 'u') { toggle('u'); return true; }
-      if (key === 'f') { openFind(false, findAnchor()); return true; }
-      if (key === 'h') { openFind(true, findAnchor()); return true; }
-      if (key === 'p') { printDoc(); return true; }
-      if (key === 'e') { align('center'); return true; }
-      return false;
+      const cmd = shortcutOf(ev);
+      if (!cmd) return false;
+      // A text field of a dialog or panel keeps its own keys; a Draft paragraph takes formatting only.
+      const target = ev.target as HTMLElement | null;
+      const field = !!target && !flow.contains(target) && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName);
+      if (field) {
+        const draftField = target.classList.contains('faisal-office-para');
+        const formatting = !['docStart', 'docEnd', 'docStartExtend', 'docEndExtend', 'selectAll', 'find', 'replace', 'print', 'link', 'pageBreak'].includes(cmd);
+        if (!(draftField && formatting) && !['find', 'print'].includes(cmd)) return false;
+      }
+      return runCommand(cmd);
     },
     dispose(): void {
       resize.disconnect();
