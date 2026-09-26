@@ -190,3 +190,12 @@ registerFunction('TEXT', (args, ctx) => {
   const n = typeof v === 'string' ? textToNumber(v) : null;
   return formatValue(n ?? v, fmt).text;
 }, { minArgs: 2, maxArgs: 2 });
+
+/* ── batch 2: the text function Excel has that this library did not ── */
+
+/** CLEAN: the control characters Excel strips (0-31), leaving everything else as it is. */
+registerFunction('CLEAN', (args, ctx) => {
+  const s = text(args[0], ctx);
+  if (isError(s)) return s;
+  return s.replace(/[\u0000-\u001F]/g, '');
+}, { minArgs: 1, maxArgs: 1 });

@@ -170,7 +170,7 @@ export function createSlideEditor(ctx: EditorContext): Editor {
       thumb.setAttribute('aria-current', String(s === current));
       thumb.append(el('span', 'fo-thumb-n', String(s + 1)));
       const mini = el('span', 'fo-thumb-slide');
-      mini.append(fitSlide(d, drawSlide(d, slide), width).frame);
+      mini.append(fitSlide(d, drawSlide(d, slide, { index: s }), width).frame);
       thumb.append(mini);
       let suppress = false;
       thumb.addEventListener('click', () => { if (suppress) { suppress = false; return; } goTo(s); });
@@ -246,7 +246,7 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     const slide = d?.slides[at];
     const mini = list.children[at]?.querySelector('.fo-thumb-slide');
     if (!d || !slide || !mini) return;
-    mini.replaceChildren(fitSlide(d, drawSlide(d, slide), thumbWidth()).frame);
+    mini.replaceChildren(fitSlide(d, drawSlide(d, slide, { index: at }), thumbWidth()).frame);
   }
 
   /* ─────────────────────────── the slide master ─────────────────────────── */
@@ -271,19 +271,27 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     const bodyFont = fontField(t('impress.masterFont'), master.body.font);
     const bodySize = sizeField(t('impress.masterSize'), master.body.size);
     const bodyColor = colorField(t('impress.masterColor'), master.body.color);
+    const footer = footerField(master.footer);
+    const slideNumber = checkField(t('impress.masterSlideNumber'), t('impress.masterSlideNumberHint'), master.slideNumber);
     form.append(
       bg.row,
       textClass(t('impress.masterTitleText'), titleFont.row, titleSize.row, titleColor.row),
       textClass(t('impress.masterBodyText'), bodyFont.row, bodySize.row, bodyColor.row),
+      textClass(t('impress.masterFooter'), footer.row),
+      textClass(t('impress.masterSlideNumber'), slideNumber.row),
     );
-    const text = (font: string | null, size: number | null, color: string | null): MasterText => ({ font, size, color });
+    const text = (font: string | null, size: number | null, color: string | null): MasterText => ({ font, color, size });
     openModal({
       title: t('impress.masterTitle'), body: form, okLabel: t('impress.masterApply'), cancelLabel: t('office.cancel'), host: ctx.host(),
       onOk: () => {
+        const footerText = footer.value();
+        // Empty footer means "no footer", not "an empty box at the foot of every slide".
         apply(setMaster(d as Deck, master.part, {
           bg: bg.value(),
           title: text(titleFont.value(), titleSize.value(), titleColor.value()),
           body: text(bodyFont.value(), bodySize.value(), bodyColor.value()),
+          footer: footerText === null || footerText.trim() === '' ? null : footerText,
+          slideNumber: slideNumber.value(),
         }));
         drawStage();
         renderRail();
@@ -292,10 +300,34 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     });
   }
 
-  /** One class of master text: its own heading, then the font, the size and the colour. */
-  function textClass(heading: string, font: HTMLElement, size: HTMLElement, color: HTMLElement): HTMLElement {
+  /** The footer's words: one line of text, empty meaning "no footer at all". */
+  function footerField(value: string | null): { row: HTMLElement; value(): string | null } {
+    const row = el('label', 'fo-field');
+    row.append(el('span', 'fo-field-label', t('impress.masterFooterHint')));
+    const input = el('input', 'fo-input');
+    input.type = 'text';
+    input.maxLength = 120;
+    input.dir = 'auto';
+    input.value = value ?? '';
+    input.placeholder = t('impress.masterFooter');
+    row.append(input);
+    return { row, value: () => (input.value.trim() === '' ? null : input.value.trim()) };
+  }
+
+  /** A labelled switch, with the label as the touch target on a phone. */
+  function checkField(label: string, hint: string, value: boolean): { row: HTMLElement; value(): boolean } {
+    const row = el('label', 'fo-check fo-master-check');
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = value;
+    row.append(box, el('span', undefined, `${label} — ${hint}`));
+    return { row, value: () => box.checked };
+  }
+
+  /** One class of master text: its own heading, then whatever fields say what it looks like. */
+  function textClass(heading: string, ...fields: HTMLElement[]): HTMLElement {
     const box = el('fieldset', 'fo-master-class');
-    box.append(el('legend', 'fo-field-label', heading), font, size, color);
+    box.append(el('legend', 'fo-field-label', heading), ...fields);
     return box;
   }
 
@@ -374,7 +406,7 @@ export function createSlideEditor(ctx: EditorContext): Editor {
     const pad = (box.width || 1000) <= NARROW_BREAKPOINT ? 24 : 48;
     stageWidth = box.width;
     const width = fitWidth(d, (box.width || 960) - pad, (box.height || 600) - pad);
-    canvas = drawSlide(d, slide, { prompts: true });
+    canvas = drawSlide(d, slide, { prompts: true, index: current });
     const fitted = fitSlide(d, canvas, width);
     frame = fitted.frame;
     scale = fitted.scale;

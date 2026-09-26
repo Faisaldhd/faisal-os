@@ -57,6 +57,8 @@ export interface DrawOptions {
   hideAnimated?: boolean;
   /** The master this slide inherits from: its font and colour fill in what a paragraph leaves open. */
   master?: DeckMaster | null;
+  /** The slide's own position, 0-based: what a slide-number placeholder draws. */
+  index?: number;
 }
 
 /** The master text class a shape belongs to: a title, or body text. */
@@ -67,7 +69,10 @@ function masterText(s: DeckShape, master: DeckMaster | null | undefined): Master
 
 function drawText(deck: Deck, s: DeckShape, opts: DrawOptions): HTMLElement | null {
   if (s.kind !== 'text' && s.kind !== 'shape') return null;
-  const empty = s.paras.every((p) => !p.text);
+  // A slide-number placeholder is never empty and never a prompt: what it shows is this slide's
+  // own number, so a slide inserted earlier changes the canvas without touching a file.
+  const live = s.ph === 'sldNum' ? String((opts.index ?? 0) + 1) : null;
+  const empty = live === null && s.paras.every((p) => !p.text);
   if (empty && !(opts.prompts && s.ph)) return null;
   const box = el('div', `fo-sh-text is-${s.anchor}`);
   if (empty) {
@@ -80,7 +85,7 @@ function drawText(deck: Deck, s: DeckShape, opts: DrawOptions): HTMLElement | nu
   }
   const inherited = masterText(s, opts.master);
   for (const p of s.paras) {
-    const line = el('div', 'fo-sh-p', `${p.bullet ? '• ' : ''}${p.text || ' '}`);
+    const line = el('div', 'fo-sh-p', `${p.bullet ? '• ' : ''}${p.field === 'slidenum' && live !== null ? live : p.text || ' '}`);
     line.dir = 'auto';
     line.style.fontSize = `${(p.size ?? inherited?.size ?? 18) * s.fontScale}px`;
     if (p.bold) line.style.fontWeight = '700';

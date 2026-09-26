@@ -5,8 +5,9 @@
  * SUMSQ, SIGN, EXP, LN, LOG, LOG10, PI, CEILING, FLOOR, EVEN, ODD, RAND, RANDBETWEEN.
  */
 import { registerFunction } from '../registry';
-import { ERR, isArea, isError, roundHalfAway, textToNumber, type CellError, type Scalar } from '../values';
+import { ERR, isArea, isError, roundHalfAway, textToNumber, type CellError, type Scalar, type Value } from '../values';
 import { asArea, collectNumbers, eachCell, num, optNum } from './helpers';
+import type { CallContext } from '../registry';
 
 const INF = Infinity;
 
@@ -212,3 +213,101 @@ registerFunction('SUMPRODUCT', (args) => {
   }
   return total;
 }, { minArgs: 1, maxArgs: 255 });
+
+/* ── batch 2: common Excel functions this library did not have yet ── */
+
+/** Every scalar of the arguments with Excel's "A" rules: text counts as 0, booleans as 1/0. */
+function aNumbers(args: Value[]): number[] {
+  const out: number[] = [];
+  const push = (v: Scalar): void => {
+    if (typeof v === 'number') out.push(v);
+    else if (typeof v === 'boolean') out.push(v ? 1 : 0);
+    else if (v === null || v === "") return;   // an empty cell is not a zero for the A functions
+    else out.push(0);
+  };
+  for (const arg of args) {
+    if (isArea(arg)) eachCell(arg, (v) => { if (!isError(v)) push(v); });
+    else if (!isError(arg)) push(arg);
+  }
+  return out;
+}
+
+/** Excel's PERCENTILE: linear interpolation between the two nearest values, #NUM! outside 0..1. */
+function percentileOf(ns: number[], k: number): number | CellError {
+  if (!ns.length || !(k >= 0 && k <= 1)) return ERR.NUM;
+  const sorted = [...ns].sort((a, b) => a - b);
+  const at = k * (sorted.length - 1);
+  const low = Math.floor(at);
+  const high = Math.ceil(at);
+  return sorted[low] + (sorted[high] - sorted[low]) * (at - low);
+}
+
+registerFunction('PERCENTILE', (args, ctx) => {
+  const ns = collectNumbers([args[0]]);
+  if (isError(ns)) return ns;
+  const k = num(args[1], ctx);
+  if (isError(k)) return k;
+  return percentileOf(ns, k);
+}, { minArgs: 2, maxArgs: 2, aliases: ['PERCENTILE.INC'] });
+
+registerFunction('QUARTILE', (args, ctx) => {
+  const ns = collectNumbers([args[0]]);
+  if (isError(ns)) return ns;
+  const q = num(args[1], ctx);
+  if (isError(q)) return q;
+  const quart = Math.trunc(q);
+  if (quart < 0 || quart > 4) return ERR.NUM;
+  return percentileOf(ns, quart / 4);
+}, { minArgs: 2, maxArgs: 2, aliases: ['QUARTILE.INC'] });
+
+registerFunction('AVERAGEA', (args) => {
+  const ns = aNumbers(args);
+  return ns.length ? sum(ns) / ns.length : ERR.DIV0;
+}, { minArgs: 1, maxArgs: 255 });
+
+registerFunction('MAXA', (args) => {
+  const ns = aNumbers(args);
+  return ns.length ? Math.max(...ns) : 0;
+}, { minArgs: 1, maxArgs: 255 });
+
+registerFunction('MINA', (args) => {
+  const ns = aNumbers(args);
+  return ns.length ? Math.min(...ns) : 0;
+}, { minArgs: 1, maxArgs: 255 });
+
+/** GCD/LCM over the truncated arguments: a negative one is #NUM!, as in Excel. */
+function intList(args: Value[], ctx: CallContext): number[] | CellError {
+  const out: number[] = [];
+  for (const arg of args) {
+    const n = num(arg, ctx);
+    if (isError(n)) return n;
+    const i = Math.trunc(n);
+    if (i < 0) return ERR.NUM;
+    out.push(i);
+  }
+  return out;
+}
+
+const gcd2 = (a: number, b: number): number => (b === 0 ? a : gcd2(b, a % b));
+const lcm2 = (a: number, b: number): number => (a === 0 || b === 0 ? 0 : Math.abs(a * b) / gcd2(a, b));
+
+registerFunction('GCD', (args, ctx) => {
+  const ns = intList(args, ctx);
+  if (isError(ns)) return ns;
+  return ns.reduce((a, b) => gcd2(a, b), 0);
+}, { minArgs: 1, maxArgs: 255 });
+
+registerFunction('LCM', (args, ctx) => {
+  const ns = intList(args, ctx);
+  if (isError(ns)) return ns;
+  return ns.reduce((a, b) => lcm2(a, b), 1);
+}, { minArgs: 1, maxArgs: 255 });
+
+numeric('RADIANS', 1, 1, (d) => (d * Math.PI) / 180);
+numeric('DEGREES', 1, 1, (r) => (r * 180) / Math.PI);
+numeric('QUOTIENT', 2, 2, (a, b) => (b === 0 ? ERR.DIV0 : Math.trunc(a / b)));
+numeric('MROUND', 2, 2, (a, b) => {
+  if (b === 0) return 0;
+  if (a !== 0 && Math.sign(a) !== Math.sign(b)) return ERR.NUM;
+  return Math.round(a / b) * b;
+});

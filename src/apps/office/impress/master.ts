@@ -12,8 +12,9 @@
  * background, because a layout that sets its own `<p:bg>` would otherwise hide the new colour.
  */
 import { xmlText } from '../xml';
-import { localName, parsePart, type XmlEdit, type XmlElement } from '../xmlscan';
-import { child, type DeckMaster, type MasterText } from './deck';
+import { elementText, elementsOf, localName, parsePart, paragraphSlots, type XmlEdit, type XmlElement } from '../xmlscan';
+import { child, nextUid, type Deck, type DeckBox, type DeckMaster, type DeckPara, type DeckShape, type MasterText } from './deck';
+import { shapeXml } from './deckxml';
 
 const hex = (c: string): string => c.replace('#', '').toUpperCase();
 
@@ -141,4 +142,133 @@ export function layoutBgEdits(xml: string, bg: string | null): XmlEdit[] {
   const own = child(cSld, 'bg');
   if (!cSld || !own) return [];
   return [{ start: own.start, end: own.end, xml: bgXml(bg) }];
+}
+
+/* ─────────────────────────── footer and slide number ─────────────────────────── */
+
+/** The placeholder types the footer and the slide number use, and what they are called. */
+const CHROME: ReadonlyArray<{ ph: 'ftr' | 'sldNum'; name: string; size: number; align: DeckPara['align'] }> = [
+  { ph: 'ftr', name: 'Footer', size: 12, align: 'l' },
+  { ph: 'sldNum', name: 'Slide Number', size: 12, align: 'r' },
+];
+
+function chromePara(text: string, size: number, align: DeckPara['align'], field: 'slidenum' | null): DeckPara {
+  return { text, size, bold: false, italic: false, underline: false, color: null, align, bullet: false, field };
+}
+
+/**
+ * The footer and the slide-number placeholders a master asks for, as shapes of one slide.
+ *
+ * PowerPoint shows neither from the master alone: the master carries the design and the place,
+ * and every slide that should show them carries its own placeholder. `index` is the slide's own
+ * position — it becomes the hint text of the live number field, and the canvas draws the number
+ * itself, so a slide inserted earlier changes what is shown without touching the file.
+ */
+export function chromeShapes(deck: Deck, master: DeckMaster, index: number): DeckShape[] {
+  const out: DeckShape[] = [];
+  for (const { ph, name, size, align } of CHROME) {
+    const on = ph === 'ftr' ? master.footer !== null : master.slideNumber;
+    if (!on) continue;
+    const box = boxFor(deck, master, ph);
+    out.push({
+      uid: nextUid(), kind: 'text', origin: null, spid: 0, name, ph, phIdx: null, geom: 'rect',
+      ...box, rot: 0, flipH: false, flipV: false, fill: null, stroke: null, strokeW: 12700, arrow: false,
+      stCxn: null, endCxn: null,
+      paras: [ph === 'ftr' ? chromePara(master.footer ?? '', size, align, null) : chromePara(String(index + 1), size, align, 'slidenum')],
+      ink: null, anchor: 't', fontScale: 1, image: null, children: [], box: null, table: null, anim: null, locked: false,
+    });
+  }
+  return out;
+}
+
+/** Where a placeholder goes: the master's own box, else the usual place at the foot of a slide. */
+function boxFor(deck: Deck, master: DeckMaster, ph: 'ftr' | 'sldNum'): DeckBox {
+  const own = ph === 'ftr' ? master.footerBox : master.numberBox;
+  if (own) return own;
+  return ph === 'ftr'
+    ? { x: Math.round(deck.cx * 0.05), y: Math.round(deck.cy * 0.92), w: Math.round(deck.cx * 0.5), h: Math.round(deck.cy * 0.06) }
+    : { x: Math.round(deck.cx * 0.85), y: Math.round(deck.cy * 0.92), w: Math.round(deck.cx * 0.1), h: Math.round(deck.cy * 0.06) };
+}
+
+/**
+ * The master with the boxes its placeholders really use.
+ *
+ * The model has to know where it put them: the save is refused unless the master read back from
+ * the file says exactly what the model says, so a box that only ever existed inside the written
+ * XML would make every save of that deck fail. A placeholder that is off has no box, because the
+ * part will not have one either.
+ */
+export function withChromeBoxes(deck: Deck, master: DeckMaster): DeckMaster {
+  return {
+    ...master,
+    footerBox: master.footer !== null ? boxFor(deck, master, 'ftr') : null,
+    numberBox: master.slideNumber ? boxFor(deck, master, 'sldNum') : null,
+  };
+}
+
+/** The `<p:sp>` elements of a spTree that are the footer and the slide-number placeholders. */
+function chromeElements(spTree: XmlElement, xml: string): Map<string, XmlElement> {
+  const out = new Map<string, XmlElement>();
+  for (const sp of spTree.children) {
+    if (localName(sp.name) !== 'sp') continue;
+    const ph = child(child(child(sp, 'nvSpPr'), 'nvPr'), 'ph');
+    const type = ph ? attrOf(xml, ph, 'type') : null;
+    if (type === 'ftr' || type === 'sldNum') out.set(type, sp);
+  }
+  return out;
+}
+
+function attrOf(xml: string, el: XmlElement, name: string): string | null {
+  const open = xml.slice(el.start, el.openEnd);
+  const m = new RegExp(`\\s${name}\\s*=\\s*["']([^"']*)["']`).exec(open);
+  return m ? m[1] ?? null : null;
+}
+
+function numberOf(xml: string, el: XmlElement | null, name: string): number | null {
+  if (!el) return null;
+  const v = Number(attrOf(xml, el, name));
+  return Number.isFinite(v) && attrOf(xml, el, name) !== null ? v : null;
+}
+
+/** True when a placeholder in the file already says exactly what the model asks for. */
+function sameChrome(xml: string, el: XmlElement, want: DeckShape): boolean {
+  const xfrm = child(child(el, 'spPr'), 'xfrm');
+  if (numberOf(xml, child(xfrm, 'off'), 'x') !== want.x || numberOf(xml, child(xfrm, 'off'), 'y') !== want.y) return false;
+  if (numberOf(xml, child(xfrm, 'ext'), 'cx') !== want.w || numberOf(xml, child(xfrm, 'ext'), 'cy') !== want.h) return false;
+  const body = child(el, 'txBody');
+  const paras = (body?.children ?? []).filter((c) => localName(c.name) === 'p');
+  const field = paras.some((p) => p.children.some((c) => localName(c.name) === 'fld' && attrOf(xml, c, 'type') === 'slidenum'));
+  const wanted = want.paras[0];
+  if (field !== (wanted?.field === 'slidenum')) return false;
+  const text = paras.map((p) => paragraphSlots(p).map((slot) => (slot.kind === 'text' ? elementText(xml, slot.element) : '')).join('')).join('\n');
+  return text === (wanted?.text ?? '');
+}
+
+/**
+ * The master's own footer and slide-number placeholders: added, replaced or taken away so the
+ * part says what the model says — and left completely alone when it already does, so a save that
+ * changed nothing writes nothing.
+ */
+export function chromeEdits(xml: string, wanted: readonly DeckShape[]): XmlEdit[] | null {
+  const doc = parsePart(xml);
+  const root = doc.roots[0];
+  const spTree = child(child(root, 'cSld'), 'spTree');
+  if (!spTree || spTree.selfClosing) return null;
+  const holders = chromeElements(spTree, xml);
+  const keep = new Set(wanted.map((w) => w.ph));
+  const edits: XmlEdit[] = [];
+  for (const [type, el] of holders) if (!keep.has(type)) edits.push({ start: el.start, end: el.end, xml: '' });
+  let maxId = 1;
+  for (const c of elementsOf(root, 'cNvPr')) maxId = Math.max(maxId, numberOf(xml, c, 'id') ?? 0);
+  for (const want of wanted) {
+    const el = holders.get(want.ph ?? '');
+    if (el && sameChrome(xml, el, want)) continue;
+    const markup = shapeXml(want, ++maxId, null);
+    if (el) edits.push({ start: el.start, end: el.end, xml: markup });
+    else {
+      const closeAt = xml.lastIndexOf('<', spTree.end - 1);
+      edits.push({ start: closeAt, end: closeAt, xml: markup });
+    }
+  }
+  return edits;
 }

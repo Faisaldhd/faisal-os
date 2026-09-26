@@ -35,6 +35,15 @@ export interface DeckPara {
   color: string | null;
   align: Align | null;
   bullet: boolean;
+  /**
+   * A live field instead of literal text.
+   *
+   * `slidenum` is written as `<a:fld type="slidenum">`, which PowerPoint keeps up to date by
+   * itself — insert a slide before this one and the number changes. The `<a:t>` inside such a
+   * field is only the last value a program rendered, so this reader throws it away: what the
+   * model holds is the field, and what the canvas draws is the slide's own number.
+   */
+  field?: 'slidenum' | null;
 }
 
 export interface DeckImage {
@@ -139,12 +148,15 @@ export interface MasterText {
   size: number | null;
 }
 
+/** A box in EMU, in the coordinates of whatever holds it. */
+export interface DeckBox { x: number; y: number; w: number; h: number }
+
 /**
  * A slide master: the design every slide of it inherits.
  *
  * Only what this editor can change and keep is here — the background, the title and body text
- * look, the footer text and whether the master carries a slide-number placeholder. Everything
- * else in the part is left exactly as it was: the patch edits these elements and nothing more.
+ * look, the footer text and the slide-number placeholder. Everything else in the part is left
+ * exactly as it was: the patch edits these elements and nothing more.
  */
 export interface DeckMaster {
   /** `ppt/slideMasters/slideMaster1.xml`. */
@@ -156,6 +168,10 @@ export interface DeckMaster {
   footer: string | null;
   /** Whether the master carries a slide-number placeholder. */
   slideNumber: boolean;
+  /** Where the master puts its footer placeholder — a new one goes here, in EMU. */
+  footerBox: DeckBox | null;
+  /** Where the master puts its slide-number placeholder, in EMU. */
+  numberBox: DeckBox | null;
 }
 
 export interface Deck {
@@ -460,6 +476,10 @@ function readTemplate(xml: string | null, scheme: Record<string, string>): Templ
 /** The master part of a presentation read into the editable model. */
 function readMaster(xml: string, part: string, scheme: Record<string, string>): DeckMaster {
   const t = readTemplate(xml, scheme);
+  const box = (type: string): DeckBox | null => {
+    const x = t.phs.find((p) => p.type === type)?.xfrm;
+    return x ? { x: x.x, y: x.y, w: x.w, h: x.h } : null;
+  };
   return {
     part,
     bg: t.bg,
@@ -467,6 +487,8 @@ function readMaster(xml: string, part: string, scheme: Record<string, string>): 
     body: t.bodyText ?? { font: null, color: null, size: null },
     footer: t.footer ?? null,
     slideNumber: !!t.slideNumber,
+    footerBox: box('ftr'),
+    numberBox: box('sldNum'),
   };
 }
 
@@ -512,7 +534,11 @@ function readParas(ctx: Ctx, txBody: XmlElement | null, isBodyPh: boolean): Deck
     const algn = pPr ? attr(xml, pPr, 'algn') : null;
     const explicitBullet = !!pPr && !!(child(pPr, 'buChar') || child(pPr, 'buAutoNum'));
     const noBullet = !!pPr && !!child(pPr, 'buNone');
-    const text = paraText(xml, p);
+    // A field is not text: `<a:t>` inside it is the last rendered value, so it is dropped here
+    // rather than becoming content that would go stale the moment a slide is inserted.
+    const fld = p.children.find((c) => localName(c.name) === 'fld');
+    const field = fld && attr(xml, fld, 'type') === 'slidenum' ? 'slidenum' : null;
+    const text = field ? '' : paraText(xml, p);
     out.push({
       text,
       size: Number.isFinite(sz) && sz > 0 ? sz / 100 : null,
@@ -523,6 +549,7 @@ function readParas(ctx: Ctx, txBody: XmlElement | null, isBodyPh: boolean): Deck
       color: rPr ? colorOf(xml, child(rPr, 'solidFill'), scheme) : null,
       align: algn === 'ctr' || algn === 'r' || algn === 'just' || algn === 'l' ? algn : algn === 'dist' ? 'just' : null,
       bullet: explicitBullet || (isBodyPh && !noBullet && !!ctx.master?.bodyBullet && text.trim() !== ''),
+      ...(field ? { field } : {}),
     });
   }
   return out;
@@ -862,7 +889,9 @@ export async function readDeck(bytes: Uint8Array): Promise<Deck> {
 export function deckTexts(deck: Deck): string[][] {
   const walk = (shapes: readonly DeckShape[], out: string[]): void => {
     for (const s of shapes) {
-      for (const p of s.paras) if (p.text.trim()) out.push(p.text);
+      // A live field is not text: the number in the file is a hint PowerPoint rewrites, so it
+      // must not count as content of the slide (or every save that moved a slide would differ).
+      for (const p of s.paras) if (p.text.trim() && !p.field) out.push(p.text);
       if (s.table) for (const row of s.table) for (const cell of row) if (cell.trim()) out.push(cell);
       walk(s.children, out);
     }
