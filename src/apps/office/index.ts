@@ -51,10 +51,11 @@ import { odtTitleOf, toOdt } from './writer/odt';
 import { deckTexts, readDeck } from './impress/deck';
 import { writeDelimited } from './file';
 import type { Editor, EditorContext } from './editor';
-import { button, clamp, downloadBytes, el, NARROW_BREAKPOINT, observeSize } from './ui/dom';
+import { button, downloadBytes, el, NARROW_BREAKPOINT, observeSize } from './ui/dom';
 import { icon } from './ui/icons';
 import { closePopovers } from './ui/popover';
 import { Ribbon, type RibbonTab } from './ui/ribbon';
+import { StatusBar } from './ui/statusbar';
 import { printNodes } from './ui/print';
 import { readDocxDocument, type DocLook } from './writer/docxread';
 import { emptyDocxPackage, rebuildDocxRich } from './writer/docxpatch';
@@ -174,28 +175,23 @@ function launch(ctx: AppContext): void {
   actions.append(undoBtn, redoBtn, helpBtn, saveBtn);
   appbar.append(brand, info, actions);
 
-  const ribbon = new Ribbon({ more: t('office.more'), tabs: t('office.ribbon') });
+  const ribbon = new Ribbon({
+    more: t('office.more'), tabs: t('office.ribbon'), scrollStart: t('office.ribbonScrollStart'), scrollEnd: t('office.ribbonScrollEnd'),
+  });
   const noteEl = el('div', 'faisal-office-notice fo-banner');
   noteEl.setAttribute('role', 'note');
   noteEl.hidden = true;
   const contentHost = el('div', 'faisal-office-body fo-body');
 
-  const statusBar = el('footer', 'fo-statusbar');
-  const statusParts = el('div', 'fo-status-parts');
-  const statusEl = el('div', 'faisal-office-status fo-status-msg');
-  statusEl.setAttribute('role', 'status');
-  statusEl.setAttribute('aria-live', 'polite');
-  const zoomBox = el('div', 'fo-zoom');
-  const zoomOut = button('minus', t('office.zoomOut'), () => zoomBy(-0.1));
-  const zoomLabel = el('span', 'fo-zoom-value');
-  const zoomIn = button('plus', t('office.zoomIn'), () => zoomBy(0.1));
-  zoomBox.append(zoomOut, zoomLabel, zoomIn);
-  const pathEl = el('div', 'faisal-office-path fo-path', filePath ?? '');
-  pathEl.dir = 'ltr';
-  statusBar.append(statusParts, statusEl, pathEl, zoomBox);
+  const statusBar = new StatusBar({
+    bar: t('office.statusBar'), zoomIn: t('office.zoomIn'), zoomOut: t('office.zoomOut'), zoomLevel: t('office.zoomLevel'),
+  });
+  const statusEl = statusBar.message;
+  const pathEl = statusBar.path;
+  pathEl.textContent = filePath ?? '';
 
   const help = buildHelp();
-  root.append(appbar, ribbon.element, noteEl, contentHost, ribbon.phoneBar, statusBar, help);
+  root.append(appbar, ribbon.element, noteEl, contentHost, ribbon.phoneBar, statusBar.element, help);
   win.content.append(root);
 
   const narrowObserver = observeSize(root, () => {
@@ -272,18 +268,7 @@ function launch(ctx: AppContext): void {
   }
 
   function syncStatus(): void {
-    const info2 = editor?.status();
-    statusParts.replaceChildren(...(info2?.parts ?? []).map((p) => el('span', 'fo-status-part', p)));
-    const zoom = info2?.zoom;
-    zoomBox.hidden = !zoom;
-    if (zoom) zoomLabel.textContent = `${Math.round(zoom.value * 100)}%`;
-    statusEl.textContent = statusMessage;
-  }
-
-  function zoomBy(step: number): void {
-    const zoom = editor?.status().zoom;
-    if (zoom) zoom.set(clamp(zoom.value + step, 0.5, 2));
-    syncStatus();
+    statusBar.update(editor?.status(), statusMessage);
   }
 
   function syncBar(): void {
@@ -457,6 +442,8 @@ function launch(ctx: AppContext): void {
     }
   }
 
+  /** The document the editor was last mounted for: a re-mount of it keeps the ribbon's tab. */
+  let mountedPath: string | null = null;
   function mountEditor(): void {
     editor?.dispose();
     editor = null;
@@ -468,7 +455,9 @@ function launch(ctx: AppContext): void {
       default: editor = createTextEditor(); break;
     }
     contentHost.replaceChildren(editor.element);
-    ribbon.setTabs(editor.tabs(), model.kind === 'pptx' ? 'home' : 'home');
+    const sameDocument = mountedPath !== null && mountedPath === filePath && ribbon.current !== 'file';
+    mountedPath = filePath;
+    ribbon.setTabs(editor.tabs(), 'home', sameDocument);
     root.dataset.kind = model.kind;
     editor.render();
   }
@@ -511,7 +500,8 @@ function launch(ctx: AppContext): void {
     const back = button('back', t('office.backToStart'), () => { void goStart(); }, { showLabel: true });
     card.append(back);
     contentHost.replaceChildren(card);
-    ribbon.setTabs([fileTab()], 'file');
+    mountedPath = null;
+    ribbon.setTabs([fileTab()], 'file', false);
     setNote('');
     syncBar();
   }
@@ -672,7 +662,8 @@ function launch(ctx: AppContext): void {
     pathEl.textContent = '';
     root.dataset.kind = 'start';
     contentHost.replaceChildren(renderStart({ create: (k) => { void createNew(k); }, open: (p) => { void openPath(p); }, openDevice }, vfs));
-    ribbon.setTabs([fileTab()], 'file');
+    mountedPath = null;
+    ribbon.setTabs([fileTab()], 'file', false);
     setNote('');
     syncBar();
   }

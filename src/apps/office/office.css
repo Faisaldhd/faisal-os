@@ -9,7 +9,17 @@
  * Layout rules: 4px spacing grid; radii 6 (controls), 10 (panels), 14 (dialogs,
  * cards); 32px controls on desktop and 44px on touch or a narrow window; the phone
  * layout is chosen by the *window's* width (container query), not the screen's.
+ *
+ * Isolation: the file has one shared section and one section per app. Every rule in
+ * an app section starts with that app's scope, so two apps can use the same class
+ * name without one's rule landing on the other (Writer's page and Impress's slide are
+ * both `.fo-canvas`). The scopes are the editor's root (`.fo-writer`, `.fo-calc`,
+ * `.fo-impress`) or, for what an editor places in the window's overlay host (a
+ * dialog body, the slide show), the window root with its document kind
+ * (`.faisal-office[data-kind="…"]`). `office-css.test.ts` keeps it that way.
  */
+
+/* ═══════════════════════════════ shared ═══════════════════════════════ */
 
 .faisal-office {
   /* dark (the showcase) */
@@ -96,17 +106,17 @@
 [dir="rtl"] .fo-icon-flip, .faisal-office:dir(rtl) .fo-icon-flip { transform: scaleX(-1); }
 .fo-icon { flex: none; }
 
-/* glass surfaces */
-.fo-appbar, .fo-ribbon, .fo-statusbar, .fo-phonebar, .fo-pop, .fo-sheet, .fo-side, .fo-help, .fo-modal, .fo-fxbar, .fo-sheettabs, .fo-rail {
+/* glass surfaces (each app adds its own surfaces in its section) */
+.fo-appbar, .fo-ribbon, .fo-statusbar, .fo-phonebar, .fo-pop, .fo-sheet, .fo-help, .fo-modal {
   background: var(--app-glass);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   backdrop-filter: blur(18px) saturate(140%);
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .fo-appbar, .fo-ribbon, .fo-statusbar, .fo-phonebar, .fo-pop, .fo-sheet, .fo-side, .fo-help, .fo-modal, .fo-fxbar, .fo-sheettabs, .fo-rail { background: var(--app-glass-strong); }
+  .fo-appbar, .fo-ribbon, .fo-statusbar, .fo-phonebar, .fo-pop, .fo-sheet, .fo-help, .fo-modal { background: var(--app-glass-strong); }
 }
 @media (prefers-reduced-transparency: reduce) {
-  .fo-appbar, .fo-ribbon, .fo-statusbar, .fo-phonebar, .fo-pop, .fo-sheet, .fo-side, .fo-help, .fo-modal, .fo-fxbar, .fo-sheettabs, .fo-rail { background: var(--app-glass-strong); backdrop-filter: none; }
+  .fo-appbar, .fo-ribbon, .fo-statusbar, .fo-phonebar, .fo-pop, .fo-sheet, .fo-help, .fo-modal { background: var(--app-glass-strong); backdrop-filter: none; }
 }
 
 /* ───────────────────────────── buttons ───────────────────────────── */
@@ -141,8 +151,7 @@
 .fo-btn.is-danger { background: var(--app-danger); color: #fff; }
 .fo-btn:disabled { opacity: .4; cursor: default; }
 .fo-btn:focus-visible, .fo-tab:focus-visible, .fo-select:focus-visible, .fo-input:focus-visible, .fo-card:focus-visible, .fo-filerow:focus-visible,
-.fo-menu-item:focus-visible, .fo-thumb:focus-visible, .fo-nav-item:focus-visible, .fo-fxinput:focus-visible, .fo-namebox:focus-visible, .fo-sheettab:focus-visible,
-.fo-swatch:focus-visible, .fo-swatch-none:focus-visible, .fo-swatch-custom:focus-visible {
+.fo-menu-item:focus-visible, .fo-swatch:focus-visible, .fo-swatch-none:focus-visible, .fo-swatch-custom:focus-visible, .fo-zoom-slider:focus-visible {
   outline: 2px solid var(--app-copper-2);
   outline-offset: 2px;
 }
@@ -194,7 +203,7 @@
 
 /* ───────────────────────────── ribbon ───────────────────────────── */
 
-.fo-ribbon { flex: none; border-block-end: 1px solid var(--app-hairline); }
+.fo-ribbon { flex: none; min-width: 0; border-block-end: 1px solid var(--app-hairline); }
 .fo-tabs { display: flex; gap: 4px; padding: 0 8px; overflow-x: auto; scrollbar-width: none; }
 .fo-tabs::-webkit-scrollbar { display: none; }
 .fo-tab {
@@ -212,12 +221,43 @@
 }
 .fo-tab:hover { color: var(--app-text); }
 .fo-tab[aria-selected="true"] { color: var(--app-text); border-block-end-color: var(--app-copper); font-weight: 600; }
-.fo-toolrow { padding: 4px 8px 4px; overflow-x: auto; }
-.fo-toolpanel { display: flex; align-items: stretch; gap: 4px; min-width: max-content; }
-.fo-group { display: flex; flex-direction: column; align-items: stretch; padding: 0 8px; border-inline-end: 1px solid var(--app-hairline); }
+.fo-tab:focus-visible { outline-offset: -2px; }
+/* The tool row scrolls only when even folded groups do not fit; the arrows stand in for a scrollbar. */
+.fo-rowwrap { position: relative; min-width: 0; }
+.fo-toolrow { padding: 4px 8px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain; }
+.fo-toolrow::-webkit-scrollbar { display: none; }
+.fo-toolpanel { display: flex; align-items: stretch; gap: 4px; width: max-content; }
+.fo-group { flex: none; display: flex; flex-direction: column; align-items: stretch; padding: 0 8px; border-inline-end: 1px solid var(--app-hairline); }
 .fo-group:last-child { border-inline-end: 0; }
 .fo-group-tools { display: flex; align-items: center; gap: 4px; flex: 1; }
-.fo-group-label { font-size: 11px; color: var(--app-text-3); text-align: center; padding-top: 2px; letter-spacing: .04em; }
+.fo-group-label { font-size: 11px; color: var(--app-text-3); text-align: center; padding-top: 4px; letter-spacing: .04em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fo-group-menu { display: none; }
+/* icon-only: the captions of labelled buttons leave the screen but stay the accessible name */
+.fo-group[data-mode="icon"] .fo-btn.has-label { padding: 0 8px; }
+.fo-group[data-mode="icon"] .fo-btn-label {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+.fo-group[data-mode="icon"] .fo-group-label { contain: inline-size; }
+/* folded: one dropdown (icon + chevron) above the group's caption */
+.fo-group[data-mode="menu"] .fo-group-tools { display: none; }
+.fo-group[data-mode="menu"] .fo-group-menu { display: inline-flex; flex: 1; order: -1; gap: 4px; padding: 0 8px; }
+.fo-group-menu[aria-expanded="true"] { background: var(--app-blue-soft); }
+.fo-groupdrop .fo-group-tools { flex-wrap: wrap; max-width: 320px; }
+.fo-rscroll.fo-btn {
+  position: absolute;
+  inset-block: 0;
+  z-index: 2;
+  min-width: 24px;
+  width: 24px;
+  padding: 0;
+  border-radius: 0;
+  background: var(--app-glass-strong);
+  color: var(--app-text-2);
+}
+.fo-rscroll.is-start { inset-inline-start: 0; border-inline-end: 1px solid var(--app-hairline); }
+.fo-rscroll.is-end { inset-inline-end: 0; border-inline-start: 1px solid var(--app-hairline); }
+@media (pointer: coarse) { .fo-rscroll.fo-btn { min-width: 44px; width: 44px; } }
 .fo-phonebar { display: none; }
 
 /* ───────────────────────────── body, banner ───────────────────────────── */
@@ -251,9 +291,26 @@
 .fo-status-parts { display: flex; gap: 16px; flex: none; white-space: nowrap; }
 .fo-status-msg { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--app-text-2); }
 .fo-path { max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fo-zoom { display: flex; align-items: center; gap: 4px; }
+.fo-zoom { display: flex; align-items: center; gap: 4px; flex: none; direction: ltr; }
 .fo-zoom .fo-btn { min-width: 24px; min-height: 24px; }
 .fo-zoom-value { min-width: 40px; text-align: center; }
+/* The zoom slider: a hairline track, the filled part in blue, a 14px thumb. Always left-to-right. */
+.fo-zoom-slider {
+  --fo-fill: 50%;
+  appearance: none;
+  -webkit-appearance: none;
+  direction: ltr;
+  width: 96px;
+  height: 24px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.fo-zoom-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--app-blue) var(--fo-fill), var(--app-hairline-strong) var(--fo-fill)); }
+.fo-zoom-slider::-moz-range-track { height: 4px; border-radius: 2px; background: var(--app-hairline-strong); }
+.fo-zoom-slider::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--app-blue); }
+.fo-zoom-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px var(--app-hairline-strong), 0 1px 4px rgba(0, 0, 0, .35); }
+.fo-zoom-slider::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px var(--app-hairline-strong), 0 1px 4px rgba(0, 0, 0, .35); }
 
 /* ───────────────────────────── start screen ───────────────────────────── */
 
@@ -341,52 +398,9 @@
 .faisal-office-card-title { font-weight: 700; font-size: 15px; }
 .faisal-office-card-text { margin: 0; line-height: 1.7; color: var(--app-text-2); overflow-wrap: anywhere; }
 
-/* ───────────────────────────── Writer ───────────────────────────── */
+/* ───────────────────── shared pieces used by more than one editor ───────────────────── */
 
-.fo-writer { flex: 1; min-height: 0; display: flex; }
-.fo-wmain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.fo-canvas { flex: 1; min-height: 0; overflow: auto; background: var(--fo-canvas); padding: 24px; }
-.fo-canvas[hidden] { display: none; }
-.fo-stage { position: relative; margin: 0 auto; }
-.fo-pagelayer { position: absolute; inset: 0; pointer-events: none; }
-.fo-page { position: absolute; inset-inline: 0; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .25), 0 8px 32px rgba(0, 0, 0, .28); }
-.fo-header, .fo-footer { position: absolute; color: #7a7a7a; font-family: var(--fo-doc-font); font-size: 9pt; }
-.fo-hfline { white-space: pre-wrap; }
-.fo-flow {
-  position: absolute;
-  color: #000;  font-family: var(--fo-doc-font);
-  font-size: 11pt;
-  line-height: 1.17;
-  outline: none;
-  caret-color: #1a3fd1;
-  overflow-wrap: anywhere;
-}
-.fo-flow ::selection { background: rgba(91, 141, 239, .35); }
-.fo-p { white-space: pre-wrap; tab-size: 36pt; margin: 0; min-height: 1em; }
-.fo-marker { display: inline-block; min-width: 18pt; margin-inline-start: -18pt; user-select: none; }
-.fo-tablewrap { padding: 4pt 0; overflow-x: auto; }
-.fo-table { border-collapse: collapse; table-layout: fixed; max-width: 100%; }
-.fo-table td { padding: 2pt 5pt; vertical-align: top; min-width: 24px; }
-.fo-op { display: inline; }
-.fo-op img { vertical-align: bottom; max-width: 100%; height: auto; }
-.fo-op.is-float-start { float: inline-start; margin: 0 8pt 4pt 0; }
-.fo-op.is-float-end { float: inline-end; margin: 0 0 4pt 8pt; }
-.fo-op.is-selected img { outline: 2px solid var(--app-blue); outline-offset: 2px; }
-.fo-op.is-link { color: #0563C1; text-decoration: underline; }
-.fo-pagebreak { display: block; border-top: 1px dashed #b0b0b0; margin: 4pt 0; text-align: center; }
-.fo-pagebreak-label { font: 9px/1 var(--faisal-font); color: #909090; background: #fff; padding: 0 8px; position: relative; top: -6px; }
-.fo-op-missing { color: #999; }
-.fo-writer.is-fluid .fo-canvas { padding: 8px; }
-.fo-writer.is-fluid .fo-stage { background: #fff; border-radius: 6px; min-height: 100%; padding: 16px; box-sizing: border-box; box-shadow: 0 8px 32px rgba(0, 0, 0, .25); }
-.fo-writer.is-fluid .fo-flow { position: static; }
-.fo-writer.is-fluid .fo-p, .fo-writer.is-fluid .fo-tablewrap { margin-top: 0 !important; }
-
-/* Draft view */
-.fo-draft { flex: 1; min-height: 0; overflow: auto; padding: 16px; }
-.fo-draft[hidden] { display: none; }
-.fo-draft-list { max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
-.fo-draft-row { display: flex; gap: 8px; align-items: flex-start; }
-.fo-draft-index { flex: none; width: 80px; padding-top: 12px; font-size: 12px; color: var(--app-text-3); }
+/* A paragraph box (Writer's draft view, the plain slide editor). */
 .faisal-office-para {
   flex: 1;
   min-width: 0;
@@ -404,220 +418,15 @@
 }
 .faisal-office-para:focus { outline: 2px solid var(--app-copper-2); outline-offset: 0; }
 
-/* side panel (navigator, comments) */
-.fo-side { width: 300px; flex: none; display: flex; flex-direction: column; border-inline-start: 1px solid var(--app-hairline); }
-.fo-side[hidden] { display: none; }
+/* Panel header and body (the help panel, Writer's side panel). */
 .fo-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px; border-block-end: 1px solid var(--app-hairline); }
 .fo-panel-title { margin: 0; font-size: 12px; font-weight: 700; color: var(--app-text-2); }
-.fo-panel-tabs { display: flex; gap: 4px; }
-.fo-panel-tab { appearance: none; min-height: 32px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--app-text-2); font: inherit; cursor: pointer; }
-.fo-panel-tab[aria-selected="true"] { color: var(--app-text); background: rgba(200, 137, 75, .16); box-shadow: inset 0 -2px 0 var(--app-copper); }
 .fo-panel-body { flex: 1; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-.fo-panel-note { margin: 8px 0 0; font-size: 12px; color: var(--app-text-3); }
-.fo-nav-item { appearance: none; min-height: 32px; border: 0; border-radius: 6px; background: transparent; color: var(--app-text); font: inherit; text-align: start; cursor: pointer; padding-inline-end: 8px; }
-.fo-nav-item:hover { background: var(--app-blue-soft); }
-.fo-comment { padding: 12px; border-radius: 10px; border: 1px solid var(--app-hairline); background: var(--app-glass-strong); }
-.fo-comment-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.fo-avatar { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--app-blue); color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; }
-.fo-comment-author { font-weight: 600; flex: 1; }
-.fo-comment-date { font-size: 12px; color: var(--app-text-3); }
-.fo-comment-text { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
-.fo-link { appearance: none; border: 0; background: none; color: var(--app-blue); font: inherit; cursor: pointer; padding: 4px 0; min-height: 32px; }
 
-/* footnotes and endnotes (الحواشي): the number sits in the body, the text in the panel.
-   The badge is a MARKER (data-skip in the view), so it inherits the paragraph's font and colour
-   family and only tints like an editor affordance — the caret blue this editor already uses. */
-.fo-note { color: #1a3fd1; font-size: .72em; line-height: 1; vertical-align: super; cursor: pointer; user-select: none; -webkit-user-select: none; }
-.fo-note.is-endnote { color: #7a3fa0; }
-.fo-note.is-missing { color: #a4642a; }
-.fo-notes-group { margin: 4px 0 0; font-size: 12px; font-weight: 700; color: var(--app-text-2); }
-.fo-note-card { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--app-hairline); border-radius: 10px; background: var(--app-glass-strong); }
-.fo-note-head { display: flex; align-items: center; gap: 8px; }
-.fo-note-badge { display: grid; place-items: center; min-width: 32px; height: 32px; padding: 0 6px; border-radius: 8px; background: rgba(91, 141, 239, .18); color: var(--app-blue); font: 700 13px var(--faisal-font); font-variant-numeric: tabular-nums; }
-.fo-note-badge.is-endnote { background: rgba(200, 137, 75, .18); color: var(--app-copper); }
-.fo-note-field { box-sizing: border-box; width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--app-hairline-strong); border-radius: 6px; background: var(--app-glass); color: var(--app-text); font: 14px/1.6 var(--faisal-font); resize: vertical; overflow-wrap: anywhere; }
-.fo-note-field:focus { outline: 2px solid var(--app-copper-2); outline-offset: 0; }
-.fo-note-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.fo-note-btn { flex: 1 1 auto; min-height: 44px; min-width: 64px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--app-line, #d5d9e1); background: var(--app-field, #fff); color: inherit; font: 13px var(--faisal-font); cursor: pointer; }
-.fo-note-btn.is-danger { border-color: var(--app-copper, #C8894B); }
-.fo-note-btn:hover { background: rgba(127, 127, 127, .12); }
-.fo-note-btn:disabled { opacity: .5; cursor: default; }
-
-/* ───────────────────────────── sheet ───────────────────────────── */
-
-.fo-calc { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.fo-fxbar { flex: none; display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-block-end: 1px solid var(--app-hairline); direction: ltr; }
-.fo-namebox, .fo-fxinput {
-  min-height: 28px;
-  box-sizing: border-box;
-  padding: 0 8px;
-  border: 1px solid var(--app-hairline-strong);
-  border-radius: 6px;
-  background: var(--app-glass-strong);
-  color: var(--app-text);
-  font: 13px var(--faisal-font-mono, ui-monospace, monospace);
-}
-.fo-namebox { width: 96px; flex: none; }
-.fo-fxlabel { color: var(--app-text-3); font-style: italic; font-weight: 700; }
-.fo-fxinput { flex: 1; min-width: 0; font-family: var(--faisal-font); }
-.fo-gridwrap { flex: 1; min-height: 0; overflow: auto; background: #fff; overscroll-behavior: contain; }
-/* The sheet area holds the grid, the floating charts and the panels: the grid keeps scrolling
-   under them, and the charts stay where the owner put them while it does. */
-.fo-sheetcanvas { position: relative; flex: 1; min-height: 0; display: flex; }
-.fo-chartlayer, .fo-sheetpanels { position: absolute; inset: 0; pointer-events: none; }
-.fo-chart { position: absolute; pointer-events: auto; display: flex; flex-direction: column; background: #fff;
-  border: 1px solid var(--app-line, #d5d9e1); border-radius: 10px; box-shadow: 0 6px 20px rgba(0, 0, 0, .18); overflow: hidden; }
-.fo-chart-bar { display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: #eef1f7; cursor: move; touch-action: none; }
-.fo-chart-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--faisal-font); color: #333; }
-.fo-chart-close { min-width: 28px; min-height: 28px; border: 0; border-radius: 6px; background: transparent; color: #555; cursor: pointer; }
-.fo-chart-close:hover { background: #dde3ee; }
-.fo-chart-body { flex: 1; min-height: 0; overflow: hidden; }
-.fo-chart-body svg { width: 100%; height: 100%; display: block; }
-.fo-chart-empty { padding: 12px; font-size: 12px; color: var(--app-text-3); }
-.fo-sheetpanel { position: absolute; pointer-events: auto; inset-block-start: 12px; inset-inline-start: 12px;
-  width: min(360px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: auto; display: flex; flex-direction: column;
-  background: var(--app-surface, #fff); color: var(--app-text, #111); border: 1px solid var(--app-line, #d5d9e1);
-  border-radius: 14px; box-shadow: 0 10px 30px rgba(0, 0, 0, .28); z-index: 4; }
-.fo-sheetpanel-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-block-end: 1px solid var(--app-line, #e3e6ec); }
-.fo-sheetpanel-title { flex: 1; min-width: 0; font: 600 13px var(--faisal-font); }
-.fo-sheetpanel-close { min-width: 44px; min-height: 44px; border: 0; background: transparent; color: inherit; font-size: 16px; cursor: pointer; border-radius: 10px; }
-.fo-sheetpanel-close:hover { background: rgba(127, 127, 127, .16); }
+/* The body, note and action row of a tool panel (the sheet's panels, Writer's mail merge). */
 .fo-sheetpanel-body { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
-.fo-sheetpanel-rows { display: flex; flex-direction: column; gap: 6px; }
-.fo-sheetpanel-row { display: flex; align-items: center; gap: 6px; }
-.fo-sheetpanel-level { min-width: 22px; text-align: center; font: 12px var(--faisal-font); color: var(--app-text-3); }
-.fo-sheetpanel-select, .fo-sheetpanel-input { flex: 1; min-width: 0; min-height: 44px; padding: 0 8px; border-radius: 10px;
-  border: 1px solid var(--app-line, #d5d9e1); background: var(--app-field, #fff); color: inherit; font: 13px var(--faisal-font); }
-.fo-sheetpanel-list { max-height: 40vh; overflow: auto; border: 1px solid var(--app-line, #e3e6ec); border-radius: 10px; padding: 4px; }
-.fo-sheetpanel-check { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 6px; font: 13px var(--faisal-font); }
-.fo-sheetpanel-check input { width: 20px; height: 20px; }
 .fo-sheetpanel-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.fo-sheetpanel-btn { min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--app-line, #d5d9e1);
-  background: var(--app-field, #fff); color: inherit; font: 13px var(--faisal-font); cursor: pointer; }
-.fo-sheetpanel-btn.is-primary { background: var(--app-copper, #C8894B); border-color: transparent; color: #1a1206; font-weight: 600; }
 .fo-sheetpanel-note { font: 12px/1.5 var(--faisal-font); color: var(--app-text-3); }
-.fo-colhead.is-filtered { box-shadow: inset 0 -3px 0 var(--app-copper, #C8894B); }
-.fo-td.has-cond { background-clip: padding-box; }
-/* The virtual grid's stand-in strips: they carry the height of the rows that are NOT drawn, so
-   the scrollbar covers the whole sheet while only a screenful of rows exists in the document. */
-.fo-vpad-cell { padding: 0; border: 0; background: none; }
-.fo-grid { border-collapse: separate; border-spacing: 0; table-layout: fixed; color: #000; font: 11pt/1.2 Calibri, Carlito, Arial, "Noto Sans Arabic", sans-serif; }
-.fo-grid th { position: sticky; background: #f1f3f7; color: #555; font: 12px var(--faisal-font); font-weight: 400; border-inline-end: 1px solid #d5d9e1; border-block-end: 1px solid #d5d9e1; z-index: 2; }
-.fo-colhead { top: 0; height: 26px; text-align: center; }
-.fo-rowhead { inset-inline-start: 0; min-width: 48px; text-align: center; z-index: 1; }
-.fo-corner { top: 0; inset-inline-start: 0; z-index: 3; }
-.fo-grid th.is-sel { background: #dfe7fb; color: #1b3f9e; }
-.fo-grid tr.is-frozen td { position: sticky; z-index: 1; background-clip: padding-box; box-shadow: 0 1px 0 #9aa6bf; }
-.fo-td { position: relative; height: 24px; padding: 0; border-inline-end: 1px solid #e3e6ec; border-block-end: 1px solid #e3e6ec; background: #fff; overflow: hidden; }
-.fo-td.is-sel { background-image: linear-gradient(rgba(91, 141, 239, .16), rgba(91, 141, 239, .16)); }
-.fo-td.is-active { box-shadow: inset 0 0 0 2px #2f67e6; z-index: 1; }
-.fo-cellview { position: absolute; inset: 0; display: flex; align-items: flex-end; padding: 2px 4px; white-space: nowrap; overflow: hidden; pointer-events: none; }
-.fo-cellview.is-wrap { white-space: normal; align-items: flex-start; }
-.faisal-office-cell, .fo-cell-empty {
-  position: relative;
-  display: block;
-  width: 100%;
-  height: 100%;
-  min-height: 22px;
-  box-sizing: border-box;
-  padding: 2px 4px;
-  border: 0;
-  background: transparent;
-  color: transparent;
-  caret-color: #000;
-  font: inherit;
-  outline: none;
-}
-.faisal-office-cell:focus, .fo-cell-empty:focus { color: #000 !important; background: #fff; }
-.faisal-office-cell:focus + .fo-cellview, .fo-td:focus-within .fo-cellview { visibility: hidden; }
-.fo-sheettabs { flex: none; display: flex; gap: 4px; padding: 4px 8px; overflow-x: auto; border-block-start: 1px solid var(--app-hairline); direction: ltr; }
-.fo-sheettab { appearance: none; flex: none; min-height: 32px; padding: 0 16px; border: 0; border-radius: 6px; background: transparent; color: var(--app-text-2); font: inherit; cursor: pointer; }
-.fo-sheettab[aria-selected="true"] { background: rgba(200, 137, 75, .16); color: var(--app-text); box-shadow: inset 0 -2px 0 var(--app-copper); font-weight: 600; }
-/* Column and row borders: a grab band on the trailing edge (wider for touch). */
-.fo-colgrip, .fo-rowgrip { position: absolute; z-index: 4; touch-action: none; }
-.fo-colgrip { top: 0; bottom: 0; inset-inline-end: -4px; width: 8px; cursor: col-resize; }
-.fo-rowgrip { inset-inline: 0; bottom: -4px; height: 8px; cursor: row-resize; }
-.fo-colgrip:hover, .fo-rowgrip:hover { background: rgba(91, 141, 239, .45); }
-.fo-calc.is-resizing { cursor: col-resize; user-select: none; }
-@media (pointer: coarse) {
-  .fo-colgrip { inset-inline-end: -12px; width: 24px; }
-  .fo-rowgrip { bottom: -12px; height: 24px; }
-}
-/* Fill handle, validation list button, rejected entries. */
-.fo-fillhandle { position: absolute; z-index: 3; right: -1px; bottom: -1px; width: 8px; height: 8px; background: #2f67e6; border: 1px solid #fff; cursor: crosshair; touch-action: none; box-sizing: border-box; }
-.fo-fillhandle::after { content: ""; position: absolute; inset: -6px; }
-@media (pointer: coarse) { .fo-fillhandle { width: 16px; height: 16px; border-radius: 50%; } .fo-fillhandle::after { inset: -8px; } }
-.fo-td.is-fillpreview { box-shadow: inset 0 0 0 1px #2f67e6; background-image: linear-gradient(rgba(91, 141, 239, .10), rgba(91, 141, 239, .10)); }
-.fo-listbtn { position: absolute; z-index: 2; inset-block: 2px; inset-inline-end: 2px; width: 20px; display: grid; place-items: center; padding: 0; border: 1px solid #c5ccd8; border-radius: 6px; background: #f6f8fb; color: #3a4252; cursor: pointer; }
-.fo-listbtn:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
-@media (pointer: coarse) { .fo-listbtn { width: 44px; inset-block: 0; inset-inline-end: 0; } }
-@container office (max-width: 700px) { .fo-listbtn { width: 44px; inset-block: 0; inset-inline-end: 0; } }
-.fo-td.is-invalid { box-shadow: inset 0 0 0 2px var(--app-danger); }
-.fo-validdlg { display: flex; flex-direction: column; gap: 12px; }
-.fo-validdlg .fo-select { width: 100%; }
-.fo-check { display: flex; align-items: center; gap: 8px; min-height: 32px; cursor: pointer; }
-.fo-check input { width: 16px; height: 16px; accent-color: var(--app-blue); flex: none; }
-@media (pointer: coarse) { .fo-check { min-height: 44px; } }
-.fo-gridnote { padding: 4px 12px; font-size: 12px; color: var(--app-text-3); }
-.fo-gridnote[hidden] { display: none; }
-
-/* The fill handle: a small square on the corner of the selection whose GRAB AREA is 44px (G8) —
-   the dot stays 9px so the grid still reads like a spreadsheet, the box around it does not.
-   `touch-action: none` keeps a drag on a phone from scrolling the sheet underneath it. */
-.fo-td.has-fillhandle { overflow: visible; z-index: 2; }
-.fo-fillhandle {
-  position: absolute;
-  inset-block-end: 0;
-  inset-inline-end: 0;
-  width: 44px;
-  height: 44px;
-  display: grid;
-  place-items: end;
-  padding-block-end: 5px;
-  padding-inline-end: 5px;
-  box-sizing: border-box;
-  cursor: crosshair;
-  touch-action: none;
-  z-index: 3;
-}
-.fo-fillhandle[hidden] { display: none; }
-.fo-fillhandle::after {
-  content: '';
-  width: 9px;
-  height: 9px;
-  border: 1px solid #fff;
-  background: #2f67e6;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, .3);
-}
-.fo-fillhandle:focus-visible { outline: 2px solid var(--faisal-accent, #2f67e6); outline-offset: 2px; }
-.fo-fillhandle:focus-visible::after { width: 13px; height: 13px; }
-/* The cells a release would write: a preview, never a model change. */
-.fo-td.is-fillpreview { background-image: linear-gradient(rgba(47, 103, 230, .22), rgba(47, 103, 230, .22)); }
-
-/* ───────────────────────────── slides ───────────────────────────── */
-
-.fo-impress { flex: 1; min-height: 0; display: flex; }
-.fo-rail { width: 196px; flex: none; overflow: auto; padding: 12px 8px; display: flex; flex-direction: column; gap: 8px; border-inline-end: 1px solid var(--app-hairline); }
-.fo-thumb { appearance: none; display: flex; gap: 8px; align-items: flex-start; padding: 4px; border: 0; background: transparent; color: var(--app-text-3); font: inherit; cursor: pointer; border-radius: 10px; }
-.fo-thumb-n { width: 16px; font-size: 12px; font-variant-numeric: tabular-nums; }
-.fo-thumb-slide { flex: 1; aspect-ratio: 16 / 9; background: #fff; border-radius: 6px; padding: 8px; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px; overflow: hidden; box-shadow: 0 0 0 1px var(--app-hairline-strong); text-align: start; }
-.fo-thumb[aria-current="true"] .fo-thumb-slide { box-shadow: 0 0 0 2px var(--app-copper); }
-.fo-thumb-title { color: #111; font-size: 9px; font-weight: 700; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.fo-thumb-body { color: #555; font-size: 7px; overflow: hidden; }
-.fo-slidestage { flex: 1; min-width: 0; overflow: auto; background: var(--fo-canvas); padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 24px; }
-.fo-slide { width: min(960px, 100%); aspect-ratio: 16 / 9; background: #fff; box-shadow: 0 8px 32px rgba(0, 0, 0, .28); border-radius: 6px; flex: none; overflow: hidden; container-type: inline-size; }
-.fo-slide-inner { height: 100%; box-sizing: border-box; padding: 6cqw 7cqw; display: flex; flex-direction: column; gap: 2cqw; overflow: auto; }
-.fo-slidetext { background: transparent; border: 1px dashed transparent; color: #1a1d26; resize: none; overflow: hidden; border-radius: 6px; }
-.fo-slidetext:hover { border-color: #c9ced9; }
-.fo-slidetext.is-title { font: 700 4.2cqw/1.2 var(--fo-doc-font); text-align: center; }
-.fo-slidetext.is-body { font: 2.4cqw/1.45 var(--fo-doc-font); }
-.fo-slide-empty { color: #888; margin: auto; }
-.fo-show { position: absolute; inset: 0; z-index: 50; background: #000; display: grid; place-items: center; outline: none; cursor: pointer; }
-.fo-show-slide { width: min(100%, 177.78vh); aspect-ratio: 16 / 9; background: #fff; color: #111; box-sizing: border-box; padding: 6% 8%; display: flex; flex-direction: column; justify-content: center; gap: 16px; container-type: inline-size; }
-.fo-show-title { margin: 0; font: 700 5cqw/1.2 var(--fo-doc-font); text-align: center; }
-.fo-show-text { margin: 0; font: 2.8cqw/1.5 var(--fo-doc-font); }
-.fo-show-count { position: absolute; bottom: 12px; inset-inline-end: 16px; color: #aaa; font-variant-numeric: tabular-nums; }
-.fo-show-exit { position: absolute; top: 12px; inset-inline-end: 12px; color: #ddd; }
 
 /* plain text */
 .fo-textwrap { flex: 1; min-height: 0; display: flex; padding: 12px; }
@@ -701,9 +510,6 @@
 }
 .fo-swatch-none { appearance: none; min-height: var(--fo-chip); border: 1px solid var(--app-hairline-strong); border-radius: 6px; background: transparent; color: var(--app-text); font: inherit; cursor: pointer; }
 .fo-swatch-custom { width: 100%; height: var(--fo-chip); border: 0; background: transparent; }
-.fo-find { display: flex; flex-direction: column; gap: 8px; min-width: 260px; }
-.fo-find-count { font-size: 12px; color: var(--app-text-3); min-height: 16px; }
-.fo-find-actions { display: flex; gap: 4px; flex-wrap: wrap; }
 .fo-sheet-ribbon .fo-tabs { padding: 0; margin-bottom: 8px; }
 .fo-sheet-group { font-size: 12px; font-weight: 700; color: var(--app-text-2); margin: 12px 0 4px; }
 .fo-sheet-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px; }
@@ -717,8 +523,9 @@
 .fo-form { display: flex; flex-direction: column; gap: 12px; }
 .fo-field { display: flex; flex-direction: column; gap: 4px; }
 .fo-field-label { font-size: 12px; color: var(--app-text-2); }
-.fo-stats { display: grid; grid-template-columns: 1fr auto; gap: 8px 24px; margin: 0; font-variant-numeric: tabular-nums; }
-.fo-stats dd { margin: 0; font-weight: 700; text-align: end; }
+.fo-check { display: flex; align-items: center; gap: 8px; min-height: 32px; cursor: pointer; }
+.fo-check input { width: 16px; height: 16px; accent-color: var(--app-blue); flex: none; }
+@media (pointer: coarse) { .fo-check { min-height: 44px; } }
 
 .fo-help { position: absolute; inset-block: 8px; inset-inline-end: 8px; z-index: 45; width: min(380px, calc(100% - 16px)); display: flex; flex-direction: column; border: 1px solid var(--app-hairline-strong); border-radius: 10px; box-shadow: 0 8px 32px rgba(0, 0, 0, .35); overflow: hidden; }
 .fo-help[hidden] { display: none; }
@@ -747,159 +554,463 @@
   }
   .fo-phonebar .fo-select { max-width: 96px; }
   .fo-path, .fo-status-msg:empty { display: none; }
-  .fo-status-parts { gap: 12px; overflow: hidden; }
+  .fo-status-parts { gap: 12px; overflow: hidden; min-width: 0; flex: 1 1 auto; }
   .fo-statusbar { font-size: 12px; }
+  .fo-zoom-slider { display: none; }
   .fo-start { padding: 24px 16px; }
   .fo-start-cards { grid-template-columns: 1fr 1fr; gap: 8px; }
   .fo-card { min-height: 112px; padding: 12px; }
   .fo-card-hint { display: none; }
   .fo-start-lists { grid-template-columns: 1fr; }
-  .fo-side { position: absolute; inset-inline: 0; bottom: 0; width: auto; height: 70%; z-index: 30; border-radius: 14px 14px 0 0; border: 1px solid var(--app-hairline-strong); }
-  .fo-impress { flex-direction: column; }
-  .fo-rail { width: auto; flex-direction: row; overflow-x: auto; padding: 8px; border-inline-end: 0; border-block-end: 1px solid var(--app-hairline); }
-  .fo-thumb { flex: none; width: 132px; }
-  .fo-slidestage { padding: 12px; gap: 12px; }
-  .fo-draft-row { flex-direction: column; gap: 4px; }
-  .fo-draft-index { width: auto; padding: 0; }
-  .fo-td { height: 44px; }
-  .fo-namebox { width: 72px; }
-  .fo-namebox, .fo-fxinput { min-height: 44px; }
 }
 @container office (max-width: 360px) {
   .fo-appicon { display: none; }
   .fo-status-parts span:nth-child(n+3) { display: none; }
 }
 @media (pointer: coarse) {
-  .fo-td { height: 44px; }
-  .fo-sheettab, .fo-tab, .fo-panel-tab, .fo-nav-item, .fo-menu-item, .fo-link { min-height: 44px; }
-}
-
-/* ─────────────── Impress: slides at their real layout, show, presenter ─────────────── */
-
-.fo-impress.is-rich .fo-rail { overflow: hidden; }
-.fo-rail-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
-.fo-rail-add { flex: none; justify-content: center; }
-.fo-impress.is-rich .fo-thumb { user-select: none; -webkit-user-select: none; touch-action: pan-y; }
-.fo-impress.is-rich .fo-thumb-slide { flex: none; padding: 0; aspect-ratio: auto; background: transparent; display: block; }
-.fo-thumb.is-dragging { opacity: .5; }
-.fo-thumb.is-drop .fo-thumb-slide { box-shadow: 0 0 0 2px var(--app-blue); }
-.fo-canvasframe { position: relative; flex: none; }
-.fo-canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; direction: ltr; overflow: hidden; font-family: var(--fo-doc-font); color: #000; }
-.fo-sh { position: absolute; box-sizing: border-box; }
-.fo-sh > svg { position: absolute; left: 0; top: 0; }
-.fo-sh-img { width: 100%; height: 100%; display: block; pointer-events: none; }
-.fo-sh.is-missing, .fo-sh.is-object { border: 1px dashed #9aa0aa; display: grid; place-items: center; }
-.fo-sh-label { color: #6b7280; font-size: 14px; }
-.fo-sh-text { position: absolute; inset: 0; box-sizing: border-box; padding: 3.6px 7.2px; display: flex; flex-direction: column; justify-content: flex-start; }
-.fo-sh-text.is-ctr { justify-content: center; }
-.fo-sh-text.is-b { justify-content: flex-end; }
-.fo-sh-p { line-height: 1.2; white-space: pre-wrap; overflow-wrap: break-word; unicode-bidi: plaintext; }
-.fo-sh-p.is-prompt { color: #8a8f99; }
-.fo-sh-table { width: 100%; height: 100%; border-collapse: collapse; font-size: 14px; }
-.fo-sh-table td { border: 1px solid #9aa0aa; padding: 4px; }
-.fo-sh.is-pending { visibility: hidden; }
-.fo-sh.is-fadein { animation: fo-imp-fade .5s cubic-bezier(.2, 0, 0, 1); }
-.fo-sh.is-editing .fo-sh-text { visibility: hidden; }
-.fo-sh-edit { position: absolute; z-index: 2; box-sizing: border-box; margin: 0; padding: 3.6px 7.2px; border: 1px solid var(--app-blue); border-radius: 0; background: rgba(255, 255, 255, .92); font-family: var(--fo-doc-font); line-height: 1.2; resize: none; outline: none; }
-.fo-slidestage.is-rich { justify-content: center; overflow: hidden; }
-.fo-editframe { box-shadow: 0 8px 32px rgba(0, 0, 0, .28); touch-action: none; }
-.fo-editframe .fo-canvas { border-radius: 6px; }
-.fo-editframe .fo-sh { cursor: move; }
-/* Drawing a connector: the stage waits for two shapes, and the first one is marked. */
-.fo-editframe.is-connecting { box-shadow: 0 0 0 2px var(--app-copper-2), 0 8px 32px rgba(0, 0, 0, .28); touch-action: manipulation; }
-.fo-editframe.is-connecting .fo-sh { cursor: crosshair; }
-.fo-sh.is-cxn-from { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
-/* The slide-master dialog: a small form that stays inside a phone-height window. */
-.fo-master-form { max-height: min(58vh, 420px); overflow: auto; padding-inline-end: 4px; }
-.fo-master-class { border: 1px solid var(--app-hairline); border-radius: 10px; margin: 0; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 12px; }
-.fo-master-class > legend { padding: 0 4px; font-weight: 700; color: var(--app-text); }
-.fo-master-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.fo-colorinput { width: 64px; height: 32px; padding: 2px; flex: none; }
-@media (pointer: coarse) { .fo-colorinput { height: 44px; } }
-.fo-selection { position: absolute; inset: 0; pointer-events: none; }
-.fo-selbox { position: absolute; outline: 2px solid var(--app-blue); }
-.fo-selbox.is-locked { outline-style: dashed; }
-.fo-handle { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; box-sizing: border-box; background: #fff; border: 2px solid var(--app-blue); border-radius: 50%; pointer-events: auto; touch-action: none; }
-.fo-handle::before { content: ''; position: absolute; inset: -8px; }
-.fo-handle.is-nw { left: 0; top: 0; cursor: nwse-resize; }
-.fo-handle.is-n { left: 50%; top: 0; cursor: ns-resize; }
-.fo-handle.is-ne { left: 100%; top: 0; cursor: nesw-resize; }
-.fo-handle.is-e { left: 100%; top: 50%; cursor: ew-resize; }
-.fo-handle.is-se { left: 100%; top: 100%; cursor: nwse-resize; }
-.fo-handle.is-s { left: 50%; top: 100%; cursor: ns-resize; }
-.fo-handle.is-sw { left: 0; top: 100%; cursor: nesw-resize; }
-.fo-handle.is-w { left: 0; top: 50%; cursor: ew-resize; }
-@media (pointer: coarse) { .fo-handle::before { inset: -16px; } }
-
-.fo-show.is-deck { place-items: stretch; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; cursor: default; }
-.fo-show-main { grid-area: 1 / 1; min-width: 0; min-height: 0; display: grid; place-items: center; overflow: hidden; cursor: pointer; }
-.fo-show-side { display: none; }
-.fo-show-bar { grid-row: 2; grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; padding: 8px 12px; color: #ddd; }
-.fo-show.is-deck .fo-show-btn { color: #ddd; }
-.fo-show.is-deck .fo-show-count { position: static; min-width: 56px; text-align: center; }
-.fo-show-clock { min-width: 56px; text-align: center; font-variant-numeric: tabular-nums; color: var(--app-copper-2); font-size: 15px; }
-.fo-show:not(.is-presenter) .fo-show-clock, .fo-show:not(.is-presenter) .fo-show-ponly { display: none; }
-.fo-show.is-presenter { background: var(--app-bg); grid-template-columns: minmax(0, 1fr) minmax(220px, 32%); }
-.fo-show.is-presenter .fo-show-side { grid-area: 1 / 2; display: flex; flex-direction: column; gap: 12px; padding: 12px; min-height: 0; overflow: auto; color: var(--app-text); border-inline-start: 1px solid var(--app-hairline); }
-.fo-show-label { font-size: 12px; font-weight: 700; color: var(--app-text-2); margin-bottom: 4px; }
-.fo-show-notes { flex: 1; min-height: 0; overflow: auto; }
-.fo-show-notetext { margin: 0; white-space: pre-wrap; font-size: 18px; line-height: 1.5; }
-.fo-show-end { margin: 0; color: var(--app-text-3); }
-.is-enter-fade { animation: fo-imp-fade .5s cubic-bezier(.2, 0, 0, 1); }
-.is-enter-push { animation: fo-imp-push .5s cubic-bezier(.2, 0, 0, 1); }
-@keyframes fo-imp-fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes fo-imp-push { from { transform: translateY(100%); } to { transform: none; } }
-@media (prefers-reduced-motion: reduce) { .is-enter-fade, .is-enter-push, .fo-sh.is-fadein { animation: none; } }
-@media (pointer: coarse) { .fo-show.is-deck .fo-show-btn { min-width: 44px; min-height: 44px; } }
-
-@container office (max-width: 700px) {
-  .fo-impress.is-rich .fo-rail { flex-direction: row; align-items: center; gap: 8px; }
-  .fo-rail-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
-  .fo-impress.is-rich .fo-thumb { width: auto; touch-action: pan-x; }
-  .fo-rail-add { min-height: 44px; }
-  .fo-rail-add .fo-btn-label { display: none; }
-}
-@media (max-width: 700px) {
-  .fo-show.is-presenter { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto; }
-  .fo-show.is-presenter .fo-show-side { grid-area: 2 / 1; flex-direction: row; max-height: 38vh; border-inline-start: 0; border-block-start: 1px solid var(--app-hairline); }
-  .fo-show.is-presenter .fo-show-bar { grid-row: 3; }
-  .fo-show-next { flex: none; width: 40%; }
-  .fo-show-notetext { font-size: 15px; }
+  .fo-tab, .fo-menu-item { min-height: 44px; }
+  .fo-zoom .fo-btn { min-width: 44px; min-height: 44px; }
 }
 
 /* `hidden` always wins over a component's own display (tool panels, zoom, notes). */
 .faisal-office [hidden] { display: none !important; }
 
-/* ══════════════════ tracked changes (تتبّع التعديلات) ══════════════════
+/* ═══════════════════════════════ app: writer ═══════════════════════════════ */
+
+.fo-writer { flex: 1; min-height: 0; display: flex; }
+.fo-writer .fo-wmain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.fo-writer .fo-canvas { flex: 1; min-height: 0; overflow: auto; background: var(--fo-canvas); padding: 24px; }
+.fo-writer .fo-canvas[hidden] { display: none; }
+.fo-writer .fo-stage { position: relative; margin: 0 auto; }
+.fo-writer .fo-pagelayer { position: absolute; inset: 0; pointer-events: none; }
+.fo-writer .fo-page { position: absolute; inset-inline: 0; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .25), 0 8px 32px rgba(0, 0, 0, .28); }
+.fo-writer .fo-header, .fo-writer .fo-footer { position: absolute; color: #7a7a7a; font-family: var(--fo-doc-font); font-size: 9pt; }
+.fo-writer .fo-hfline { white-space: pre-wrap; }
+.fo-writer .fo-flow {
+  position: absolute;
+  color: #000;  font-family: var(--fo-doc-font);
+  font-size: 11pt;
+  line-height: 1.17;
+  outline: none;
+  caret-color: #1a3fd1;
+  overflow-wrap: anywhere;
+}
+.fo-writer .fo-flow ::selection { background: rgba(91, 141, 239, .35); }
+.fo-writer .fo-p { white-space: pre-wrap; tab-size: 36pt; margin: 0; min-height: 1em; }
+.fo-writer .fo-marker { display: inline-block; min-width: 18pt; margin-inline-start: -18pt; user-select: none; }
+.fo-writer .fo-tablewrap { padding: 4pt 0; overflow-x: auto; }
+.fo-writer .fo-table { border-collapse: collapse; table-layout: fixed; max-width: 100%; }
+.fo-writer .fo-table td { padding: 2pt 5pt; vertical-align: top; min-width: 24px; }
+.fo-writer .fo-op { display: inline; }
+.fo-writer .fo-op img { vertical-align: bottom; max-width: 100%; height: auto; }
+.fo-writer .fo-op.is-float-start { float: inline-start; margin: 0 8pt 4pt 0; }
+.fo-writer .fo-op.is-float-end { float: inline-end; margin: 0 0 4pt 8pt; }
+.fo-writer .fo-op.is-selected img { outline: 2px solid var(--app-blue); outline-offset: 2px; }
+.fo-writer .fo-op.is-link { color: #0563C1; text-decoration: underline; }
+.fo-writer .fo-pagebreak { display: block; border-top: 1px dashed #b0b0b0; margin: 4pt 0; text-align: center; }
+.fo-writer .fo-pagebreak-label { font: 9px/1 var(--faisal-font); color: #909090; background: #fff; padding: 0 8px; position: relative; top: -6px; }
+.fo-writer .fo-op-missing { color: #999; }
+.fo-writer.is-fluid .fo-canvas { padding: 8px; }
+.fo-writer.is-fluid .fo-stage { background: #fff; border-radius: 6px; min-height: 100%; padding: 16px; box-sizing: border-box; box-shadow: 0 8px 32px rgba(0, 0, 0, .25); }
+.fo-writer.is-fluid .fo-flow { position: static; }
+.fo-writer.is-fluid .fo-p, .fo-writer.is-fluid .fo-tablewrap { margin-top: 0 !important; }
+
+/* Draft view */
+.fo-writer .fo-draft { flex: 1; min-height: 0; overflow: auto; padding: 16px; }
+.fo-writer .fo-draft[hidden] { display: none; }
+.fo-writer .fo-draft-list { max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 8px; }
+.fo-writer .fo-draft-row { display: flex; gap: 8px; align-items: flex-start; }
+.fo-writer .fo-draft-index { flex: none; width: 80px; padding-top: 12px; font-size: 12px; color: var(--app-text-3); }
+
+/* side panel (navigator, comments) */
+.fo-writer .fo-side { width: 300px; flex: none; display: flex; flex-direction: column; border-inline-start: 1px solid var(--app-hairline); }
+.fo-writer .fo-side {
+  background: var(--app-glass);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .fo-writer .fo-side { background: var(--app-glass-strong); } }
+@media (prefers-reduced-transparency: reduce) { .fo-writer .fo-side { background: var(--app-glass-strong); backdrop-filter: none; } }
+.fo-writer .fo-side[hidden] { display: none; }
+.fo-writer .fo-panel-tabs { display: flex; gap: 4px; }
+.fo-writer .fo-panel-tab { appearance: none; min-height: 32px; padding: 0 12px; border: 0; border-radius: 6px; background: transparent; color: var(--app-text-2); font: inherit; cursor: pointer; }
+.fo-writer .fo-panel-tab[aria-selected="true"] { color: var(--app-text); background: rgba(200, 137, 75, .16); box-shadow: inset 0 -2px 0 var(--app-copper); }
+.fo-writer .fo-panel-note { margin: 8px 0 0; font-size: 12px; color: var(--app-text-3); }
+.fo-writer .fo-nav-item { appearance: none; min-height: 32px; border: 0; border-radius: 6px; background: transparent; color: var(--app-text); font: inherit; text-align: start; cursor: pointer; padding-inline-end: 8px; }
+.fo-writer .fo-nav-item:hover { background: var(--app-blue-soft); }
+.fo-writer .fo-nav-item:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+.fo-writer .fo-comment { padding: 12px; border-radius: 10px; border: 1px solid var(--app-hairline); background: var(--app-glass-strong); }
+.fo-writer .fo-comment-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.fo-writer .fo-avatar { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--app-blue); color: #fff; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.fo-writer .fo-comment-author { font-weight: 600; flex: 1; }
+.fo-writer .fo-comment-date { font-size: 12px; color: var(--app-text-3); }
+.fo-writer .fo-comment-text { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fo-writer .fo-link { appearance: none; border: 0; background: none; color: var(--app-blue); font: inherit; cursor: pointer; padding: 4px 0; min-height: 32px; }
+
+/* footnotes and endnotes (الحواشي): the number sits in the body, the text in the panel.
+   The badge is a MARKER (data-skip in the view), so it inherits the paragraph's font and colour
+   family and only tints like an editor affordance — the caret blue this editor already uses. */
+.fo-writer .fo-note { color: #1a3fd1; font-size: .72em; line-height: 1; vertical-align: super; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.fo-writer .fo-note.is-endnote { color: #7a3fa0; }
+.fo-writer .fo-note.is-missing { color: #a4642a; }
+.fo-writer .fo-notes-group { margin: 4px 0 0; font-size: 12px; font-weight: 700; color: var(--app-text-2); }
+.fo-writer .fo-note-card { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--app-hairline); border-radius: 10px; background: var(--app-glass-strong); }
+.fo-writer .fo-note-head { display: flex; align-items: center; gap: 8px; }
+.fo-writer .fo-note-badge { display: grid; place-items: center; min-width: 32px; height: 32px; padding: 0 6px; border-radius: 8px; background: rgba(91, 141, 239, .18); color: var(--app-blue); font: 700 13px var(--faisal-font); font-variant-numeric: tabular-nums; }
+.fo-writer .fo-note-badge.is-endnote { background: rgba(200, 137, 75, .18); color: var(--app-copper); }
+.fo-writer .fo-note-field { box-sizing: border-box; width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--app-hairline-strong); border-radius: 6px; background: var(--app-glass); color: var(--app-text); font: 14px/1.6 var(--faisal-font); resize: vertical; overflow-wrap: anywhere; }
+.fo-writer .fo-note-field:focus { outline: 2px solid var(--app-copper-2); outline-offset: 0; }
+.fo-writer .fo-note-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.fo-writer .fo-note-btn { flex: 1 1 auto; min-height: 44px; min-width: 64px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--app-line, #d5d9e1); background: var(--app-field, #fff); color: inherit; font: 13px var(--faisal-font); cursor: pointer; }
+.fo-writer .fo-note-btn.is-danger { border-color: var(--app-copper, #C8894B); }
+.fo-writer .fo-note-btn:hover { background: rgba(127, 127, 127, .12); }
+.fo-writer .fo-note-btn:disabled { opacity: .5; cursor: default; }
+
+/* find and replace (a popover) and the word count (a dialog) live in the window's overlay host */
+.faisal-office[data-kind="docx"] .fo-find { display: flex; flex-direction: column; gap: 8px; min-width: 260px; }
+.faisal-office[data-kind="docx"] .fo-find-count { font-size: 12px; color: var(--app-text-3); min-height: 16px; }
+.faisal-office[data-kind="docx"] .fo-find-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.faisal-office[data-kind="docx"] .fo-stats { display: grid; grid-template-columns: 1fr auto; gap: 8px 24px; margin: 0; font-variant-numeric: tabular-nums; }
+.faisal-office[data-kind="docx"] .fo-stats dd { margin: 0; font-weight: 700; text-align: end; }
+
+/* tracked changes (تتبّع التعديلات)
    A mark is never colour alone: an insertion is underlined with a leading "+" and a deletion is
    struck through with a leading "−", and both keep their own font style. The shape of the mark is
    what carries the meaning, so it reads the same in the dark and the light theme and for anyone
    who cannot tell the two fills apart. */
-.fo-rev { border-radius: 3px; padding: 0 1px; box-decoration-break: clone; }
-.fo-rev-sign { font-weight: 700; margin-inline-end: 1px; opacity: .85; user-select: none; }
-.fo-rev.is-insert { text-decoration: underline; text-decoration-style: solid; text-decoration-thickness: 2px; background: rgba(91, 141, 239, .18); }
-.fo-rev.is-insert .fo-rev-sign { color: #2f67e6; }
-.fo-rev.is-delete { text-decoration: line-through; text-decoration-thickness: 2px; outline: 1px dashed currentColor; outline-offset: 1px; background: rgba(200, 137, 75, .16); opacity: .85; }
-.fo-rev.is-delete .fo-rev-sign { color: #a4642a; }
-:root[data-theme='dark'] .fo-rev.is-insert, body.is-dark .fo-rev.is-insert { background: rgba(91, 141, 239, .3); }
-:root[data-theme='dark'] .fo-rev.is-delete, body.is-dark .fo-rev.is-delete { background: rgba(200, 137, 75, .28); }
+.fo-writer .fo-rev { border-radius: 3px; padding: 0 1px; box-decoration-break: clone; }
+.fo-writer .fo-rev-sign { font-weight: 700; margin-inline-end: 1px; opacity: .85; user-select: none; }
+.fo-writer .fo-rev.is-insert { text-decoration: underline; text-decoration-style: solid; text-decoration-thickness: 2px; background: rgba(91, 141, 239, .18); }
+.fo-writer .fo-rev.is-insert .fo-rev-sign { color: #2f67e6; }
+.fo-writer .fo-rev.is-delete { text-decoration: line-through; text-decoration-thickness: 2px; outline: 1px dashed currentColor; outline-offset: 1px; background: rgba(200, 137, 75, .16); opacity: .85; }
+.fo-writer .fo-rev.is-delete .fo-rev-sign { color: #a4642a; }
+:root[data-theme='dark'] .fo-writer .fo-rev.is-insert, body.is-dark .fo-writer .fo-rev.is-insert { background: rgba(91, 141, 239, .3); }
+:root[data-theme='dark'] .fo-writer .fo-rev.is-delete, body.is-dark .fo-writer .fo-rev.is-delete { background: rgba(200, 137, 75, .28); }
 
-.fo-review { position: absolute; inset-block-start: 8px; inset-inline-end: 8px; z-index: 6; width: min(380px, calc(100% - 16px));
+.fo-writer .fo-review { position: absolute; inset-block-start: 8px; inset-inline-end: 8px; z-index: 6; width: min(380px, calc(100% - 16px));
   max-height: calc(100% - 16px); display: flex; flex-direction: column; background: var(--app-glass-strong, #fff); color: var(--app-text, #111);
   border: 1px solid var(--app-line, #d5d9e1); border-radius: 14px; box-shadow: 0 10px 30px rgba(0, 0, 0, .28); }
-.fo-review-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-block-end: 1px solid var(--app-line, #e3e6ec); }
-.fo-review-title { flex: 1; font: 600 13px var(--faisal-font); }
-.fo-review-close { min-width: 44px; min-height: 44px; border: 0; border-radius: 10px; background: transparent; color: inherit; font-size: 16px; cursor: pointer; }
-.fo-review-close:hover { background: rgba(127, 127, 127, .16); }
-.fo-review-list { overflow: auto; padding: 6px; display: flex; flex-direction: column; gap: 6px; }
-.fo-review-empty { padding: 10px; font-size: 12px; color: var(--app-text-3); }
-.fo-review-row { display: flex; align-items: center; gap: 6px; padding: 4px; border: 1px solid var(--app-line, #e3e6ec); border-radius: 10px; }
-.fo-review-what { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.fo-review-kind { font: 600 11px var(--faisal-font); padding: 2px 6px; border-radius: 6px; }
-.fo-review-kind.is-insert { background: rgba(91, 141, 239, .2); }
-.fo-review-kind.is-delete { background: rgba(200, 137, 75, .22); text-decoration: line-through; }
-.fo-review-text { font: 12px var(--faisal-font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12em; }
-.fo-review-meta { font: 11px var(--faisal-font); color: var(--app-text-3); }
-.fo-review-btn { min-height: 44px; min-width: 64px; border-radius: 10px; border: 1px solid var(--app-line, #d5d9e1); background: var(--app-field, #fff); color: inherit; font: 13px var(--faisal-font); cursor: pointer; }
-.fo-review-btn.is-accept { border-color: var(--app-blue, #5B8DEF); }
-.fo-review-btn.is-reject { border-color: var(--app-copper, #C8894B); }
+.fo-writer .fo-review-head { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-block-end: 1px solid var(--app-line, #e3e6ec); }
+.fo-writer .fo-review-title { flex: 1; font: 600 13px var(--faisal-font); }
+.fo-writer .fo-review-close { min-width: 44px; min-height: 44px; border: 0; border-radius: 10px; background: transparent; color: inherit; font-size: 16px; cursor: pointer; }
+.fo-writer .fo-review-close:hover { background: rgba(127, 127, 127, .16); }
+.fo-writer .fo-review-list { overflow: auto; padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+.fo-writer .fo-review-empty { padding: 10px; font-size: 12px; color: var(--app-text-3); }
+.fo-writer .fo-review-row { display: flex; align-items: center; gap: 6px; padding: 4px; border: 1px solid var(--app-line, #e3e6ec); border-radius: 10px; }
+.fo-writer .fo-review-what { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.fo-writer .fo-review-kind { font: 600 11px var(--faisal-font); padding: 2px 6px; border-radius: 6px; }
+.fo-writer .fo-review-kind.is-insert { background: rgba(91, 141, 239, .2); }
+.fo-writer .fo-review-kind.is-delete { background: rgba(200, 137, 75, .22); text-decoration: line-through; }
+.fo-writer .fo-review-text { font: 12px var(--faisal-font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12em; }
+.fo-writer .fo-review-meta { font: 11px var(--faisal-font); color: var(--app-text-3); }
+.fo-writer .fo-review-btn { min-height: 44px; min-width: 64px; border-radius: 10px; border: 1px solid var(--app-line, #d5d9e1); background: var(--app-field, #fff); color: inherit; font: 13px var(--faisal-font); cursor: pointer; }
+.fo-writer .fo-review-btn.is-accept { border-color: var(--app-blue, #5B8DEF); }
+
+@container office (max-width: 700px) {
+  .fo-writer .fo-side { position: absolute; inset-inline: 0; bottom: 0; width: auto; height: 70%; z-index: 30; border-radius: 14px 14px 0 0; border: 1px solid var(--app-hairline-strong); }
+  .fo-writer .fo-draft-row { flex-direction: column; gap: 4px; }
+  .fo-writer .fo-draft-index { width: auto; padding: 0; }
+}
+@media (pointer: coarse) {
+  .fo-writer .fo-panel-tab, .fo-writer .fo-nav-item, .fo-writer .fo-link { min-height: 44px; }
+}
+
+/* ═══════════════════════════════ app: calc ═══════════════════════════════ */
+
+.fo-calc { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.fo-calc .fo-fxbar { flex: none; display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-block-end: 1px solid var(--app-hairline); direction: ltr; }
+.fo-calc .fo-fxbar, .fo-calc .fo-sheettabs {
+  background: var(--app-glass);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .fo-calc .fo-fxbar, .fo-calc .fo-sheettabs { background: var(--app-glass-strong); } }
+@media (prefers-reduced-transparency: reduce) { .fo-calc .fo-fxbar, .fo-calc .fo-sheettabs { background: var(--app-glass-strong); backdrop-filter: none; } }
+.fo-calc .fo-namebox, .fo-calc .fo-fxinput {
+  min-height: 28px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid var(--app-hairline-strong);
+  border-radius: 6px;
+  background: var(--app-glass-strong);
+  color: var(--app-text);
+  font: 13px var(--faisal-font-mono, ui-monospace, monospace);
+}
+.fo-calc .fo-namebox { width: 96px; flex: none; }
+.fo-calc .fo-fxlabel { color: var(--app-text-3); font-style: italic; font-weight: 700; }
+.fo-calc .fo-fxinput { flex: 1; min-width: 0; font-family: var(--faisal-font); }
+.fo-calc .fo-fxinput:focus-visible, .fo-calc .fo-namebox:focus-visible, .fo-calc .fo-sheettab:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+.fo-calc .fo-gridwrap { flex: 1; min-height: 0; overflow: auto; background: #fff; overscroll-behavior: contain; }
+/* The sheet area holds the grid, the floating charts and the panels: the grid keeps scrolling
+   under them, and the charts stay where the owner put them while it does. */
+.fo-calc .fo-sheetcanvas { position: relative; flex: 1; min-height: 0; display: flex; }
+.fo-calc .fo-chartlayer, .fo-calc .fo-sheetpanels { position: absolute; inset: 0; pointer-events: none; }
+.fo-calc .fo-chart { position: absolute; pointer-events: auto; display: flex; flex-direction: column; background: #fff;
+  border: 1px solid var(--app-line, #d5d9e1); border-radius: 10px; box-shadow: 0 6px 20px rgba(0, 0, 0, .18); overflow: hidden; }
+.fo-calc .fo-chart-bar { display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: #eef1f7; cursor: move; touch-action: none; }
+.fo-calc .fo-chart-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--faisal-font); color: #333; }
+.fo-calc .fo-chart-close { min-width: 28px; min-height: 28px; border: 0; border-radius: 6px; background: transparent; color: #555; cursor: pointer; }
+.fo-calc .fo-chart-close:hover { background: #dde3ee; }
+.fo-calc .fo-chart-body { flex: 1; min-height: 0; overflow: hidden; }
+.fo-calc .fo-chart-body svg { width: 100%; height: 100%; display: block; }
+.fo-calc .fo-chart-empty { padding: 12px; font-size: 12px; color: var(--app-text-3); }
+.fo-calc .fo-sheetpanel { position: absolute; pointer-events: auto; inset-block-start: 12px; inset-inline-start: 12px;
+  width: min(360px, calc(100% - 24px)); max-height: calc(100% - 24px); overflow: auto; display: flex; flex-direction: column;
+  background: var(--app-surface, #fff); color: var(--app-text, #111); border: 1px solid var(--app-line, #d5d9e1);
+  border-radius: 14px; box-shadow: 0 10px 30px rgba(0, 0, 0, .28); z-index: 4; }
+.fo-calc .fo-sheetpanel-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-block-end: 1px solid var(--app-line, #e3e6ec); }
+.fo-calc .fo-sheetpanel-title { flex: 1; min-width: 0; font: 600 13px var(--faisal-font); }
+.fo-calc .fo-sheetpanel-close { min-width: 44px; min-height: 44px; border: 0; background: transparent; color: inherit; font-size: 16px; cursor: pointer; border-radius: 10px; }
+.fo-calc .fo-sheetpanel-close:hover { background: rgba(127, 127, 127, .16); }
+.fo-calc .fo-sheetpanel-rows { display: flex; flex-direction: column; gap: 6px; }
+.fo-calc .fo-sheetpanel-row { display: flex; align-items: center; gap: 6px; }
+.fo-calc .fo-sheetpanel-level { min-width: 22px; text-align: center; font: 12px var(--faisal-font); color: var(--app-text-3); }
+.fo-calc .fo-sheetpanel-select, .fo-calc .fo-sheetpanel-input { flex: 1; min-width: 0; min-height: 44px; padding: 0 8px; border-radius: 10px;
+  border: 1px solid var(--app-line, #d5d9e1); background: var(--app-field, #fff); color: inherit; font: 13px var(--faisal-font); }
+.fo-calc .fo-sheetpanel-list { max-height: 40vh; overflow: auto; border: 1px solid var(--app-line, #e3e6ec); border-radius: 10px; padding: 4px; }
+.fo-calc .fo-sheetpanel-check { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 6px; font: 13px var(--faisal-font); }
+.fo-calc .fo-sheetpanel-check input { width: 20px; height: 20px; }
+.fo-calc .fo-sheetpanel-btn { min-height: 44px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--app-line, #d5d9e1);
+  background: var(--app-field, #fff); color: inherit; font: 13px var(--faisal-font); cursor: pointer; }
+.fo-calc .fo-sheetpanel-btn.is-primary { background: var(--app-copper, #C8894B); border-color: transparent; color: #1a1206; font-weight: 600; }
+.fo-calc .fo-colhead.is-filtered { box-shadow: inset 0 -3px 0 var(--app-copper, #C8894B); }
+.fo-calc .fo-td.has-cond { background-clip: padding-box; }
+/* The virtual grid's stand-in strips: they carry the height of the rows that are NOT drawn, so
+   the scrollbar covers the whole sheet while only a screenful of rows exists in the document. */
+.fo-calc .fo-vpad-cell { padding: 0; border: 0; background: none; }
+.fo-calc .fo-grid { border-collapse: separate; border-spacing: 0; table-layout: fixed; color: #000; font: 11pt/1.2 Calibri, Carlito, Arial, "Noto Sans Arabic", sans-serif; }
+.fo-calc .fo-grid th { position: sticky; background: #f1f3f7; color: #555; font: 12px var(--faisal-font); font-weight: 400; border-inline-end: 1px solid #d5d9e1; border-block-end: 1px solid #d5d9e1; z-index: 2; }
+.fo-calc .fo-colhead { top: 0; height: 26px; text-align: center; }
+.fo-calc .fo-rowhead { inset-inline-start: 0; min-width: 48px; text-align: center; z-index: 1; }
+.fo-calc .fo-corner { top: 0; inset-inline-start: 0; z-index: 3; }
+.fo-calc .fo-grid th.is-sel { background: #dfe7fb; color: #1b3f9e; }
+.fo-calc .fo-grid tr.is-frozen td { position: sticky; z-index: 1; background-clip: padding-box; box-shadow: 0 1px 0 #9aa6bf; }
+.fo-calc .fo-td { position: relative; height: 24px; padding: 0; border-inline-end: 1px solid #e3e6ec; border-block-end: 1px solid #e3e6ec; background: #fff; overflow: hidden; }
+.fo-calc .fo-td.is-sel { background-image: linear-gradient(rgba(91, 141, 239, .16), rgba(91, 141, 239, .16)); }
+.fo-calc .fo-td.is-active { box-shadow: inset 0 0 0 2px #2f67e6; z-index: 1; }
+.fo-calc .fo-cellview { position: absolute; inset: 0; display: flex; align-items: flex-end; padding: 2px 4px; white-space: nowrap; overflow: hidden; pointer-events: none; }
+.fo-calc .fo-cellview.is-wrap { white-space: normal; align-items: flex-start; }
+.fo-calc .faisal-office-cell, .fo-calc .fo-cell-empty {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 22px;
+  box-sizing: border-box;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: #000;
+  font: inherit;
+  outline: none;
+}
+.fo-calc .faisal-office-cell:focus, .fo-calc .fo-cell-empty:focus { color: #000 !important; background: #fff; }
+.fo-calc .faisal-office-cell:focus + .fo-cellview, .fo-calc .fo-td:focus-within .fo-cellview { visibility: hidden; }
+.fo-calc .fo-sheettabs { flex: none; display: flex; gap: 4px; padding: 4px 8px; overflow-x: auto; border-block-start: 1px solid var(--app-hairline); direction: ltr; }
+.fo-calc .fo-sheettab { appearance: none; flex: none; min-height: 32px; padding: 0 16px; border: 0; border-radius: 6px; background: transparent; color: var(--app-text-2); font: inherit; cursor: pointer; }
+.fo-calc .fo-sheettab[aria-selected="true"] { background: rgba(200, 137, 75, .16); color: var(--app-text); box-shadow: inset 0 -2px 0 var(--app-copper); font-weight: 600; }
+/* Column and row borders: a grab band on the trailing edge (wider for touch). */
+.fo-calc .fo-colgrip, .fo-calc .fo-rowgrip { position: absolute; z-index: 4; touch-action: none; }
+.fo-calc .fo-colgrip { top: 0; bottom: 0; inset-inline-end: -4px; width: 8px; cursor: col-resize; }
+.fo-calc .fo-rowgrip { inset-inline: 0; bottom: -4px; height: 8px; cursor: row-resize; }
+.fo-calc .fo-colgrip:hover, .fo-calc .fo-rowgrip:hover { background: rgba(91, 141, 239, .45); }
+.fo-calc.is-resizing { cursor: col-resize; user-select: none; }
+@media (pointer: coarse) {
+  .fo-calc .fo-colgrip { inset-inline-end: -12px; width: 24px; }
+  .fo-calc .fo-rowgrip { bottom: -12px; height: 24px; }
+}
+/*
+ * The fill handle: ONE rule (it used to be two, and the older one painted the whole 44px grab
+ * box solid blue over the next cells). The dot is a small square on the corner of the selection;
+ * the transparent box around it is the grab area, centred on that corner so it reaches no
+ * further into the neighbouring cells than it must: 16px for a mouse, 44px on touch (G8).
+ * `touch-action: none` keeps a drag on a phone from scrolling the sheet underneath it.
+ */
+.fo-calc .fo-td.has-fillhandle { overflow: visible; z-index: 2; }
+.fo-calc .fo-fillhandle {
+  --fo-grab: 16px;
+  position: absolute;
+  z-index: 3;
+  inset-block-end: calc(var(--fo-grab) / -2);
+  inset-inline-end: calc(var(--fo-grab) / -2);
+  width: var(--fo-grab);
+  height: var(--fo-grab);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-sizing: border-box;
+  cursor: crosshair;
+  touch-action: none;
+}
+.fo-calc .fo-fillhandle[hidden] { display: none; }
+.fo-calc .fo-fillhandle::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border: 1px solid #fff;
+  background: #2f67e6;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .3);
+}
+.fo-calc .fo-fillhandle:focus-visible { outline: 2px solid var(--faisal-accent, #2f67e6); outline-offset: 2px; }
+.fo-calc .fo-fillhandle:focus-visible::after { width: 12px; height: 12px; }
+@media (pointer: coarse) { .fo-calc .fo-fillhandle { --fo-grab: 44px; } .fo-calc .fo-fillhandle::after { width: 12px; height: 12px; border-radius: 50%; } }
+/* The cells a release would write: a preview, never a model change. */
+.fo-calc .fo-td.is-fillpreview { box-shadow: inset 0 0 0 1px #2f67e6; background-image: linear-gradient(rgba(47, 103, 230, .22), rgba(47, 103, 230, .22)); }
+/* Validation list button, rejected entries. */
+.fo-calc .fo-listbtn { position: absolute; z-index: 2; inset-block: 2px; inset-inline-end: 2px; width: 20px; display: grid; place-items: center; padding: 0; border: 1px solid #c5ccd8; border-radius: 6px; background: #f6f8fb; color: #3a4252; cursor: pointer; }
+.fo-calc .fo-listbtn:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+@media (pointer: coarse) { .fo-calc .fo-listbtn { width: 44px; inset-block: 0; inset-inline-end: 0; } }
+@container office (max-width: 700px) { .fo-calc .fo-listbtn { width: 44px; inset-block: 0; inset-inline-end: 0; } }
+.fo-calc .fo-td.is-invalid { box-shadow: inset 0 0 0 2px var(--app-danger); }
+.fo-calc .fo-gridnote { padding: 4px 12px; font-size: 12px; color: var(--app-text-3); }
+.fo-calc .fo-gridnote[hidden] { display: none; }
+/* the data-validation dialog lives in the window's overlay host */
+.faisal-office[data-kind="xlsx"] .fo-validdlg, .faisal-office[data-kind="csv"] .fo-validdlg { display: flex; flex-direction: column; gap: 12px; }
+.faisal-office[data-kind="xlsx"] .fo-validdlg .fo-select, .faisal-office[data-kind="csv"] .fo-validdlg .fo-select { width: 100%; }
+
+@container office (max-width: 700px) {
+  .fo-calc .fo-td { height: 44px; }
+  .fo-calc .fo-namebox { width: 72px; }
+  .fo-calc .fo-namebox, .fo-calc .fo-fxinput { min-height: 44px; }
+}
+@media (pointer: coarse) {
+  .fo-calc .fo-td { height: 44px; }
+  .fo-calc .fo-sheettab { min-height: 44px; }
+}
+
+/* ═══════════════════════════════ app: impress ═══════════════════════════════ */
+
+.fo-impress { flex: 1; min-height: 0; display: flex; }
+.fo-impress .fo-rail { width: 196px; flex: none; overflow: auto; padding: 12px 8px; display: flex; flex-direction: column; gap: 8px; border-inline-end: 1px solid var(--app-hairline); }
+.fo-impress .fo-rail {
+  background: var(--app-glass);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .fo-impress .fo-rail { background: var(--app-glass-strong); } }
+@media (prefers-reduced-transparency: reduce) { .fo-impress .fo-rail { background: var(--app-glass-strong); backdrop-filter: none; } }
+.fo-impress .fo-thumb { appearance: none; display: flex; gap: 8px; align-items: flex-start; padding: 4px; border: 0; background: transparent; color: var(--app-text-3); font: inherit; cursor: pointer; border-radius: 10px; }
+.fo-impress .fo-thumb:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+.fo-impress .fo-thumb-n { width: 16px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.fo-impress .fo-thumb-slide { flex: 1; aspect-ratio: 16 / 9; background: #fff; border-radius: 6px; padding: 8px; box-sizing: border-box; display: flex; flex-direction: column; gap: 4px; overflow: hidden; box-shadow: 0 0 0 1px var(--app-hairline-strong); text-align: start; }
+.fo-impress .fo-thumb[aria-current="true"] .fo-thumb-slide { box-shadow: 0 0 0 2px var(--app-copper); }
+.fo-impress .fo-thumb-title { color: #111; font-size: 9px; font-weight: 700; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fo-impress .fo-thumb-body { color: #555; font-size: 7px; overflow: hidden; }
+.fo-impress .fo-slidestage { flex: 1; min-width: 0; overflow: auto; background: var(--fo-canvas); padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 24px; }
+.fo-impress .fo-slide { width: min(960px, 100%); aspect-ratio: 16 / 9; background: #fff; box-shadow: 0 8px 32px rgba(0, 0, 0, .28); border-radius: 6px; flex: none; overflow: hidden; container-type: inline-size; }
+.fo-impress .fo-slide-inner { height: 100%; box-sizing: border-box; padding: 6cqw 7cqw; display: flex; flex-direction: column; gap: 2cqw; overflow: auto; }
+.fo-impress .fo-slidetext { background: transparent; border: 1px dashed transparent; color: #1a1d26; resize: none; overflow: hidden; border-radius: 6px; }
+.fo-impress .fo-slidetext:hover { border-color: #c9ced9; }
+.fo-impress .fo-slidetext.is-title { font: 700 4.2cqw/1.2 var(--fo-doc-font); text-align: center; }
+.fo-impress .fo-slidetext.is-body { font: 2.4cqw/1.45 var(--fo-doc-font); }
+.fo-impress .fo-slide-empty { color: #888; margin: auto; }
+
+/* Slides at their real layout: the editor, the rail's thumbnails and the show all draw them. */
+.fo-impress.is-rich .fo-rail { overflow: hidden; }
+.fo-impress .fo-rail-list { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.fo-impress .fo-rail-add { flex: none; justify-content: center; }
+.fo-impress.is-rich .fo-thumb { user-select: none; -webkit-user-select: none; touch-action: pan-y; }
+.fo-impress.is-rich .fo-thumb-slide { flex: none; padding: 0; aspect-ratio: auto; background: transparent; display: block; }
+.fo-impress .fo-thumb.is-dragging { opacity: .5; }
+.fo-impress .fo-thumb.is-drop .fo-thumb-slide { box-shadow: 0 0 0 2px var(--app-blue); }
+.faisal-office[data-kind="pptx"] .fo-canvasframe { position: relative; flex: none; }
+.faisal-office[data-kind="pptx"] .fo-canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; direction: ltr; overflow: hidden; font-family: var(--fo-doc-font); color: #000; }
+.faisal-office[data-kind="pptx"] .fo-sh { position: absolute; box-sizing: border-box; }
+.faisal-office[data-kind="pptx"] .fo-sh > svg { position: absolute; left: 0; top: 0; }
+.faisal-office[data-kind="pptx"] .fo-sh-img { width: 100%; height: 100%; display: block; pointer-events: none; }
+.faisal-office[data-kind="pptx"] .fo-sh.is-missing, .faisal-office[data-kind="pptx"] .fo-sh.is-object { border: 1px dashed #9aa0aa; display: grid; place-items: center; }
+.faisal-office[data-kind="pptx"] .fo-sh-label { color: #6b7280; font-size: 14px; }
+.faisal-office[data-kind="pptx"] .fo-sh-text { position: absolute; inset: 0; box-sizing: border-box; padding: 3.6px 7.2px; display: flex; flex-direction: column; justify-content: flex-start; }
+.faisal-office[data-kind="pptx"] .fo-sh-text.is-ctr { justify-content: center; }
+.faisal-office[data-kind="pptx"] .fo-sh-text.is-b { justify-content: flex-end; }
+.faisal-office[data-kind="pptx"] .fo-sh-p { line-height: 1.2; white-space: pre-wrap; overflow-wrap: break-word; unicode-bidi: plaintext; }
+.faisal-office[data-kind="pptx"] .fo-sh-p.is-prompt { color: #8a8f99; }
+.faisal-office[data-kind="pptx"] .fo-sh-table { width: 100%; height: 100%; border-collapse: collapse; font-size: 14px; }
+.faisal-office[data-kind="pptx"] .fo-sh-table td { border: 1px solid #9aa0aa; padding: 4px; }
+.faisal-office[data-kind="pptx"] .fo-sh.is-pending { visibility: hidden; }
+.faisal-office[data-kind="pptx"] .fo-sh.is-fadein { animation: fo-imp-fade .5s cubic-bezier(.2, 0, 0, 1); }
+.fo-impress .fo-sh.is-editing .fo-sh-text { visibility: hidden; }
+.fo-impress .fo-sh-edit { position: absolute; z-index: 2; box-sizing: border-box; margin: 0; padding: 3.6px 7.2px; border: 1px solid var(--app-blue); border-radius: 0; background: rgba(255, 255, 255, .92); font-family: var(--fo-doc-font); line-height: 1.2; resize: none; outline: none; }
+.fo-impress .fo-slidestage.is-rich { justify-content: center; overflow: hidden; }
+/* Zoomed past fit (the status bar's zoom): the stage scrolls, and stays centred while it fits. */
+.fo-impress .fo-slidestage.is-rich.is-zoomed { overflow: auto; justify-content: safe center; align-items: safe center; }
+.fo-impress .fo-editframe { box-shadow: 0 8px 32px rgba(0, 0, 0, .28); touch-action: none; }
+.fo-impress .fo-editframe .fo-canvas { border-radius: 6px; }
+.fo-impress .fo-editframe .fo-sh { cursor: move; }
+/* Drawing a connector: the stage waits for two shapes, and the first one is marked. */
+.fo-impress .fo-editframe.is-connecting { box-shadow: 0 0 0 2px var(--app-copper-2), 0 8px 32px rgba(0, 0, 0, .28); touch-action: manipulation; }
+.fo-impress .fo-editframe.is-connecting .fo-sh { cursor: crosshair; }
+.fo-impress .fo-sh.is-cxn-from { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+.fo-impress .fo-selection { position: absolute; inset: 0; pointer-events: none; }
+.fo-impress .fo-selbox { position: absolute; outline: 2px solid var(--app-blue); }
+.fo-impress .fo-selbox.is-locked { outline-style: dashed; }
+.fo-impress .fo-handle { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; box-sizing: border-box; background: #fff; border: 2px solid var(--app-blue); border-radius: 50%; pointer-events: auto; touch-action: none; }
+.fo-impress .fo-handle::before { content: ''; position: absolute; inset: -8px; }
+.fo-impress .fo-handle.is-nw { left: 0; top: 0; cursor: nwse-resize; }
+.fo-impress .fo-handle.is-n { left: 50%; top: 0; cursor: ns-resize; }
+.fo-impress .fo-handle.is-ne { left: 100%; top: 0; cursor: nesw-resize; }
+.fo-impress .fo-handle.is-e { left: 100%; top: 50%; cursor: ew-resize; }
+.fo-impress .fo-handle.is-se { left: 100%; top: 100%; cursor: nwse-resize; }
+.fo-impress .fo-handle.is-s { left: 50%; top: 100%; cursor: ns-resize; }
+.fo-impress .fo-handle.is-sw { left: 0; top: 100%; cursor: nesw-resize; }
+.fo-impress .fo-handle.is-w { left: 0; top: 50%; cursor: ew-resize; }
+@media (pointer: coarse) { .fo-impress .fo-handle::before { inset: -16px; } }
+
+/* The slide-master dialog (in the window's overlay host): a small form that stays inside a phone-height window. */
+.faisal-office[data-kind="pptx"] .fo-master-form { max-height: min(58vh, 420px); overflow: auto; padding-inline-end: 4px; }
+.faisal-office[data-kind="pptx"] .fo-master-class { border: 1px solid var(--app-hairline); border-radius: 10px; margin: 0; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 12px; }
+.faisal-office[data-kind="pptx"] .fo-master-class > legend { padding: 0 4px; font-weight: 700; color: var(--app-text); }
+.faisal-office[data-kind="pptx"] .fo-master-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.faisal-office[data-kind="pptx"] .fo-colorinput { width: 64px; height: 32px; padding: 2px; flex: none; }
+@media (pointer: coarse) { .faisal-office[data-kind="pptx"] .fo-colorinput { height: 44px; } }
+
+/* The slide show and the presenter view cover the whole window (the overlay host). */
+.faisal-office[data-kind="pptx"] .fo-show { position: absolute; inset: 0; z-index: 50; background: #000; display: grid; place-items: center; outline: none; cursor: pointer; }
+.faisal-office[data-kind="pptx"] .fo-show-slide { width: min(100%, 177.78vh); aspect-ratio: 16 / 9; background: #fff; color: #111; box-sizing: border-box; padding: 6% 8%; display: flex; flex-direction: column; justify-content: center; gap: 16px; container-type: inline-size; }
+.faisal-office[data-kind="pptx"] .fo-show-title { margin: 0; font: 700 5cqw/1.2 var(--fo-doc-font); text-align: center; }
+.faisal-office[data-kind="pptx"] .fo-show-text { margin: 0; font: 2.8cqw/1.5 var(--fo-doc-font); }
+.faisal-office[data-kind="pptx"] .fo-show-count { position: absolute; bottom: 12px; inset-inline-end: 16px; color: #aaa; font-variant-numeric: tabular-nums; }
+.faisal-office[data-kind="pptx"] .fo-show-exit { position: absolute; top: 12px; inset-inline-end: 12px; color: #ddd; }
+.faisal-office[data-kind="pptx"] .fo-show.is-deck { place-items: stretch; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; cursor: default; }
+.faisal-office[data-kind="pptx"] .fo-show-main { grid-area: 1 / 1; min-width: 0; min-height: 0; display: grid; place-items: center; overflow: hidden; cursor: pointer; }
+.faisal-office[data-kind="pptx"] .fo-show-side { display: none; }
+.faisal-office[data-kind="pptx"] .fo-show-bar { grid-row: 2; grid-column: 1 / -1; display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; padding: 8px 12px; color: #ddd; }
+.faisal-office[data-kind="pptx"] .fo-show.is-deck .fo-show-btn { color: #ddd; }
+.faisal-office[data-kind="pptx"] .fo-show.is-deck .fo-show-count { position: static; min-width: 56px; text-align: center; }
+.faisal-office[data-kind="pptx"] .fo-show-clock { min-width: 56px; text-align: center; font-variant-numeric: tabular-nums; color: var(--app-copper-2); font-size: 15px; }
+.faisal-office[data-kind="pptx"] .fo-show:not(.is-presenter) .fo-show-clock, .faisal-office[data-kind="pptx"] .fo-show:not(.is-presenter) .fo-show-ponly { display: none; }
+.faisal-office[data-kind="pptx"] .fo-show.is-presenter { background: var(--app-bg); grid-template-columns: minmax(0, 1fr) minmax(220px, 32%); }
+.faisal-office[data-kind="pptx"] .fo-show.is-presenter .fo-show-side { grid-area: 1 / 2; display: flex; flex-direction: column; gap: 12px; padding: 12px; min-height: 0; overflow: auto; color: var(--app-text); border-inline-start: 1px solid var(--app-hairline); }
+.faisal-office[data-kind="pptx"] .fo-show-label { font-size: 12px; font-weight: 700; color: var(--app-text-2); margin-bottom: 4px; }
+.faisal-office[data-kind="pptx"] .fo-show-notes { flex: 1; min-height: 0; overflow: auto; }
+.faisal-office[data-kind="pptx"] .fo-show-notetext { margin: 0; white-space: pre-wrap; font-size: 18px; line-height: 1.5; }
+.faisal-office[data-kind="pptx"] .fo-show-end { margin: 0; color: var(--app-text-3); }
+.faisal-office[data-kind="pptx"] .is-enter-fade { animation: fo-imp-fade .5s cubic-bezier(.2, 0, 0, 1); }
+.faisal-office[data-kind="pptx"] .is-enter-push { animation: fo-imp-push .5s cubic-bezier(.2, 0, 0, 1); }
+@keyframes fo-imp-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fo-imp-push { from { transform: translateY(100%); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .faisal-office[data-kind="pptx"] .is-enter-fade, .faisal-office[data-kind="pptx"] .is-enter-push, .faisal-office[data-kind="pptx"] .fo-sh.is-fadein { animation: none; } }
+@media (pointer: coarse) { .faisal-office[data-kind="pptx"] .fo-show.is-deck .fo-show-btn { min-width: 44px; min-height: 44px; } }
+
+@container office (max-width: 700px) {
+  .fo-impress { flex-direction: column; }
+  .fo-impress .fo-rail { width: auto; flex-direction: row; overflow-x: auto; padding: 8px; border-inline-end: 0; border-block-end: 1px solid var(--app-hairline); }
+  .fo-impress .fo-thumb { flex: none; width: 132px; }
+  .fo-impress .fo-slidestage { padding: 12px; gap: 12px; }
+  .fo-impress.is-rich .fo-rail { flex-direction: row; align-items: center; gap: 8px; }
+  .fo-impress .fo-rail-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
+  .fo-impress.is-rich .fo-thumb { width: auto; touch-action: pan-x; }
+  .fo-impress .fo-rail-add { min-height: 44px; }
+  .fo-impress .fo-rail-add .fo-btn-label { display: none; }
+}
+@media (max-width: 700px) {
+  .faisal-office[data-kind="pptx"] .fo-show.is-presenter { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto; }
+  .faisal-office[data-kind="pptx"] .fo-show.is-presenter .fo-show-side { grid-area: 2 / 1; flex-direction: row; max-height: 38vh; border-inline-start: 0; border-block-start: 1px solid var(--app-hairline); }
+  .faisal-office[data-kind="pptx"] .fo-show.is-presenter .fo-show-bar { grid-row: 3; }
+  .faisal-office[data-kind="pptx"] .fo-show-next { flex: none; width: 40%; }
+  .faisal-office[data-kind="pptx"] .fo-show-notetext { font-size: 15px; }
+}
