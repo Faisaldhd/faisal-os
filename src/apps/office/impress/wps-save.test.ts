@@ -10,7 +10,7 @@ import { readDeck, type Deck } from './deck';
 import { patchDeck } from './deckpatch';
 import {
   addShape, addSlide, alignShape, arrangeShape, newShape, newTable, safeLink, setAnim, setNotes, setShapeLink, setShapeLook,
-  setTableCell, setTransition,
+  setParaStyle, setTableCell, setTransition,
 } from './ops';
 
 const partText = async (bytes: Uint8Array, name: string): Promise<string> =>
@@ -137,6 +137,20 @@ describe('speaker notes', () => {
     expect(second.read.slides.map((s) => s.notes)).toEqual(['changed', 'new too']);
     // One notes master only, however many notes pages.
     expect((await partText(second.bytes, 'ppt/presentation.xml')).match(/notesMasterId /g)?.length).toBe(1);
+  });
+});
+
+describe('a text box’s own typeface', () => {
+  it('is written as <a:latin> of its runs, and back to the theme font when cleared', async () => {
+    const bytes = newDeckPptx('T', 'S');
+    const base = await readDeck(bytes);
+    const title = base.slides[0]!.shapes[0]!;
+    const first = await roundTrip(bytes, base, setParaStyle(base, 0, title.uid, { font: 'Georgia' }));
+    expect(first.read.slides[0]!.shapes[0]!.paras[0]!.font).toBe('Georgia');
+    expect(await partText(first.bytes, 'ppt/slides/slide1.xml')).toContain('<a:latin typeface="Georgia"/>');
+    const back = first.read.slides[0]!.shapes[0]!;
+    const second = await roundTrip(first.bytes, first.read, setParaStyle(first.read, 0, back.uid, { font: null }));
+    expect(second.read.slides[0]!.shapes[0]!.paras[0]!.font ?? null).toBeNull();
   });
 });
 
