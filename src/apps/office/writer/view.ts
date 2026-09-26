@@ -1231,6 +1231,8 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       s.addRange(range);
     } catch { /* a node vanished during a redraw: the next click places the caret */ }
     lastSel = { from, to, collapsed: from.b === to.b && from.o === to.o };
+    // The caret moved away from where formatting was picked: that formatting is dropped.
+    if (pending && (!lastSel.collapsed || !pendingAt || pendingAt.b !== from.b || pendingAt.o !== from.o)) { pending = null; pendingAt = null; }
     updateCaretPage();
   }
 
@@ -1258,6 +1260,13 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     if (draftPara !== null && m.blocks?.[draftPara]) {
       const len = (m.paragraphs[draftPara] ?? '').length;
       return { from: { b: draftPara, o: 0 }, to: { b: draftPara, o: len }, collapsed: len === 0 };
+    }
+    // The page's own selection when it is in the document: `selectionchange` arrives a task later,
+    // and a shortcut pressed right after a double-click must format the word just selected.
+    const live = mode === 'page' ? readSel() : null;
+    if (live) {
+      if (pending && (!live.collapsed || !pendingAt || pendingAt.b !== live.from.b || pendingAt.o !== live.from.o)) { pending = null; pendingAt = null; }
+      lastSel = live;
     }
     return lastSel;
   }
@@ -1342,7 +1351,10 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       rightFormat = { ...(rightFormat ?? {}), style: 'Normal' };
     }
     wordToken++;
+    // Bold picked at the end of a line carries on into the new paragraph, as in Word.
+    const carry = pending;
     commitSplice(s.from.b, 1, [left, right], [format, rightFormat], { b: s.from.b + 1, o: 0 });
+    if (carry) { pending = carry; pendingAt = { b: s.from.b + 1, o: 0 }; }
   }
 
   function sameContainer(a: DocBlock, b: DocBlock): boolean {
@@ -2506,7 +2518,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     else if (end) setCaret(keep.from, ends.end);
     else setCaret(ends.start, keep.to);
     const target = end ? paraEls[paraEls.length - 1] : paraEls[0];
-    target?.scrollIntoView({ block: 'nearest' });
+    target?.scrollIntoView?.({ block: 'nearest' });
     if (!end) canvas.scrollTop = 0;
     ctx.refresh();
   }
