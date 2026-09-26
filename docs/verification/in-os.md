@@ -81,7 +81,7 @@
 | الصفوف والصيغة والتصفية | `30-detail.png` | `1 Cat/Qty` · `2 ألف/2.00` · **3 غائب** · `4 جيم/2` |
 | إلغاء التصفية | `40-unfiltered.png` · `92-unfiltered.png` | ظهور `3 باء/300%` |
 | التعديل | `41-edited.png` | `A4 = تعديل٤٦` |
-| الحفظ | `43-saved.png` · `50-state-after-save.png` | «تم الحفظ، والنسخة السابقة في calc.xlsx.bak.» |
+| الحفظ | `42-save-dialog.png` · `50-state-after-save.png` | «تم الحفظ، والنسخة السابقة في calc.xlsx.bak.» |
 | بايتات الملف | `saved-from-vfs.xlsx` | 3 741 بايت · التعديل + `autoFilter` + `conditionalFormatting` + `numFmts` |
 | إعادة الفتح | `71-reopened-1280.png` · `80-reopened-1280.png` | `تعديل٤٦` عاد من الملف · التصفية مطبَّقة |
 | الجوال 390 | `81-reopened-390.png` | نافذة 390×810 · بلا تمرير أفقي · القيمة موجودة |
