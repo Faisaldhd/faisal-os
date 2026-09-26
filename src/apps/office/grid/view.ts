@@ -341,7 +341,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       ...(Object.keys(filters).length ? { filters } : {}),
       // The file's own conditional formatting shows too: a saved rule must not disappear.
       ...(look.condRules?.length ? { condRules: [...look.condRules] } : {}),
-      // �and the charts the file carries, drawn where the file put them.
+      // — and the charts the file carries, drawn where the file put them.
       ...(look.charts?.length ? { charts: [...look.charts] } : {}),
     };
   }
@@ -363,7 +363,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
 
   /**
    * Sets the floating charts in the view AND in the model (one undoable edit), so a chart the owner
-   * adds or removes reaches the file � the panel no longer has to call itself display-only.
+   * adds or removes reaches the file — the panel no longer has to call itself display-only.
    */
   function setChartsState(next: readonly ChartObject[]): void {
     const before = [...sheetView.charts];
