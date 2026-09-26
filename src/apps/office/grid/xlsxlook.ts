@@ -10,6 +10,7 @@ import { entryData, readRawZip } from '../zip';
 import { attrLocal as rawAttr, elementText, elementsOf, localName, parsePart, type XmlElement } from '../xmlscan';
 import { decodeXml, readRels } from '../writer/docxread';
 import { columnName } from '../xml';
+import { parseAutoFilter } from './autofilter';
 
 const attr = (xml: string, el: XmlElement | undefined, name: string): string | null => (el ? rawAttr(xml, el, name) : null);
 const child = (el: XmlElement | undefined, name: string): XmlElement | undefined => el?.children.find((c) => localName(c.name) === name);
@@ -37,6 +38,8 @@ export interface SheetLook {
   formulas: Map<string, string>;
   /** `<sheetView rightToLeft>` when the file states it (column A on the right). */
   rtl?: boolean;
+  /** The file's own AutoFilter, per column index: the checklist values it keeps visible. */
+  filters?: Map<number, string[]>;
 }
 
 export interface BookLook { styles: CellStyle[]; sheets: SheetLook[] }
@@ -187,6 +190,9 @@ export async function readBookLook(bytes: Uint8Array): Promise<BookLook> {
         const r1 = Number(/\d+/.exec(b)?.[0]) - 1;
         look.merges.push({ r0, c0: columnIndex(a), r1, c1: columnIndex(b) });
       }
+      // The file's own AutoFilter: what the owner filtered last time the sheet was saved.
+      const filters = parseAutoFilter(xml);
+      if (filters.length) look.filters = new Map(filters.map((f) => [f.col, [...f.keys]]));
       const shared = new Map<string, { formula: string; row: number; col: number }>();
       let rowCount = 0;
       for (const row of child(root, 'sheetData')?.children ?? []) {

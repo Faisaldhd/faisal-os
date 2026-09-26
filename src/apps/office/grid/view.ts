@@ -15,10 +15,12 @@
 import { t, getLocale } from '../../../kernel/i18n';
 import type { Editor, EditorContext, StatusInfo } from '../editor';
 import {
-  addColumnEdit, addRowEdit, canDeleteColumn, canDeleteRow, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit,
+  addColumnEdit, addRowEdit, autoFilterEdit, canDeleteColumn, canDeleteRow, deleteColumnEdit, deleteRowEdit, formulaAt, formulaCellEdit,
   gridAt, gridWidth, SHEET_ROWS, type CellState, type Edit, type OfficeModel, type SheetsModel,
 } from '../model';
+import type { AutoFilterColumn } from './autofilter';
 import { evaluateInModel, formatFormula, parseFormula, translateFormula } from '../formula/index';
+import type { FilterCondition } from '../calc/index';
 import { formatValue } from '../calc/index';
 import { columnName } from '../xml';
 import { MAX_COLS } from '../../viewer/formats';
@@ -319,9 +321,46 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   let sizes: { disconnect(): void } | null = null;
 
   /* ───────────────────── the sheet's view-level state ───────────────────── */
-  // Sort is applied to the model (undoable, saved); filters, number formats, conditional
-  // formatting and charts change only what the screen shows — see grid/sheetview.ts.
-  let sheetView: SheetView = emptySheetView();
+  // Sort is applied to the model (undoable, saved), and so is the AutoFilter (it is written into
+  // the file as `<autoFilter>`); number formats go to the model's cell formats (styles.xml), while
+  // conditional formatting and charts still change only what the screen shows — see grid/sheetview.ts.
+  let sheetView: SheetView = seededView();
+  /**
+   * The view state a sheet starts with: the file's own AutoFilter (read from its `<autoFilter>` by
+   * `xlsxlook`) shows at open, so a filtered sheet opens looking the way it was saved.
+   */
+  function seededView(): SheetView {
+    const view = emptySheetView();
+    const look = book?.sheets[sheets()?.active ?? 0];
+    if (!look?.filters?.size) return view;
+    const filters: Record<number, FilterCondition> = {};
+    for (const [col, keys] of look.filters) filters[col] = { kind: 'values', keys };
+    return { ...view, filters };
+  }
+
+  /** The AutoFilter the model holds for a view: only the checklist kind has an `<autoFilter>` shape. */
+  function autoFilterColumns(view: SheetView): AutoFilterColumn[] {
+    return Object.entries(view.filters)
+      .filter(([, condition]) => condition.kind === 'values')
+      .map(([col, condition]) => ({ col: Number(col), keys: [...(condition as { kind: 'values'; keys: readonly string[] }).keys] }))
+      .sort((a, b) => a.col - b.col);
+  }
+
+  /**
+   * Sets the view's filters AND the model's copy of them (one undoable edit), so what the owner
+   * filters is what the file gets. The panel no longer has to say "view-level only".
+   */
+  function setFilterState(next: SheetView): void {
+    const before = autoFilterColumns(sheetView);
+    const after = autoFilterColumns(next);
+    sheetView = next;
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      ctx.commit(autoFilterEdit(sheets()?.active ?? 0, before, after));
+    }
+    renderGrid();
+    ctx.refresh();
+  }
+
   /** The model rows to draw, when a filter is on: `null` means drawn row i is model row i. */
   let rowMap: number[] | null = null;
   /** Conditional styles in DRAWN order, computed once per render (never per cell). */
@@ -1410,7 +1449,13 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     }
   }
 
-  /** Applies a chosen number format to every cell of the selection (view-level). */
+  /**
+   * Applies a chosen number format to every cell of the selection.
+   *
+   * It goes into the MODEL (`sheetFormats.cells[…]`, which the save writes into `styles.xml` as a
+   * `<numFmt>` plus the cell's `s=`) and into the view's own copy, so the screen shows it at once.
+   * Writing only the view is what made the picker a display-only feature: the file kept General.
+   */
   function applyNumberFormat(pattern: string): void {
     const g = range();
     const next = { ...sheetView.formats };
@@ -1420,6 +1465,8 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       else next[key] = pattern;
     }
     sheetView = { ...sheetView, formats: next };
+    const chosen = !pattern || pattern === 'General' ? null : pattern;
+    formatSelection(() => ({ numFmt: chosen }));
     renderGrid();
     select(true);
     ctx.refresh();
@@ -1642,15 +1689,14 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       panelButton(t('office.filterApply'), () => {
         const keys = values.filter((v) => chosen.has(v.key)).map((v) => v.key);
         // Unticking nothing at all is the same as clearing the column.
-        sheetView = keys.length === values.length ? clearFilter(sheetView, col) : setFilter(sheetView, col, { kind: 'values', keys });
+        const next = keys.length === values.length ? clearFilter(sheetView, col) : setFilter(sheetView, col, { kind: 'values', keys });
         closePanel();
-        renderGrid();
-        ctx.refresh();
+        setFilterState(next);
       }, true),
-      panelButton(t('office.filterClearColumn'), () => { sheetView = clearFilter(sheetView, col); closePanel(); renderGrid(); ctx.refresh(); }),
-      panelButton(t('office.filterClearAll'), () => { sheetView = clearFilters(sheetView); closePanel(); renderGrid(); ctx.refresh(); }),
+      panelButton(t('office.filterClearColumn'), () => { const next = clearFilter(sheetView, col); closePanel(); setFilterState(next); }),
+      panelButton(t('office.filterClearAll'), () => { const next = clearFilters(sheetView); closePanel(); setFilterState(next); }),
     );
-    body.append(actions, el('div', 'fo-sheetpanel-note', t('office.filterViewOnly')));
+    body.append(actions, el('div', 'fo-sheetpanel-note', t('office.filterSaved')));
     showPanel(t('office.filterTitle', { name: columnLabel(col) }), body);
   }
 
@@ -1770,7 +1816,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
                   { label: t('office.clearValidation'), run: clearValidation, disabled: !validationsOf().length },
                 ],
               },
-              { type: 'button', id: 'unfilter', icon: 'close', label: t('office.filterClearAll'), showLabel: true, enabled: () => isFiltered(sheetView), run: () => { sheetView = clearFilters(sheetView); renderGrid(); ctx.refresh(); } },
+              { type: 'button', id: 'unfilter', icon: 'close', label: t('office.filterClearAll'), showLabel: true, enabled: () => isFiltered(sheetView), run: () => setFilterState(clearFilters(sheetView)) },
             ],
           },
           {
