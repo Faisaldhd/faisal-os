@@ -53,9 +53,9 @@ function notesOf(model: DocModel, kind: NoteKind): NoteInfo[] {
 }
 import { hasArabic } from './docops';
 import type { Revision } from './revisions';
-import { readDocxDocument } from './docxread';
+import { decodeXml, readDocxDocument, type DocLook, type Media } from './docxread';
 import { revisionAttrs, textBody, trackSegments } from './trackfile';
-import { RUN_KEYS, blockText, type DocBlock, type OpaqueRun, type Run, type RunProps, type TextRun } from './types';
+import { RUN_KEYS, blockText, type DocBlock, type NewCell, type NewImage, type OpaqueRun, type Run, type RunProps, type TextRun } from './types';
 
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing';
@@ -592,8 +592,14 @@ export async function patchDocxRich(
       if (block.cell) {
         const table = block.cell.table;
         const cells: Array<{ block: DocBlock; xml: string }> = [];
-        while (j < group.length && group[j].cell?.table === table) {
-          const b = group[j];
+        // A paragraph without a cell that sits BETWEEN two cells of the same new table (a picture
+        // inserted while the caret was in a cell) belongs to the cell before it. Writing it outside
+        // would cut the table in two, each half padded with empty cells, and the file would no
+        // longer read back as the model — which is what turned a rich save into a rebuild.
+        const inTable = (k: number): boolean => group[k].cell?.table === table
+          || (!group[k].cell && group.slice(k + 1).some((b) => b.cell?.table === table));
+        while (j < group.length && inTable(j)) {
+          const b = group[j].cell ? group[j] : { ...group[j], cell: cells[cells.length - 1].block.cell };
           const tpl = tplOf(b);
           cells.push({ block: b, xml: newParagraph(b, tpl.pPr, tpl.format, current.formats?.[start + j], ctx, revisionsOf(b)) });
           j++;
@@ -796,26 +802,99 @@ export function emptyDocxPackage(rtl: boolean): Uint8Array {
   ]);
 }
 
+/** The `png`/`jpeg`/`gif` a new picture can be written as, from a media type. */
+const IMAGE_EXT: Record<string, NewImage['ext']> = { 'image/png': 'png', 'image/jpeg': 'jpeg', 'image/gif': 'gif' };
+
+/**
+ * A picture of the source package as a NEW picture of the rebuilt one. Its markup points at a
+ * relationship of the file it came from (the file just read, or the one a previous save wrote and
+ * the run adopted), which a fresh package does not have: the bytes are carried over instead, so
+ * the picture survives the rebuild rather than turning into text. Null when it cannot be.
+ */
+function carriedImage(run: OpaqueRun, media: ReadonlyMap<string, Media>): OpaqueRun | null {
+  if (run.kind !== 'image' || run.newImage || !run.xml) return null;
+  const rid = run.image?.rid ?? /\br:embed="([^"]+)"/.exec(run.xml)?.[1];
+  const found = rid ? media.get(rid) : undefined;
+  const ext = found ? IMAGE_EXT[found.mime] : undefined;
+  if (!found || !ext) return null;
+  const extent = /<wp:extent\b[^>]*\bcx="(\d+)"[^>]*\bcy="(\d+)"/.exec(run.xml);
+  const w = run.image?.w ?? (extent ? Number(extent[1]) / 12700 : 100);
+  const h = run.image?.h ?? (extent ? Number(extent[2]) / 12700 : 100);
+  const name = /<wp:docPr\b[^>]*\bname="([^"]*)"/.exec(run.xml)?.[1] ?? '';
+  return { t: 'opaque', text: run.text, xml: '', kind: 'image', newImage: { data: found.bytes, ext, w: Math.round(w), h: Math.round(h), name: decodeXml(name) } };
+}
+
+/**
+ * A paragraph that sits in a table of the source file, as a cell of a table the rebuild generates.
+ * The file's table lives in its own markup, which a fresh package does not have; without this every
+ * cell would come back as a body paragraph. Only a plain grid is carried (every row with the same
+ * number of cells): merged cells cannot be expressed by a generated table, so those stay as they were.
+ */
+function carriedCell(block: DocBlock, blocks: readonly DocBlock[], look: DocLook): { cell: NewCell } | Record<string, never> {
+  // A paragraph split off a cell points at it through `tpl`, exactly as the editor draws it.
+  let at: DocBlock | undefined = block;
+  const seen = new Set<number>();
+  while (at && at.tpl !== undefined && !seen.has(at.tpl)) {
+    seen.add(at.tpl);
+    const tpl: number = at.tpl;
+    at = tpl < look.paras.length ? { id: tpl, runs: [] } : blocks.find((b) => b.id === tpl);
+  }
+  const where = at && at.id >= 0 && at.id < look.paras.length ? look.paras[at.id].cell : undefined;
+  const table = where ? look.tables[where.table] : undefined;
+  if (!where || !table?.rows.length) return {};
+  const cols = table.rows[0].cells.length;
+  if (!cols || table.rows.some((row) => row.cells.length !== cols || row.cells.some((c) => c.span !== 1 || c.vMerge))) return {};
+  return { cell: { table: -1 - where.table, row: where.row, col: where.cell, rows: table.rows.length, cols, rtl: table.rtl } };
+}
+
 /**
  * Rebuilds a Word file from the rich model alone, into a fresh package: runs keep
- * their formatting, but anything that pointed at another part of the original
- * (pictures, hyperlinks) becomes plain text. The window warns before it does this.
+ * their formatting, tables and new pictures are generated, and — when `source` (the
+ * package the model was read from) is given — its pictures and plain-grid tables are
+ * carried over.
+ * Anything else that pointed at another part of the original (hyperlinks) becomes
+ * plain text. Returns null when the result would not read back as the model: the
+ * caller must then NOT write it, and must never fall back to plain text silently.
  */
-export async function rebuildDocxRich(model: DocModel, tracked: readonly Revision[] = []): Promise<Uint8Array | null> {
+export async function rebuildDocxRich(model: DocModel, tracked: readonly Revision[] = [], source?: Uint8Array | null): Promise<Uint8Array | null> {
   const base = emptyDocxPackage(false);
   const archive = readRawZip(base);
   const read = await readDocxDocument(base);
   const baseline: DocModel = { kind: 'docx', paragraphs: read.blocks.map(blockText), blocks: read.blocks.map((b) => ({ ...b, id: -1 - b.id })) };
+  let look: DocLook | null = null;
+  if (source?.length) {
+    try { look = (await readDocxDocument(source)).look; } catch { /* nothing to carry */ }
+  }
+  const media: ReadonlyMap<string, Media> = look?.media ?? new Map();
   // Every property is written explicitly: the fresh package has no theme or styles
   // for the original raw run properties to lean on.
   const blocks = (model.blocks ?? []).map((b) => ({
     ...b,
+    ...(look && !b.cell ? carriedCell(b, model.blocks ?? [], look) : {}),
     tpl: undefined,
-    runs: b.runs.map((r) => (r.t === 'text' ? { ...r, rpr: '', base: {}, src: undefined } : { ...r, src: undefined })),
+    runs: b.runs.map((r): Run => {
+      if (r.t === 'text') return { ...r, rpr: '', base: {}, src: undefined };
+      return { ...(carriedImage(r, media) ?? r), src: undefined };
+    }),
   }));
   const current: DocModel = { kind: 'docx', paragraphs: model.paragraphs.slice(), blocks, ...(model.formats ? { formats: model.formats } : {}) };
   const out = await patchDocxRich(archive, baseline, current, true, tracked);
   if (!out) return null;
   const data = await entryData(readRawZip(out.bytes), 'word/document.xml');
   return data ? out.bytes : null;
+}
+
+/**
+ * True when `bytes` are exactly the empty package a new document is created as (either
+ * direction): the file holds nothing a rebuild could lose, so no warning is owed.
+ */
+export function isPristineDocx(bytes: Uint8Array | null | undefined): boolean {
+  if (!bytes?.length) return false;
+  const same = (other: Uint8Array): boolean => other.length === bytes.length && other.every((v, i) => v === bytes[i]);
+  return same(emptyDocxPackage(false)) || same(emptyDocxPackage(true));
+}
+
+/** The document as plain text, one paragraph per line: the copy the owner can ask for explicitly. */
+export function plainTextCopy(model: DocModel): Uint8Array {
+  return utf8(model.paragraphs.join('\n'));
 }

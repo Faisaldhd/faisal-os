@@ -1470,7 +1470,11 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
   function insertBlocksAfter(blocks: DocBlock[], formats: Array<ParagraphFormat | undefined>): void {
     const m = doc();
     if (!m?.blocks || !ctx.editable()) return;
-    const at = (targetRange()?.to.b ?? m.blocks.length - 1) + 1;
+    let at = (targetRange()?.to.b ?? m.blocks.length - 1) + 1;
+    // The caret in a cell of a table inserted in this session: what is inserted goes AFTER the
+    // table. Landing between two of its cells would cut the table in two.
+    const table = m.blocks[at - 1]?.cell?.table;
+    if (table !== undefined) while (at < m.blocks.length && m.blocks[at].cell?.table === table) at++;
     commitSplice(at, 0, blocks, formats, { b: at + blocks.length - 1, o: 0 });
   }
 
