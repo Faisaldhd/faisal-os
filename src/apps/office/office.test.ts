@@ -215,7 +215,9 @@ describe('the office window', () => {
     expect(saveBtn?.disabled).toBe(false);
 
     saveBtn?.click();
-    await settle();
+    // Wait for the app to say it saved (an observable state) rather than guessing with a fixed
+    // number of macrotasks: the save is asynchronous and a loaded machine outlasts any fixed wait.
+    await until(() => meta(content).includes(t('office.clean')) && store.files.has(`${HOME_FILE}.bak`));
 
     expect(new TextDecoder().decode(store.files.get(`${HOME_FILE}.bak`) ?? new Uint8Array())).toBe(CSV);
     expect(new TextDecoder().decode(store.files.get(HOME_FILE) ?? new Uint8Array())).toBe('name,qty,note\r\ngadget,12,<b>bold</b>\r\n');
@@ -239,7 +241,8 @@ describe('the office window', () => {
 
     expect(meta(content)).toContain(t('office.truncatedBadge'));
     button(content, t('office.save'))?.click();
-    await settle();
+    // The write happens only after the confirm resolves: wait for it, observable, in the file store.
+    await until(() => store.files.has(`${HOME_FILE}.bak`));
 
     expect(vi.mocked(shellConfirm)).toHaveBeenCalledWith(expect.objectContaining({ title: t('office.truncatedTitle') }));
     // The saved file holds only what was read; the .bak holds the whole original.
@@ -296,7 +299,10 @@ describe('the office window', () => {
     expect(meta(content)).toContain(t('office.dirty'));
 
     button(content, t('office.save'))?.click();
-    await settle();
+    // The save is asynchronous: reading the file after a blind settle() once saw the PREVIOUS bytes
+    // on a loaded CI machine, which failed this test and skipped the desktop release. Wait for the
+    // app's own clean status, set only after the write and the read-back both succeeded.
+    await until(() => meta(content).includes(t('office.clean')) && store.files.has('/home/user/a.docx.bak'));
     const saved = store.files.get('/home/user/a.docx') ?? new Uint8Array();
     expect(await readDocx(saved)).toEqual(['first', 'tab\tthere\nnext']);
     expect(store.files.has('/home/user/a.docx.bak')).toBe(true);
