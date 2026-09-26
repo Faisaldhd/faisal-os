@@ -32,7 +32,8 @@ function runProps(tag: 'a:rPr' | 'a:endParaRPr', p: DeckPara, text: string): str
   if (p.underline) attrs.push('u="sng"');
   attrs.push('dirty="0"');
   const fill = p.color ? `<a:solidFill><a:srgbClr val="${hex(p.color)}"/></a:solidFill>` : '';
-  return fill ? `<${tag} ${attrs.join(' ')}>${fill}</${tag}>` : `<${tag} ${attrs.join(' ')}/>`;
+  const latin = p.font ? `<a:latin typeface="${xmlText(p.font)}"/>` : '';
+  return fill || latin ? `<${tag} ${attrs.join(' ')}>${fill}${latin}</${tag}>` : `<${tag} ${attrs.join(' ')}/>`;
 }
 
 /** One `<a:p>` from the model; line breaks become `<a:br/>`. */
@@ -134,11 +135,13 @@ export function groupWritable(s: DeckShape): boolean {
  * relationship id of a picture's media part; `ids` the ids of the other new shapes, so a
  * connector can name the shapes it is attached to.
  */
-export function shapeXml(s: DeckShape, id: number, embed: string | null, ids?: ReadonlyMap<number, number>): string {
-  const name = xmlText(s.name || `${s.kind === 'pic' ? 'Picture' : s.kind === 'line' ? 'Connector' : s.kind === 'text' ? 'TextBox' : s.kind === 'group' ? 'Group' : 'Shape'} ${id}`);
+export function shapeXml(s: DeckShape, id: number, embed: string | null, ids?: ReadonlyMap<number, number>, linkRid: string | null = null): string {
+  const name = xmlText(s.name || `${s.kind === 'pic' ? 'Picture' : s.kind === 'line' ? 'Connector' : s.kind === 'text' ? 'TextBox' : s.kind === 'group' ? 'Group' : s.kind === 'frame' ? 'Table' : 'Shape'} ${id}`);
   if (s.kind === 'group') return groupXml(s, id, name, ids);
+  const nvPr = cNvPrXml(id, name, linkRid);
+  if (s.kind === 'frame') return tableXml(s, nvPr);
   if (s.kind === 'pic') {
-    return `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="${name}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>` +
+    return `<p:pic><p:nvPicPr>${nvPr}<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>` +
       `<p:blipFill><a:blip r:embed="${embed ?? ''}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
       `<p:spPr>${xfrm(s)}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>`;
   }
@@ -146,7 +149,7 @@ export function shapeXml(s: DeckShape, id: number, embed: string | null, ids?: R
     // `straightConnector1` and `a:stCxn`/`a:endCxn` are exactly what PowerPoint writes for a
     // connector; the attachments are what make it follow the shapes when they are moved.
     const ends = cxnRefsXml(s.stCxn, s.endCxn, ids);
-    return `<p:cxnSp><p:nvCxnSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvCxnSpPr${ends ? `>${ends}</p:cNvCxnSpPr>` : '/>'}<p:nvPr/></p:nvCxnSpPr>` +
+    return `<p:cxnSp><p:nvCxnSpPr>${nvPr}<p:cNvCxnSpPr${ends ? `>${ends}</p:cNvCxnSpPr>` : '/>'}<p:nvPr/></p:nvCxnSpPr>` +
       `<p:spPr>${xfrm(s)}<a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>${lineXml(s)}</p:spPr></p:cxnSp>`;
   }
   const ph = s.ph ? `<p:ph${s.ph !== 'body' ? ` type="${s.ph}"` : ''}${s.phIdx ? ` idx="${s.phIdx}"` : ''}/>` : '';
@@ -156,14 +159,52 @@ export function shapeXml(s: DeckShape, id: number, embed: string | null, ids?: R
   const geom = s.ph ? '' : `<a:prstGeom prst="${xmlText(s.geom)}"><a:avLst/></a:prstGeom>`;
   const paras = s.paras.length ? s.paras.map(paraXml).join('') : '<a:p><a:endParaRPr lang="en-US" dirty="0"/></a:p>';
   const wrap = s.kind === 'text' && !s.ph ? '<a:spAutoFit/>' : '';
-  return `<p:sp><p:nvSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvSpPr${txBox}/><p:nvPr>${ph}</p:nvPr></p:nvSpPr>` +
+  return `<p:sp><p:nvSpPr>${nvPr}<p:cNvSpPr${txBox}/><p:nvPr>${ph}</p:nvPr></p:nvSpPr>` +
     `<p:spPr>${xfrm(s)}${geom}${fill}${ln}</p:spPr>` +
     `<p:txBody><a:bodyPr wrap="square" rtlCol="0" anchor="${s.anchor}">${wrap}</a:bodyPr><a:lstStyle/>${paras}</p:txBody></p:sp>`;
 }
 
+/** `<p:cNvPr>`, with the click hyperlink (`<a:hlinkClick>`) when the shape has one. */
+export function cNvPrXml(id: number, name: string, linkRid: string | null): string {
+  return linkRid
+    ? `<p:cNvPr id="${id}" name="${name}"><a:hlinkClick r:id="${xmlText(linkRid)}"/></p:cNvPr>`
+    : `<p:cNvPr id="${id}" name="${name}"/>`;
+}
+
+/** The built-in "Medium Style 2 – Accent 1" table style PowerPoint knows by this id. */
+export const TABLE_STYLE_ID = '{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}';
+
+/** One table cell's `<a:txBody>` (or a notes placeholder's `<p:txBody>`): a paragraph per line. */
+export function cellBodyXml(text: string, tag: 'a:txBody' | 'p:txBody' = 'a:txBody'): string {
+  const paras = text.split('\n').map((line) => {
+    const rtl = /[؀-ۿ]/.test(line) ? '<a:pPr rtl="1"/>' : '';
+    const lang = /[؀-ۿ]/.test(line) ? 'ar-SA' : 'en-US';
+    return `<a:p>${rtl}${line ? `<a:r><a:rPr lang="${lang}" dirty="0"/><a:t>${xmlText(line)}</a:t></a:r>` : ''}<a:endParaRPr lang="${lang}" dirty="0"/></a:p>`;
+  }).join('');
+  return `<${tag}><a:bodyPr/><a:lstStyle/>${paras}</${tag}>`;
+}
+
+/** A table as a `<p:graphicFrame>`: equal columns and rows, the header row styled by PowerPoint. */
+function tableXml(s: DeckShape, nvPr: string): string {
+  const rows = s.table ?? [['']];
+  const cols = Math.max(1, ...rows.map((r) => r.length));
+  const colW = Math.max(1, Math.floor(int(s.w) / cols));
+  const rowH = Math.max(1, Math.floor(int(s.h) / Math.max(1, rows.length)));
+  const grid = Array.from({ length: cols }, () => `<a:gridCol w="${colW}"/>`).join('');
+  const trs = rows.map((r) => `<a:tr h="${rowH}">${Array.from({ length: cols }, (_, c) => `<a:tc>${cellBodyXml(r[c] ?? '')}<a:tcPr/></a:tc>`).join('')}</a:tr>`).join('');
+  return `<p:graphicFrame><p:nvGraphicFramePr>${nvPr}<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>` +
+    `<p:xfrm><a:off x="${int(s.x)}" y="${int(s.y)}"/><a:ext cx="${int(s.w)}" cy="${int(s.h)}"/></p:xfrm>` +
+    '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table">' +
+    `<a:tbl><a:tblPr firstRow="1" bandRow="1"><a:tableStyleId>${TABLE_STYLE_ID}</a:tableStyleId></a:tblPr><a:tblGrid>${grid}</a:tblGrid>${trs}</a:tbl>` +
+    '</a:graphicData></a:graphic></p:graphicFrame>';
+}
+
 /** `<p:transition>` for the two kinds this app writes; '' for none. */
-export function transitionXml(t: Transition): string {  if (t === 'fade') return '<p:transition spd="med"><p:fade/></p:transition>';
+export function transitionXml(t: Transition): string {
+  if (t === 'fade') return '<p:transition spd="med"><p:fade/></p:transition>';
   if (t === 'push') return '<p:transition spd="med"><p:push dir="u"/></p:transition>';
+  if (t === 'wipe') return '<p:transition spd="med"><p:wipe dir="r"/></p:transition>';
+  if (t === 'cover') return '<p:transition spd="med"><p:cover dir="l"/></p:transition>';
   return '';
 }
 
@@ -183,10 +224,15 @@ export function timingXml(list: ReadonlyArray<{ spid: number; anim: Exclude<Anim
     const visible = `<p:set><p:cBhvr><p:cTn id="${set}" dur="1" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst></p:cTn>${target}` +
       '<p:attrNameLst><p:attrName>style.visibility</p:attrName></p:attrNameLst></p:cBhvr><p:to><p:strVal val="visible"/></p:to></p:set>';
     const fade = anim === 'fade' ? `<p:animEffect transition="in" filter="fade"><p:cBhvr><p:cTn id="${id++}" dur="500"/>${target}</p:cBhvr></p:animEffect>` : '';
+    // Fly In from the bottom: the shape's y runs from below the slide to where it stands.
+    const fly = anim === 'fly' ? `<p:anim calcmode="lin" valueType="num"><p:cBhvr additive="base"><p:cTn id="${id++}" dur="500" fill="hold"/>${target}` +
+      '<p:attrNameLst><p:attrName>ppt_y</p:attrName></p:attrNameLst></p:cBhvr><p:tavLst>' +
+      '<p:tav tm="0"><p:val><p:strVal val="1+#ppt_h/2"/></p:val></p:tav><p:tav tm="100000"><p:val><p:strVal val="#ppt_y"/></p:val></p:tav>' +
+      '</p:tavLst></p:anim>' : '';
     return `<p:par><p:cTn id="${outer}" fill="hold"><p:stCondLst><p:cond delay="indefinite"/></p:stCondLst><p:childTnLst>` +
       `<p:par><p:cTn id="${inner}" fill="hold"><p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>` +
-      `<p:par><p:cTn id="${effect}" presetID="${anim === 'fade' ? 10 : 1}" presetClass="entr" presetSubtype="0" fill="hold" nodeType="clickEffect">` +
-      `<p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>${visible}${fade}</p:childTnLst></p:cTn></p:par>` +
+      `<p:par><p:cTn id="${effect}" presetID="${anim === 'fade' ? 10 : anim === 'fly' ? 2 : 1}" presetClass="entr" presetSubtype="${anim === 'fly' ? 4 : 0}" fill="hold" nodeType="clickEffect">` +
+      `<p:stCondLst><p:cond delay="0"/></p:stCondLst><p:childTnLst>${visible}${fade}${fly}</p:childTnLst></p:cTn></p:par>` +
       '</p:childTnLst></p:cTn></p:par></p:childTnLst></p:cTn></p:par>';
   }).join('');
   return '<p:timing><p:tnLst><p:par><p:cTn id="1" dur="indefinite" restart="never" nodeType="tmRoot"><p:childTnLst>' +
@@ -201,4 +247,31 @@ export function slideXml(shapes: string, bg: string | null, transition: Transiti
   const background = bg ? `<p:bg><p:bgPr><a:solidFill><a:srgbClr val="${hex(bg)}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>` : '';
   return `${DECL}<p:sld ${SLIDE_NS}><p:cSld>${background}<p:spTree>${EMPTY_TREE}${shapes}</p:spTree></p:cSld>` +
     `<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>${transitionXml(transition)}${timing}</p:sld>`;
+}
+
+/* ───────────────────────────────── speaker notes ───────────────────────────────── */
+
+const NOTES_IMG = '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image Placeholder 1"/><p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr>' +
+  '<p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr><p:spPr>{XFRM}</p:spPr></p:sp>';
+const NOTES_BODY = '<p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes Placeholder 2"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr>' +
+  '<p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr>{XFRM}</p:spPr>{BODY}</p:sp>';
+
+/** A notes page for one slide: the slide's picture above, the speaker's words below. */
+export function notesSlideXml(text: string): string {
+  return `${DECL}<p:notes ${SLIDE_NS}><p:cSld><p:spTree>${EMPTY_TREE}` +
+    NOTES_IMG.replace('{XFRM}', '') + NOTES_BODY.replace('{XFRM}', '').replace('{BODY}', cellBodyXml(text, 'p:txBody')) +
+    '</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>';
+}
+
+/** The notes master a presentation needs before it may have notes pages (portrait, 7.5 × 10 in). */
+export function notesMasterXml(): string {
+  const img = '<a:xfrm><a:off x="1143000" y="685800"/><a:ext cx="4572000" cy="2571750"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>';
+  const body = '<a:xfrm><a:off x="685800" y="3429000"/><a:ext cx="5486400" cy="4114800"/></a:xfrm>';
+  return `${DECL}<p:notesMaster ${SLIDE_NS}><p:cSld><p:bg><p:bgRef idx="1001"><a:schemeClr val="bg1"/></p:bgRef></p:bg><p:spTree>${EMPTY_TREE}` +
+    NOTES_IMG.replace('{XFRM}', img) +
+    NOTES_BODY.replace('{XFRM}', body).replace('{BODY}', '<p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang="en-US"/></a:p></p:txBody>') +
+    '</p:spTree></p:cSld>' +
+    '<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/>' +
+    '<p:notesStyle><a:lvl1pPr marL="0" algn="l" rtl="0"><a:defRPr sz="1200"><a:solidFill><a:schemeClr val="tx1"/></a:solidFill>' +
+    '<a:latin typeface="+mn-lt"/><a:ea typeface="+mn-ea"/><a:cs typeface="+mn-cs"/></a:defRPr></a:lvl1pPr></p:notesStyle></p:notesMaster>';
 }

@@ -17,16 +17,17 @@
  */
 import { addRelationship, emptyRels, ensureDefault, ensureOverride, removeOverride, removeRelationships } from '../pkg';
 import { xmlText } from '../xml';
-import { elements, localName, parsePart, applyEdits, attr, type XmlEdit, type XmlElement } from '../xmlscan';
+import { elements, elementsOf, localName, parsePart, applyEdits, attr, attrLocal, type XmlEdit, type XmlElement } from '../xmlscan';
 import { entryData, rebuildZip, utf8, type RawZip } from '../zip';
 import {
   child, deckTexts, parseRels, readDeck, relativeTarget, relsPath, resolveTarget, shapeElements, slideOrder, transitionElement,
   type Anim, type Deck, type DeckBox, type DeckCxn, type DeckPara, type DeckShape, type DeckSlide, type MasterText,
 } from './deck';
-import { cxnHolderXml, groupWritable, shapeXml, slideXml, timingXml, transitionXml } from './deckxml';
+import { cellBodyXml, cxnHolderXml, groupWritable, notesMasterXml, notesSlideXml, shapeXml, slideXml, timingXml, transitionXml } from './deckxml';
 import { layoutBgEdits, chromeEdits, chromeShapes, masterEdits } from './master';
 import { targetOf } from './connectors';
 import { sameParaStyle, styleParagraphXml } from './parafmt';
+import { clrSchemeXml, SCHEME_KEYS } from './themes';
 
 const SLIDE_CT = 'application/vnd.openxmlformats-officedocument.presentationml.slide+xml';
 const MIME: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml' };
@@ -158,6 +159,80 @@ interface Ctx {
   additions: Map<string, Uint8Array>;
   ct: string;
   mediaNo: number;
+  /** Parts replaced by this save (the notes pages edited in place land here). */
+  replacements?: Map<string, Uint8Array>;
+  /** The notes master notes pages point at: the file's own, or one this save creates. */
+  notesMaster?: string | null;
+  /** The notes master this save created, still to be listed in `presentation.xml`. */
+  newNotesMaster?: string | null;
+  /** The presentation's theme part (a new notes master is given a copy of it). */
+  themePart?: string | null;
+}
+
+const NOTES_CT = 'application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml';
+const NOTES_MASTER_CT = 'application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml';
+const THEME_CT = 'application/vnd.openxmlformats-officedocument.theme+xml';
+
+/** A part name not used yet: `ppt/notesSlides/notesSlide3.xml`. */
+function freePart(ctx: Ctx, pattern: (n: number) => string): string {
+  let n = 1;
+  while (ctx.names.has(pattern(n)) || ctx.additions.has(pattern(n))) n++;
+  return pattern(n);
+}
+
+/** The notes master, creating one (with its own copy of the theme) when the file has none. */
+async function ensureNotesMaster(ctx: Ctx): Promise<string | null> {
+  if (ctx.notesMaster) return ctx.notesMaster;
+  const part = freePart(ctx, (n) => `ppt/notesMasters/notesMaster${n}.xml`);
+  const themeBytes = ctx.themePart ? (ctx.replacements?.get(ctx.themePart) ?? await entryData(ctx.archive, ctx.themePart)) : null;
+  if (!themeBytes) return null;
+  const theme = freePart(ctx, (n) => `ppt/theme/theme${n}.xml`);
+  ctx.additions.set(theme, themeBytes);
+  ctx.additions.set(part, utf8(notesMasterXml()));
+  ctx.additions.set(relsPath(part), utf8(addRelationship(emptyRels(), 'theme', relativeTarget(part, theme)).xml));
+  ctx.ct = ensureOverride(ensureOverride(ctx.ct, `/${part}`, NOTES_MASTER_CT), `/${theme}`, THEME_CT);
+  ctx.notesMaster = part;
+  ctx.newNotesMaster = part;
+  return part;
+}
+
+/**
+ * The speaker notes of one slide part: its notes page edited in place, or a new notes page
+ * (and, for a file that never had notes, a notes master) when it had none. Returns the slide's
+ * relationships as they must now be, or null when the notes page cannot be written.
+ */
+async function notesFor(ctx: Ctx, part: string, rels: string, was: string, notes: string): Promise<string | null> {
+  if (was.trim() === notes.trim()) return rels;
+  const existing = parseRels(rels, part).find((r) => r.type === 'notesSlide' && !r.external);
+  if (existing) {
+    const pending = ctx.replacements?.get(existing.target);
+    const xml = pending ? new TextDecoder().decode(pending) : await textOf(ctx.archive, existing.target);
+    if (xml === null) return null;
+    const doc = parsePart(xml);
+    const body = elements(doc, 'sp').find((sp) => {
+      const ph = child(child(child(sp, 'nvSpPr'), 'nvPr'), 'ph');
+      return !!ph && attr(xml, ph, 'type') === 'body';
+    });
+    if (!body) return null;
+    const tx = child(body, 'txBody');
+    const markup = cellBodyXml(notes.trim(), 'p:txBody');
+    const out = tx
+      ? applyEdits(xml, [{ start: tx.start, end: tx.end, xml: markup.replace(/^<p:txBody>/, `<${tx.name}>`).replace(/<\/p:txBody>$/, `</${tx.name}>`) }])
+      : body.selfClosing ? null : applyEdits(xml, [{ start: xml.lastIndexOf('<', body.end - 1), end: xml.lastIndexOf('<', body.end - 1), xml: markup }]);
+    if (out === null) return null;
+    ctx.replacements?.set(existing.target, utf8(out));
+    return rels;
+  }
+  if (!notes.trim()) return rels;
+  const master = await ensureNotesMaster(ctx);
+  if (!master) return null;
+  const notesPart = freePart(ctx, (n) => `ppt/notesSlides/notesSlide${n}.xml`);
+  let notesRels = addRelationship(emptyRels(), 'notesMaster', relativeTarget(notesPart, master)).xml;
+  notesRels = addRelationship(notesRels, 'slide', relativeTarget(notesPart, part)).xml;
+  ctx.additions.set(notesPart, utf8(notesSlideXml(notes.trim())));
+  ctx.additions.set(relsPath(notesPart), utf8(notesRels));
+  ctx.ct = ensureOverride(ctx.ct, `/${notesPart}`, NOTES_CT);
+  return addRelationship(rels, 'notesSlide', relativeTarget(part, notesPart)).xml;
 }
 
 function addImage(ctx: Ctx, part: string, rels: string, s: DeckShape): { rels: string; id: string } | null {
@@ -193,11 +268,144 @@ function attachmentEdits(
   return [{ start: nv.openEnd, end: nv.openEnd, xml }];
 }
 
+const FILLS = ['noFill', 'solidFill', 'gradFill', 'blipFill', 'pattFill', 'grpFill'];
+
+function sameLook(a: DeckShape, b: DeckShape): boolean {
+  return (a.fill ?? null) === (b.fill ?? null) && (a.stroke ?? null) === (b.stroke ?? null) && a.strokeW === b.strokeW;
+}
+
+/**
+ * A shape's whole `<p:spPr>` with a new fill and/or outline (and its box, when that moved too —
+ * one edit, so it can never overlap the box edit of the same element). Every other child keeps
+ * its bytes: the geometry, the effects, the 3-D settings, the outline's dash and arrow heads.
+ */
+function spPrEdit(xml: string, el: XmlElement, before: DeckShape, after: DeckShape): XmlEdit[] | null {
+  if (localName(el.name) !== 'sp' && localName(el.name) !== 'cxnSp') return null;
+  const spPr = child(el, 'spPr');
+  if (!spPr) return null;
+  const kids = spPr.selfClosing ? [] : spPr.children;
+  const slice = (c: XmlElement): string => xml.slice(c.start, c.end);
+  const moved = before.x !== after.x || before.y !== after.y || before.w !== after.w || before.h !== after.h;
+  const off = `<a:off x="${int(after.x)}" y="${int(after.y)}"/>`;
+  const ext = `<a:ext cx="${int(after.w)}" cy="${int(after.h)}"/>`;
+  let xfrm = '';
+  const x = kids.find((c) => localName(c.name) === 'xfrm');
+  if (x) {
+    const o = child(x, 'off');
+    const e = child(x, 'ext');
+    if (moved && (!o || !e)) return null;
+    xfrm = moved && o && e ? applyEdits(xml.slice(x.start, x.end), [
+      { start: o.start - x.start, end: o.end - x.start, xml: off }, { start: e.start - x.start, end: e.end - x.start, xml: ext },
+    ]) : slice(x);
+  } else if (moved) xfrm = `<a:xfrm>${off}${ext}</a:xfrm>`;
+  const geom = kids.filter((c) => ['custGeom', 'prstGeom'].includes(localName(c.name))).map(slice).join('');
+  const oldFill = kids.find((c) => FILLS.includes(localName(c.name)));
+  const oldLn = kids.find((c) => localName(c.name) === 'ln');
+  const rest = kids.filter((c) => !['xfrm', 'custGeom', 'prstGeom', 'ln', ...FILLS].includes(localName(c.name))).map(slice).join('');
+  let fill = oldFill ? slice(oldFill) : '';
+  if ((before.fill ?? null) !== (after.fill ?? null)) fill = after.fill ? `<a:solidFill><a:srgbClr val="${hexOf(after.fill)}"/></a:solidFill>` : '<a:noFill/>';
+  let ln = oldLn ? slice(oldLn) : '';
+  if ((before.stroke ?? null) !== (after.stroke ?? null) || before.strokeW !== after.strokeW) {
+    // The outline keeps its dash, joins and arrow heads; only its colour and width are new.
+    const keep = oldLn && !oldLn.selfClosing ? oldLn.children.filter((c) => !FILLS.includes(localName(c.name))).map(slice).join('') : '';
+    const attrs = oldLn ? xml.slice(oldLn.start, oldLn.openEnd).replace(/^<[\w:.-]+/, '').replace(/\/?>$/, '').replace(/\sw\s*=\s*"[^"]*"/, '') : '';
+    const color = after.stroke ? `<a:solidFill><a:srgbClr val="${hexOf(after.stroke)}"/></a:solidFill>` : '<a:noFill/>';
+    ln = `<a:ln w="${int(after.strokeW)}"${attrs}>${color}${keep}</a:ln>`;
+  }
+  const name = spPr.name;
+  const open = xml.slice(spPr.start, spPr.openEnd).replace(/\s*\/>$/, '>');
+  return [{ start: spPr.start, end: spPr.end, xml: `${open}${xfrm}${geom}${fill}${ln}${rest}</${name}>` }];
+}
+
+const hexOf = (c: string): string => c.replace('#', '').toUpperCase();
+
+/** An external hyperlink relationship (a web address the show opens on a click). */
+function addHyperlink(rels: string, url: string): { rels: string; id: string } {
+  const r = addRelationship(rels, 'hyperlink', url);
+  const at = r.xml.indexOf(`Id="${r.id}"`);
+  const close = r.xml.indexOf('/>', at);
+  return { rels: `${r.xml.slice(0, close)} TargetMode="External"${r.xml.slice(close)}`, id: r.id };
+}
+
+/** The `<p:cNvPr>` of a shape with its click link set, replaced or taken away. */
+function linkEdits(xml: string, el: XmlElement, link: string | null, rels: string): { edits: XmlEdit[]; rels: string } | null {
+  const nv = el.children.find((c) => /^nv/.test(localName(c.name)));
+  const cNvPr = child(nv, 'cNvPr');
+  if (!cNvPr) return null;
+  const openTag = xml.slice(cNvPr.start, cNvPr.openEnd).replace(/\s*\/>$/, '>');
+  const kids = cNvPr.selfClosing ? [] : cNvPr.children.filter((c) => localName(c.name) !== 'hlinkClick');
+  // The old link's relationship goes with it (a hyperlink relationship belongs to one click).
+  const old = cNvPr.selfClosing ? null : child(cNvPr, 'hlinkClick');
+  const oldId = old ? attrLocal(xml, old, 'id') : null;
+  let out = oldId ? removeRelationships(rels, (type, _target, id) => type === 'hyperlink' && id === oldId) : rels;
+  let click = '';
+  if (link) { const r = addHyperlink(out, link); out = r.rels; click = `<a:hlinkClick r:id="${r.id}"/>`; }
+  const inner = click + kids.map((c) => xml.slice(c.start, c.end)).join('');
+  return { edits: [{ start: cNvPr.start, end: cNvPr.end, xml: `${openTag}${inner}</${cNvPr.name}>` }], rels: out };
+}
+
+/** The cells of a table whose text changed: each cell's paragraphs are written again. */
+function tableEdits(xml: string, el: XmlElement, before: DeckShape, after: DeckShape): XmlEdit[] | null {
+  const tbl = elementsOf(el, 'tbl')[0] ?? null;
+  if (!tbl || !after.table) return null;
+  const rows = tbl.children.filter((c) => localName(c.name) === 'tr');
+  const edits: XmlEdit[] = [];
+  for (let r = 0; r < after.table.length; r++) {
+    const cells = (rows[r]?.children ?? []).filter((c) => localName(c.name) === 'tc');
+    for (let c = 0; c < (after.table[r]?.length ?? 0); c++) {
+      const text = after.table[r]![c] ?? '';
+      if (before.table?.[r]?.[c] === text) continue;
+      const tc = cells[c];
+      if (!tc || tc.selfClosing) return null;
+      const body = child(tc, 'txBody');
+      if (body) edits.push({ start: body.start, end: body.end, xml: cellBodyXml(text) });
+      else edits.push({ start: tc.openEnd, end: tc.openEnd, xml: cellBodyXml(text) });
+    }
+  }
+  return edits;
+}
+
+/**
+ * The spTree's shapes in the model's stacking order. Only when every shape element of the slide
+ * is one the model knows, and they sit next to each other: anything else refuses the save
+ * rather than moving an element this editor does not understand.
+ */
+function reorderShapes(xml: string, order: readonly number[], want: readonly number[]): string | null {
+  if (order.length === want.length && order.every((u, i) => u === want[i])) return xml;
+  const doc = parsePart(xml);
+  const spTree = child(child(doc.roots[0] ?? null, 'cSld'), 'spTree');
+  if (!spTree) return null;
+  const els = shapeElements(spTree);
+  if (els.length !== order.length) return null;
+  for (let i = 1; i < els.length; i++) if (xml.slice(els[i - 1]!.end, els[i]!.start).trim()) return null;
+  const byUid = new Map(order.map((u, i) => [u, xml.slice(els[i]!.start, els[i]!.end)]));
+  const body = want.map((u) => byUid.get(u) ?? '').join('');
+  if (!els.length) return xml;
+  return `${xml.slice(0, els[0]!.start)}${body}${xml.slice(els[els.length - 1]!.end)}`;
+}
+
 /**
  * The slide part `part` holding `after`, starting from `xml` (the part `before` was
  * read from). Returns null when something cannot be expressed.
  */
 function editSlide(ctx: Ctx, part: string, xml: string, rels: string, before: DeckSlide, after: DeckSlide): { xml: string; rels: string } | null {
+  const out = editSlideParts(ctx, part, xml, rels, before, after);
+  if (!out) return null;
+  // The stacking order last, on the edited part: the shapes the file had (in file order), then
+  // the new ones (appended in model order), rearranged to the model's order.
+  const tree = child(child(parsePart(xml).roots[0] ?? null, 'cSld'), 'spTree');
+  const known = !!tree && before.shapes.filter((b) => b.origin !== null).length === shapeElements(tree).length;
+  const survivors = after.shapes.filter((s) => s.origin !== null).sort((a, b) => (a.origin as number) - (b.origin as number)).map((s) => s.uid);
+  const fresh = after.shapes.filter((s) => s.origin === null).map((s) => s.uid);
+  const want = after.shapes.map((s) => s.uid);
+  const order = [...survivors, ...fresh];
+  if (order.every((u, i) => u === want[i])) return out;
+  if (!known) return null;
+  const reordered = reorderShapes(out.xml, order, want);
+  return reordered === null ? null : { xml: reordered, rels: out.rels };
+}
+
+function editSlideParts(ctx: Ctx, part: string, xml: string, rels: string, before: DeckSlide, after: DeckSlide): { xml: string; rels: string } | null {
   if (!/xmlns:a\s*=/.test(xml)) return null;
   const doc = parsePart(xml);
   const root = doc.roots[0];
@@ -225,6 +433,7 @@ function editSlide(ctx: Ctx, part: string, xml: string, rels: string, before: De
   // A new group holding something this writer cannot put in a group refuses the save.
   for (const s of after.shapes) if (s.kind === 'group' && s.origin === null && !groupWritable(s)) return null;
 
+  let relsXml = rels;
   for (const b of before.shapes) {
     if (b.origin === null) continue;
     const el = els[b.origin];
@@ -237,8 +446,24 @@ function editSlide(ctx: Ctx, part: string, xml: string, rels: string, before: De
     }
     if (c.anim !== b.anim) animChanged = true;
     if (c.locked) continue;
-    if (c.x !== b.x || c.y !== b.y || c.w !== b.w || c.h !== b.h) {
+    if (!sameLook(b, c)) {
+      // The fill or the outline changed: the whole `spPr` is written once, box included.
+      const e = spPrEdit(xml, el, b, c);
+      if (!e) return null;
+      edits.push(...e);
+    } else if (c.x !== b.x || c.y !== b.y || c.w !== b.w || c.h !== b.h) {
       const e = xfrmEdits(xml, el, c);
+      if (!e) return null;
+      edits.push(...e);
+    }
+    if ((c.link ?? null) !== (b.link ?? null)) {
+      const l = linkEdits(xml, el, c.link ?? null, relsXml);
+      if (!l) return null;
+      relsXml = l.rels;
+      edits.push(...l.edits);
+    }
+    if (c.kind === 'frame' && JSON.stringify(c.table) !== JSON.stringify(b.table)) {
+      const e = tableEdits(xml, el, b, c);
       if (!e) return null;
       edits.push(...e);
     }
@@ -253,7 +478,6 @@ function editSlide(ctx: Ctx, part: string, xml: string, rels: string, before: De
   }
 
   let markup = '';
-  let relsXml = rels;
   for (const s of after.shapes) {
     if (s.origin !== null) continue;
     const id = spids.get(s.uid) as number;
@@ -265,7 +489,10 @@ function editSlide(ctx: Ctx, part: string, xml: string, rels: string, before: De
       relsXml = added.rels;
       embed = added.id;
     }
-    markup += shapeXml(s, id, embed, spids);
+    if (s.kind === 'frame' && !s.table) return null;
+    let linkRid: string | null = null;
+    if (s.link) { const r = addHyperlink(relsXml, s.link); relsXml = r.rels; linkRid = r.id; }
+    markup += shapeXml(s, id, embed, spids, linkRid);
   }
   const inserts: XmlEdit[] = [];
   if (markup) {
@@ -309,7 +536,7 @@ function newSlide(ctx: Ctx, part: string, slide: DeckSlide): { xml: string; rels
   const anims: Array<{ spid: number; anim: Exclude<Anim, null> }> = [];
   let shapes = '';
   for (const s of slide.shapes) {
-    if (s.kind === 'frame') return null; // never created here
+    if (s.kind === 'frame' && !s.table) return null; // only a table is ever created here
     if (s.kind === 'group' && !groupWritable(s)) return null;
     const spid = ids.get(s.uid) as number;
     let embed: string | null = null;
@@ -319,7 +546,9 @@ function newSlide(ctx: Ctx, part: string, slide: DeckSlide): { xml: string; rels
       rels = added.rels;
       embed = added.id;
     }
-    shapes += shapeXml(s, spid, embed, ids);
+    let linkRid: string | null = null;
+    if (s.link) { const r = addHyperlink(rels, s.link); rels = r.rels; linkRid = r.id; }
+    shapes += shapeXml(s, spid, embed, ids, linkRid);
     if (s.anim) anims.push({ spid, anim: s.anim });
   }
   return { xml: slideXml(shapes, null, slide.transition === 'other' ? 'none' : slide.transition, timingXml(anims)), rels };
@@ -341,7 +570,13 @@ export async function patchDeck(archive: RawZip, base: Deck, cur: Deck): Promise
   const names = new Set(archive.entries.map((e) => e.name));
   const replacements = new Map<string, Uint8Array>();
   const removals = new Set<string>();
-  const ctx: Ctx = { archive, names, additions: new Map(), ct: ctXml, mediaNo: 0 };
+  const presRelList = parseRels(presRels, presPart);
+  const ctx: Ctx = {
+    archive, names, additions: new Map(), ct: ctXml, mediaNo: 0, replacements,
+    notesMaster: presRelList.find((r) => r.type === 'notesMaster' && !r.external)?.target ?? null,
+    newNotesMaster: null,
+    themePart: presRelList.find((r) => r.type === 'theme' && !r.external)?.target ?? null,
+  };
   let slideNo = 0;
   for (const n of names) {
     const s = /^ppt\/slides\/slide(\d+)\.xml$/.exec(n);
@@ -364,6 +599,9 @@ export async function patchDeck(archive: RawZip, base: Deck, cur: Deck): Promise
       const rels = await textOf(archive, rp);
       const out = editSlide(ctx, slide.part, xml, rels ?? emptyRels(), before, slide);
       if (!out) return null;
+      const withNotes = await notesFor(ctx, slide.part, out.rels, before.notes, slide.notes);
+      if (withNotes === null) return null;
+      out.rels = withNotes;
       if (out.xml !== xml) replacements.set(slide.part, utf8(out.xml));
       if (out.rels !== (rels ?? emptyRels())) {
         if (rels === null) ctx.additions.set(rp, utf8(out.rels)); else replacements.set(rp, utf8(out.rels));
@@ -385,6 +623,9 @@ export async function patchDeck(archive: RawZip, base: Deck, cur: Deck): Promise
       out = newSlide(ctx, part, slide);
     }
     if (!out) return null;
+    const withNotes = await notesFor(ctx, part, out.rels, '', slide.notes);
+    if (withNotes === null) return null;
+    out.rels = withNotes;
     ctx.additions.set(part, utf8(out.xml));
     ctx.additions.set(relsPath(part), utf8(out.rels));
     ctx.ct = ensureOverride(ctx.ct, `/${part}`, SLIDE_CT);
@@ -472,10 +713,28 @@ export async function patchDeck(archive: RawZip, base: Deck, cur: Deck): Promise
     }
     presOut = applyEdits(presXml, edits);
   }
+  // The slide size: `<p:sldSz>` says it (the shapes were scaled in the model, and their boxes are
+  // written above like any other move).
+  if (cur.cx !== base.cx || cur.cy !== base.cy) {
+    const sized = slideSizeEdit(presOut, cur.cx, cur.cy);
+    if (sized === null) return null;
+    presOut = sized;
+  }
+  // A notes master made by this save is listed right after the slide masters.
+  if (ctx.newNotesMaster) {
+    const r = addRelationship(presRels as string, 'notesMaster', relativeTarget(presPart, ctx.newNotesMaster));
+    presRels = r.xml;
+    const root = parsePart(presOut).roots[0];
+    const masters = child(root, 'sldMasterIdLst');
+    if (!root || !masters) return null;
+    const prefix = /^([\w.-]+:)/.exec(root.name)?.[1] ?? '';
+    presOut = applyEdits(presOut, [{ start: masters.end, end: masters.end, xml: `<${prefix}notesMasterIdLst><${prefix}notesMasterId r:id="${r.id}"/></${prefix}notesMasterIdLst>` }]);
+  }
   if (presOut !== presXml) replacements.set(presPart, utf8(presOut));
   if (presRels !== (await textOf(archive, presRelsPart))) replacements.set(presRelsPart, utf8(presRels));
   if (ctx.ct !== ctXml) replacements.set('[Content_Types].xml', utf8(ctx.ct));
   if (!await patchMasters(archive, base, cur, replacements)) return null;
+  if (!await patchTheme(archive, presRels, base, cur, replacements)) return null;
 
   if (!replacements.size && !ctx.additions.size && !removals.size) return { bytes: archive.bytes, changed: [] };
   const bytes = await rebuildZip(archive, replacements, ctx.additions, removals);
@@ -485,9 +744,14 @@ export async function patchDeck(archive: RawZip, base: Deck, cur: Deck): Promise
   if (read.slides.length !== cur.slides.length) return null;
   if (JSON.stringify(deckTexts(read)) !== JSON.stringify(deckTexts(cur))) return null;
   if (connectorKeys(read) !== connectorKeys(cur)) return null;
+  if (lookKeys(read) !== lookKeys(cur)) return null;
   // The master is the design: if the file does not say what the model says, nothing is written.
   if (masterKey(read) !== masterKey(cur)) return null;
+  // The design and the size: what the canvas shows is what the file now says.
+  if (themeKey(read) !== themeKey(cur)) return null;
+  if (read.cx !== cur.cx || read.cy !== cur.cy) return null;
   for (let i = 0; i < cur.slides.length; i++) {
+    if (read.slides[i].notes.trim() !== cur.slides[i].notes.trim()) return null;
     const want = cur.slides[i].transition;
     if (want !== 'other' && read.slides[i].transition !== want) return null;
   }
@@ -505,6 +769,19 @@ function masterKey(deck: Deck): string {
   const text = (t: MasterText): readonly unknown[] => [t.font, t.color, t.size];
   const box = (b: DeckBox | null): readonly unknown[] | null => (b ? [b.x, b.y, b.w, b.h] : null);
   return JSON.stringify(deck.masters.map((m) => [m.part, m.bg, text(m.title), text(m.body), m.footer, m.slideNumber, box(m.footerBox), box(m.numberBox)]));
+}
+
+/**
+ * Every editable shape's fill, outline and link, slide by slide: a save that would draw a shape
+ * in another colour than the canvas did (or lose its link) is refused.
+ */
+function lookKeys(deck: Deck): string {
+  return JSON.stringify(deck.slides.map((slide) => slide.shapes.filter((s) => !s.locked && s.kind !== 'group').map((s) => [
+    s.kind === 'shape' || s.kind === 'text' ? (s.fill ?? null) : null,
+    s.kind === 'pic' || s.kind === 'frame' ? null : (s.stroke ?? null),
+    s.kind !== 'pic' && s.kind !== 'frame' && s.stroke ? s.strokeW : null,
+    s.link ?? null,
+  ])));
 }
 
 /**
@@ -556,4 +833,62 @@ async function patchMasters(archive: RawZip, base: Deck, cur: Deck, replacements
     }
   }
   return true;
+}
+
+/* ─────────────────────────────── design and size ─────────────────────────────── */
+
+/** The theme's colours and fonts as one canonical string (fonts only when the model has them). */
+function themeKey(deck: Deck): string {
+  return JSON.stringify([SCHEME_KEYS.map((k) => (deck.scheme[k] ?? '').toUpperCase()), deck.fonts ? [deck.fonts.major, deck.fonts.minor] : null]);
+}
+
+/** `<p:sldSz>` with the new size; the `type` attribute is dropped because it names the old one. */
+function slideSizeEdit(xml: string, cx: number, cy: number): string | null {
+  const root = parsePart(xml).roots[0];
+  const sz = child(root, 'sldSz');
+  const tag = `<${sz?.name ?? 'p:sldSz'} cx="${Math.round(cx)}" cy="${Math.round(cy)}"/>`;
+  if (sz) return applyEdits(xml, [{ start: sz.start, end: sz.end, xml: tag }]);
+  const after = child(root, 'sldIdLst') ?? child(root, 'notesMasterIdLst') ?? child(root, 'sldMasterIdLst');
+  if (!after) return null;
+  return applyEdits(xml, [{ start: after.end, end: after.end, xml: tag }]);
+}
+
+/**
+ * The theme part, when the design changed: the whole `<a:clrScheme>` is replaced, and the Latin
+ * typeface of the heading and body fonts is set (every other script's font is left as it was).
+ */
+async function patchTheme(archive: RawZip, presRels: string, base: Deck, cur: Deck, replacements: Map<string, Uint8Array>): Promise<boolean> {
+  if (themeKey(base) === themeKey(cur)) return true;
+  const rel = parseRels(presRels, 'ppt/presentation.xml').find((r) => r.type === 'theme' && !r.external);
+  if (!rel) return false;
+  const pending = replacements.get(rel.target);
+  const xml = pending ? new TextDecoder().decode(pending) : await textOf(archive, rel.target);
+  if (xml === null) return false;
+  const doc = parsePart(xml);
+  const edits: XmlEdit[] = [];
+  const clr = elements(doc, 'clrScheme')[0];
+  if (!clr) return false;
+  const name = /\sname\s*=\s*"([^"]*)"/.exec(xml.slice(clr.start, clr.openEnd))?.[1] ?? 'Custom';
+  const colorsChanged = SCHEME_KEYS.some((k) => (base.scheme[k] ?? '').toUpperCase() !== (cur.scheme[k] ?? '').toUpperCase());
+  if (colorsChanged) edits.push({ start: clr.start, end: clr.end, xml: clrSchemeXml(decodeName(name), cur.scheme) });
+  const fontsChanged = !!cur.fonts && (base.fonts?.major !== cur.fonts.major || base.fonts?.minor !== cur.fonts.minor);
+  if (fontsChanged && cur.fonts) {
+    const scheme = elements(doc, 'fontScheme')[0];
+    if (!scheme) return false;
+    for (const [tag, face] of [['majorFont', cur.fonts.major], ['minorFont', cur.fonts.minor]] as const) {
+      const holder = child(scheme, tag);
+      if (!holder || holder.selfClosing) return false;
+      const latin = child(holder, 'latin');
+      const markup = `<a:latin typeface="${xmlText(face)}"/>`;
+      if (latin) edits.push({ start: latin.start, end: latin.end, xml: markup });
+      else edits.push({ start: holder.openEnd, end: holder.openEnd, xml: markup });
+    }
+  }
+  if (edits.length) replacements.set(rel.target, utf8(applyEdits(xml, edits)));
+  return true;
+}
+
+/** An attribute value back to text (the scheme's name is written again through `xmlText`). */
+function decodeName(v: string): string {
+  return v.replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }

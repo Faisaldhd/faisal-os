@@ -1156,12 +1156,165 @@
 .faisal-office[data-kind="pptx"] .fo-show-notes { flex: 1; min-height: 0; overflow: auto; }
 .faisal-office[data-kind="pptx"] .fo-show-notetext { margin: 0; white-space: pre-wrap; font-size: 18px; line-height: 1.5; }
 .faisal-office[data-kind="pptx"] .fo-show-end { margin: 0; color: var(--app-text-3); }
+.faisal-office[data-kind="pptx"] .fo-show-endscreen { margin: 0; padding: 24px; color: #c9ced9; font-size: 18px; text-align: center; }
+.faisal-office[data-kind="pptx"] .fo-show-count { direction: ltr; unicode-bidi: isolate; }
 .faisal-office[data-kind="pptx"] .is-enter-fade { animation: fo-imp-fade .5s cubic-bezier(.2, 0, 0, 1); }
 .faisal-office[data-kind="pptx"] .is-enter-push { animation: fo-imp-push .5s cubic-bezier(.2, 0, 0, 1); }
+.faisal-office[data-kind="pptx"] .is-enter-wipe { animation: fo-imp-wipe .5s cubic-bezier(.2, 0, 0, 1); }
+.faisal-office[data-kind="pptx"] .is-enter-cover { animation: fo-imp-cover .5s cubic-bezier(.2, 0, 0, 1); }
+.faisal-office[data-kind="pptx"] .fo-sh.is-flyin { animation: fo-imp-fly .5s cubic-bezier(.2, 0, 0, 1); }
+.faisal-office[data-kind="pptx"] .fo-show .fo-sh[data-link] { cursor: pointer; }
 @keyframes fo-imp-fade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes fo-imp-push { from { transform: translateY(100%); } to { transform: none; } }
-@media (prefers-reduced-motion: reduce) { .faisal-office[data-kind="pptx"] .is-enter-fade, .faisal-office[data-kind="pptx"] .is-enter-push, .faisal-office[data-kind="pptx"] .fo-sh.is-fadein { animation: none; } }
+@keyframes fo-imp-wipe { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
+@keyframes fo-imp-cover { from { transform: translateX(100%); } to { transform: none; } }
+@keyframes fo-imp-fly { from { translate: 0 100vh; } to { translate: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .faisal-office[data-kind="pptx"] .is-enter-fade, .faisal-office[data-kind="pptx"] .is-enter-push, .faisal-office[data-kind="pptx"] .fo-sh.is-fadein, .faisal-office[data-kind="pptx"] .is-enter-wipe, .faisal-office[data-kind="pptx"] .is-enter-cover, .faisal-office[data-kind="pptx"] .fo-sh.is-flyin { animation: none; } }
 @media (pointer: coarse) { .faisal-office[data-kind="pptx"] .fo-show.is-deck .fo-show-btn { min-width: 44px; min-height: 44px; } }
+
+/* ── WPS-style chrome: the column under the ribbon, the notes, the Format pane, the galleries ── */
+.fo-impress.is-rich { position: relative; }
+.fo-impress .fo-imp-center { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.fo-impress .fo-imp-center > .fo-slidestage { flex: 1; min-height: 0; }
+.fo-impress .fo-imp-notes { flex: none; display: flex; flex-direction: column; border-block-start: 1px solid var(--app-hairline); background: var(--app-glass); }
+.fo-impress .fo-imp-noteshead { appearance: none; border: 0; background: transparent; color: var(--app-text-2); font: 700 12px/1.4 var(--faisal-font, inherit); min-height: 32px; padding: 0 12px; display: flex; align-items: center; gap: 8px; cursor: pointer; text-align: start; }
+.fo-impress .fo-imp-noteshead:hover { background: var(--app-blue-soft); }
+.fo-impress .fo-imp-noteshead:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: -2px; }
+.fo-impress .fo-imp-notesicon { width: 12px; color: var(--app-text-3); }
+.fo-impress .fo-imp-notestext { height: 96px; box-sizing: border-box; resize: none; border: 0; margin: 0; padding: 4px 16px 12px; background: transparent; color: var(--app-text); font: 14px/1.5 var(--fo-doc-font); outline: none; }
+.fo-impress .fo-imp-notestext::placeholder { color: var(--app-text-3); }
+.fo-impress .fo-imp-notestext:focus-visible { box-shadow: inset 0 0 0 2px var(--app-blue-soft); }
+.fo-impress[data-view="notes"] .fo-imp-center > .fo-slidestage { flex: 0 0 48%; }
+.fo-impress[data-view="notes"] .fo-imp-notes { flex: 1; min-height: 0; }
+.fo-impress[data-view="notes"] .fo-imp-notestext { flex: 1; height: auto; font-size: 16px; }
+
+.fo-impress .fo-imp-sorter { flex: 1; min-height: 0; overflow: auto; padding: 24px; display: flex; flex-wrap: wrap; gap: 24px; align-content: flex-start; background: var(--fo-canvas); }
+.fo-impress .fo-imp-sortitem { appearance: none; border: 0; background: transparent; padding: 4px; display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--app-text-2); cursor: pointer; font: 13px/1.4 var(--faisal-font, inherit); border-radius: 10px; font-variant-numeric: tabular-nums; }
+.fo-impress .fo-imp-sortitem .fo-canvasframe { border-radius: 6px; overflow: hidden; box-shadow: 0 0 0 1px var(--app-hairline-strong); }
+.fo-impress .fo-imp-sortitem[aria-selected="true"] .fo-canvasframe { box-shadow: 0 0 0 2px var(--app-copper); }
+.fo-impress .fo-imp-sortitem:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+
+/* Smart guides over the slide while a shape is dragged. */
+.fo-impress .fo-imp-guides { position: absolute; inset: 0; pointer-events: none; }
+.fo-impress .fo-imp-guide { position: absolute; background: var(--app-copper-2); }
+.fo-impress .fo-imp-guide.is-x { width: 1px; margin-inline-start: 0; }
+.fo-impress .fo-imp-guide.is-y { height: 1px; }
+
+/* A table typed in place: one field per cell over the drawn table. */
+.fo-impress .fo-imp-tableedit { position: absolute; z-index: 2; display: grid; grid-auto-rows: minmax(0, 1fr); }
+.fo-impress .fo-imp-tablefield { resize: none; box-sizing: border-box; margin: 0; padding: 4px; border: 1px solid var(--app-blue); border-radius: 0; background: rgba(255, 255, 255, .96); color: #111; font: 14px/1.3 var(--fo-doc-font); outline: none; }
+.fo-impress .fo-imp-tablefield:focus { box-shadow: inset 0 0 0 2px var(--app-copper-2); }
+
+/* The Format pane (a task pane at the side; a bottom sheet on a phone). */
+.fo-impress .fo-imp-pane { position: relative; width: 280px; flex: none; min-height: 0; display: flex; flex-direction: column; border-inline-start: 1px solid var(--app-hairline); background: var(--app-glass); -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%); color: var(--app-text); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) { .fo-impress .fo-imp-pane { background: var(--app-glass-strong); } }
+.fo-impress .fo-imp-panetop { display: flex; align-items: center; gap: 8px; padding-block: 4px; padding-inline: 12px 4px; border-block-end: 1px solid var(--app-hairline); }
+.fo-impress .fo-imp-panegrab { display: none; }
+.fo-impress .fo-imp-panetitle { flex: 1; margin: 0; font: 700 12px/1.4 var(--faisal-font, inherit); color: var(--app-text-2); letter-spacing: .04em; }
+.fo-impress .fo-imp-panebody { flex: 1; min-height: 0; overflow: auto; }
+.fo-impress .fo-imp-panesec { padding: 12px; display: flex; flex-direction: column; gap: 8px; border-block-end: 1px solid var(--app-hairline); }
+.fo-impress .fo-imp-panehead { margin: 0; font: 700 12px/1.4 var(--faisal-font, inherit); color: var(--app-text-2); }
+.fo-impress .fo-imp-panefield { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 13px; color: var(--app-text-2); }
+.fo-impress .fo-imp-paneselect { max-width: 148px; }
+.fo-impress .fo-imp-panegrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.fo-impress .fo-imp-panegrid .fo-imp-panefield { grid-template-columns: 1fr; gap: 4px; }
+.fo-impress .fo-imp-paneunit { display: flex; align-items: center; gap: 4px; }
+.fo-impress .fo-imp-panenum { width: 100%; min-width: 0; font-variant-numeric: tabular-nums; }
+.fo-impress .fo-imp-paneunitname { color: var(--app-text-3); font-size: 12px; }
+.fo-impress .fo-imp-panetoggles { display: flex; flex-wrap: wrap; gap: 4px; }
+.fo-impress .fo-imp-swatches { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.fo-impress .fo-imp-swatch { width: 24px; height: 24px; padding: 0; border: 1px solid var(--app-hairline-strong); border-radius: 6px; cursor: pointer; }
+.fo-impress .fo-imp-swatch:hover { box-shadow: 0 0 0 2px var(--app-blue-soft); }
+.fo-impress .fo-imp-swatch[aria-pressed="true"] { outline: 2px solid var(--app-copper); outline-offset: 1px; }
+.fo-impress .fo-imp-swatch:focus-visible, .fo-impress .fo-imp-well:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+.fo-impress .fo-imp-swatch.is-none { background: linear-gradient(to top right, transparent calc(50% - 1px), var(--app-danger) calc(50% - 1px) calc(50% + 1px), transparent calc(50% + 1px)), var(--app-glass-strong); }
+.fo-impress .fo-imp-swatch:disabled, .fo-impress .fo-imp-well:disabled { opacity: .4; cursor: default; }
+.fo-impress .fo-imp-well { width: 32px; height: 24px; padding: 0; border: 1px solid var(--app-hairline-strong); border-radius: 6px; background: transparent; cursor: pointer; }
+.fo-impress .fo-imp-panelinkrow { display: flex; align-items: center; gap: 8px; color: var(--app-text-2); }
+.fo-impress .fo-imp-panelink { flex: 1; min-width: 0; }
+.fo-impress .fo-imp-paneerror { margin: 0; color: var(--app-danger); font-size: 12px; }
+.fo-impress .fo-imp-paneerror:empty { display: none; }
+.fo-impress .fo-imp-panenote { margin: 0; color: var(--app-text-3); font-size: 12px; line-height: 1.4; }
+.fo-impress .fo-imp-paneempty { padding: 32px 16px; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; color: var(--app-text-2); }
+.fo-impress .fo-imp-paneempty p { margin: 0; max-width: 220px; line-height: 1.5; }
+.fo-impress .fo-imp-paneart { color: var(--app-text-3); }
+
+/* Galleries: layouts, shapes, themes, the table grid (in popovers, the ribbon and phone sheets). */
+.faisal-office[data-kind="pptx"] .fo-imp-gallery.is-layouts { display: grid; grid-template-columns: repeat(2, 120px); gap: 8px; padding: 4px; }
+.faisal-office[data-kind="pptx"] .fo-imp-galitem { appearance: none; border: 1px solid transparent; border-radius: 10px; background: transparent; color: var(--app-text); padding: 8px; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; font: 12px/1.4 var(--faisal-font, inherit); min-height: 44px; }
+.faisal-office[data-kind="pptx"] .fo-imp-galitem:hover { background: var(--app-blue-soft); }
+.faisal-office[data-kind="pptx"] .fo-imp-galitem:focus-visible, .faisal-office[data-kind="pptx"] .fo-imp-theme:focus-visible, .faisal-office[data-kind="pptx"] .fo-imp-tablecell:focus-visible { outline: 2px solid var(--app-copper-2); outline-offset: 2px; }
+.faisal-office[data-kind="pptx"] .fo-imp-layoutsvg { color: var(--app-text-2); display: block; }
+.faisal-office[data-kind="pptx"] .fo-imp-galname { color: var(--app-text-2); text-align: center; }
+.faisal-office[data-kind="pptx"] .fo-imp-galhead { margin: 8px 4px 4px; font: 700 12px/1.4 var(--faisal-font, inherit); color: var(--app-text-2); }
+.faisal-office[data-kind="pptx"] .fo-imp-shapes { padding: 0 4px 4px; }
+.faisal-office[data-kind="pptx"] .fo-imp-gallery.is-shapes { display: grid; grid-template-columns: repeat(6, 44px); gap: 4px; }
+.faisal-office[data-kind="pptx"] .fo-imp-galitem.is-glyph { width: 44px; height: 44px; padding: 4px; justify-content: center; color: var(--app-text); }
+.faisal-office[data-kind="pptx"] .fo-imp-gallery.is-themes { display: grid; grid-template-columns: repeat(4, 112px); gap: 8px; padding: 4px; }
+.faisal-office[data-kind="pptx"] .fo-imp-gallery.is-themes.is-ribbon { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 84px; gap: 4px; padding: 0; }
+.faisal-office[data-kind="pptx"] .fo-imp-theme { appearance: none; border: 0; background: transparent; padding: 4px; border-radius: 10px; display: flex; flex-direction: column; gap: 4px; color: var(--app-text-2); font: 12px/1.4 var(--faisal-font, inherit); cursor: pointer; min-width: 0; }
+.faisal-office[data-kind="pptx"] .fo-imp-theme:hover { background: var(--app-blue-soft); }
+.faisal-office[data-kind="pptx"] .fo-imp-theme:disabled { opacity: .5; cursor: default; }
+.faisal-office[data-kind="pptx"] .fo-imp-theme .fo-imp-galname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.faisal-office[data-kind="pptx"] .fo-imp-themeface { aspect-ratio: 16 / 9; box-sizing: border-box; padding: 8px; border-radius: 6px; display: flex; flex-direction: column; gap: 4px; overflow: hidden; box-shadow: 0 0 0 1px var(--app-hairline-strong); direction: ltr; text-align: left; }
+.faisal-office[data-kind="pptx"] .fo-imp-theme[aria-pressed="true"] .fo-imp-themeface { box-shadow: 0 0 0 2px var(--app-copper); }
+.faisal-office[data-kind="pptx"] .fo-imp-themeaa { font-size: 16px; font-weight: 700; line-height: 1; }
+.faisal-office[data-kind="pptx"] .fo-imp-themeline { display: block; width: 60%; height: 4px; border-radius: 2px; opacity: .6; }
+.faisal-office[data-kind="pptx"] .fo-imp-themedots { display: flex; gap: 4px; margin-top: auto; }
+.faisal-office[data-kind="pptx"] .fo-imp-themedot { width: 8px; height: 8px; border-radius: 50%; }
+.faisal-office[data-kind="pptx"] .is-ribbon .fo-imp-themeface { padding: 4px 8px; }
+.faisal-office[data-kind="pptx"] .is-ribbon .fo-imp-themeaa { font-size: 12px; }
+.faisal-office[data-kind="pptx"] .is-ribbon .fo-imp-themedot { width: 4px; height: 4px; }
+.faisal-office[data-kind="pptx"] .fo-imp-tablepick { padding: 4px; }
+.faisal-office[data-kind="pptx"] .fo-imp-tablegrid { display: grid; grid-template-columns: repeat(6, 24px); gap: 4px; }
+.faisal-office[data-kind="pptx"] .fo-imp-tablecell { appearance: none; width: 24px; height: 24px; padding: 0; border: 1px solid var(--app-hairline-strong); border-radius: 6px; background: transparent; cursor: pointer; }
+.faisal-office[data-kind="pptx"] .fo-imp-tablecell.is-on { background: var(--app-blue-soft); border-color: var(--app-blue); }
+.faisal-office[data-kind="pptx"] .fo-imp-tablelabel { margin-top: 8px; text-align: center; color: var(--app-text-2); font-size: 13px; font-variant-numeric: tabular-nums; }
+.faisal-office[data-kind="pptx"] .fo-imp-pick { display: flex; flex-direction: column; gap: 12px; }
+.faisal-office[data-kind="pptx"] .fo-imp-pick > p { margin: 0; color: var(--app-text-2); }
+.faisal-office[data-kind="pptx"] .fo-imp-pick .fo-imp-gallery.is-themes { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); max-height: min(56vh, 360px); overflow: auto; }
+@media (pointer: coarse) {
+  .faisal-office[data-kind="pptx"] .fo-imp-tablegrid { grid-template-columns: repeat(6, 40px); }
+  .faisal-office[data-kind="pptx"] .fo-imp-tablecell { width: 40px; height: 44px; }
+  .fo-impress .fo-imp-swatch { width: 44px; height: 44px; }
+  .fo-impress .fo-imp-well { width: 44px; height: 44px; }
+  .fo-impress .fo-imp-noteshead { min-height: 44px; }
+}
+
+/* The ribbon like WPS: big labelled buttons (icon above the words), every tab the same height. */
+.faisal-office[data-kind="pptx"] .fo-toolpanel { min-height: 88px; }
+.faisal-office[data-kind="pptx"] .fo-group[data-mode="full"] .fo-btn.has-label { flex-direction: column; gap: 4px; min-height: 68px; padding: 4px 8px; font-size: 12px; }
+.faisal-office[data-kind="pptx"] .fo-group:has(> .fo-group-tools > [data-control="fontFamily"]) > .fo-group-tools { flex-wrap: wrap; width: 224px; row-gap: 4px; align-content: center; }
+.faisal-office[data-kind="pptx"] .fo-group:has(> .fo-group-tools > [data-control="alignRight"]) > .fo-group-tools { flex-wrap: wrap; width: 72px; row-gap: 4px; align-content: center; }
+.faisal-office[data-kind="pptx"] .fo-group:has(> .fo-group-tools > [data-control="dupSlide"]) > .fo-group-tools { display: grid; grid-template-columns: auto 32px 32px; grid-template-rows: 32px 32px; gap: 4px; align-content: center; }
+.faisal-office[data-kind="pptx"] .fo-group-tools > [data-control="newSlide"] { grid-row: span 2; }
+.faisal-office[data-kind="pptx"] .fo-groupdrop .fo-group-tools { width: auto; max-width: 336px; }
+
+/* The phone: the slide fills the width, the thumbnails run along the bottom, a labelled tool bar. */
+.fo-impress .fo-imp-phone { display: none; }
+@container office (max-width: 700px) {
+  .faisal-office[data-kind="pptx"] .fo-phonebar { display: none; }
+  .fo-impress.is-rich { flex-direction: column; }
+  .fo-impress.is-rich .fo-imp-center { order: 1; flex: 1; }
+  .fo-impress.is-rich .fo-rail { order: 2; border-block-end: 0; border-block-start: 1px solid var(--app-hairline); padding: 4px 8px; }
+  .fo-impress.is-rich .fo-slidestage.is-rich { padding: 8px; }
+  .fo-impress.is-rich .fo-imp-phone:not([hidden]) { order: 3; display: flex; gap: 4px; padding: 4px 8px; flex: none; border-block-start: 1px solid var(--app-hairline); background: var(--app-glass-strong); }
+  .fo-impress .fo-imp-phonebtn { flex: 1 1 0; min-width: 0; min-height: 52px; height: auto; flex-direction: column; gap: 2px; padding: 4px; font-size: 13px; }
+  .fo-impress .fo-imp-phonebtn .fo-btn-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fo-impress .fo-imp-notestext { height: 72px; }
+  .fo-impress .fo-imp-pane { position: absolute; inset-inline: 0; bottom: 0; z-index: 30; width: auto; max-height: 72%; border-inline-start: 0; border-block-start: 1px solid var(--app-hairline-strong); border-radius: 14px 14px 0 0; background: var(--app-glass-strong); box-shadow: 0 -8px 32px rgba(0, 0, 0, .35); }
+  .fo-impress .fo-imp-panetop { padding-top: 12px; }
+  .fo-impress .fo-imp-panegrab { display: block; position: absolute; top: 4px; left: 50%; width: 40px; height: 4px; margin-left: -20px; border-radius: 2px; background: var(--app-hairline-strong); }
+  .fo-impress .fo-imp-paneselect { max-width: 168px; }
+  .fo-impress .fo-imp-sorter { padding: 12px; gap: 12px; justify-content: center; }
+  .faisal-office[data-kind="pptx"] .fo-imp-gallery.is-themes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .faisal-office[data-kind="pptx"] .fo-imp-gallery.is-layouts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .faisal-office[data-kind="pptx"] .fo-imp-gallery.is-layouts .fo-imp-layoutsvg { width: 100%; height: auto; }
+}
+@container office (max-width: 360px) {
+  .fo-impress.is-rich .fo-imp-phone:not([hidden]) { gap: 0; padding-inline: 4px; }
+  .fo-impress .fo-imp-phonebtn { padding-inline: 0; }
+}
 
 @container office (max-width: 700px) {
   .fo-impress { flex-direction: column; }

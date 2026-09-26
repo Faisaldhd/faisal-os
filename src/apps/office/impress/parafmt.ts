@@ -15,6 +15,7 @@
  *   • `autoAlign` gives Arabic its right alignment without anyone asking.
  */
 import { applyEdits, elements, parsePart, type XmlEdit } from '../xmlscan';
+import { xmlText } from '../xml';
 import { child, type Align, type DeckPara } from './deck';
 
 /** Arabic (and Arabic Supplement/Extended) letters decide the paragraph's direction. */
@@ -41,7 +42,10 @@ export function controlColor(value: string | null): string | null {
 }
 
 /** The run properties this editor owns. */
-export type ParaStylePatch = Partial<Pick<DeckPara, 'bold' | 'italic' | 'underline' | 'size' | 'color' | 'align'>>;
+export type ParaStylePatch = Partial<Pick<DeckPara, 'bold' | 'italic' | 'underline' | 'size' | 'color' | 'align' | 'font'>>;
+
+/** The run-property children the schema puts after `<a:latin>` (a new typeface goes before them). */
+const AFTER_LATIN = ['ea', 'cs', 'sym', 'hlinkClick', 'hlinkMouseOver', 'rtl', 'extLst'];
 
 /** One attribute of an open tag: set, replaced, or removed when `value` is null. */
 export function setAttrText(attrs: string, name: string, value: string | null): string {
@@ -79,10 +83,18 @@ export function styleRunTag(tag: string, p: DeckPara): string {
   const selfClosing = open[2].trimEnd().endsWith('/');
   const attrs = runAttrs(open[2], p);
   const fill = p.color ? `<a:solidFill><a:srgbClr val="${hex(p.color)}"/></a:solidFill>` : '';
-  if (selfClosing) return fill ? `<${name}${attrs}>${fill}</${name}>` : `<${name}${attrs}/>`;
-  const body = tag.slice(open[0].length, tag.length - `</${name}>`.length)
+  // A paragraph with its own typeface writes it; one without (undefined) leaves the run's alone.
+  const latin = p.font ? `<a:latin typeface="${xmlText(p.font)}"/>` : '';
+  if (selfClosing) return fill || latin ? `<${name}${attrs}>${fill}${latin}</${name}>` : `<${name}${attrs}/>`;
+  let body = tag.slice(open[0].length, tag.length - `</${name}>`.length)
     .replace(/<a:solidFill\b[^>]*\/>/g, '')
     .replace(/<a:solidFill\b[\s\S]*?<\/a:solidFill>/g, '');
+  if (p.font !== undefined) {
+    body = body.replace(/<a:latin\b[^>]*\/>/g, '').replace(/<a:latin\b[\s\S]*?<\/a:latin>/g, '');
+    const kids = parsePart(body).roots;
+    const at = kids.find((k) => AFTER_LATIN.includes(k.name.replace(/^[\w.-]+:/, '')));
+    body = at ? `${body.slice(0, at.start)}${latin}${body.slice(at.start)}` : `${body}${latin}`;
+  }
   return `<${name}${attrs}>${fill}${body}</${name}>`;
 }
 
@@ -132,7 +144,8 @@ export function styleParagraphXml(xml: string, p: DeckPara): string {
 /** True when two paragraphs look the same, whatever their text says. */
 export function sameParaStyle(a: DeckPara, b: DeckPara): boolean {
   return a.bold === b.bold && a.italic === b.italic && a.underline === b.underline
-    && a.size === b.size && a.align === b.align && hex(a.color ?? '') === hex(b.color ?? '');
+    && a.size === b.size && a.align === b.align && hex(a.color ?? '') === hex(b.color ?? '')
+    && (a.font ?? null) === (b.font ?? null);
 }
 
 /**
@@ -152,6 +165,8 @@ export interface ParaStyle {
   size: number | null;
   color: string | null;
   align: Align | null;
+  /** The paragraph's own typeface, null when it follows the theme. */
+  font: string | null;
   mixed: boolean;
 }
 
@@ -166,6 +181,6 @@ export function paraStyleOf(paras: readonly DeckPara[]): ParaStyle | null {
     || p.underline !== first.underline || p.size !== first.size || p.color !== first.color || p.align !== first.align);
   return {
     bold: first.bold, italic: first.italic, underline: first.underline,
-    size: first.size, color: first.color, align: first.align, mixed,
+    size: first.size, color: first.color, align: first.align, font: first.font ?? null, mixed,
   };
 }

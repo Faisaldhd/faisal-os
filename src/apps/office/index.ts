@@ -69,6 +69,8 @@ import {
 import { readBookLook, type BookLook } from './grid/xlsxlook';
 import { createSheet } from './grid/view';
 import { createDeck } from './impress/view';
+import { pickDeckTheme } from './impress/newdeck';
+import type { DeckTheme } from './impress/themes';
 import { renderStart, rememberRecent, type NewKind } from './start';
 import './strings';
 import './office.css';
@@ -669,16 +671,23 @@ function launch(ctx: AppContext): void {
     syncBar();
   }
 
-  function newBytes(kind: NewKind): Uint8Array {
+  function newBytes(kind: NewKind, theme?: DeckTheme): Uint8Array {
     if (kind === 'docx') return emptyDocxPackage(getLocale() === 'ar');
-    if (kind === 'pptx') return newDeckPptx(t('office.newDeckTitle'), t('office.newDeckSubtitle'));
+    if (kind === 'pptx') return newDeckPptx(t('office.newDeckTitle'), t('office.newDeckSubtitle'), theme);
     return serializeModel(emptyModel(planFor('a.xlsx')));
   }
 
   async function createNew(kind: NewKind): Promise<void> {
     const base = kind === 'docx' ? t('office.untitledDoc') : kind === 'xlsx' ? t('office.untitledSheet') : t('office.untitledDeck');
+    // A presentation starts in a design, like WPS: the picker comes first, and Cancel creates nothing.
+    let theme: DeckTheme | undefined;
+    if (kind === 'pptx') {
+      const picked = await pickDeckTheme(root);
+      if (!picked) return;
+      theme = picked;
+    }
     // Built outside the try so a refused write can name the size it tried to store.
-    const fresh = newBytes(kind);
+    const fresh = newBytes(kind, theme);
     try {
       const dir = '/home/user/Documents';
       if (!(await vfs.exists(dir))) await vfs.mkdir(dir, { recursive: true });

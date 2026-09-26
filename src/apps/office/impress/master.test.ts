@@ -9,6 +9,7 @@ import { readDeck, type Deck, type DeckMaster } from './deck';
 import { patchDeck } from './deckpatch';
 import { addSlide, setMaster } from './ops';
 import { bgXml, defRPrXml, layoutBgEdits, masterEdits } from './master';
+import { DEFAULT_THEME } from './themes';
 
 const DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
 const NS = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"';
@@ -109,7 +110,10 @@ describe('a master in a real file', () => {
     expect(deck.masters).toHaveLength(1);
     const m = deck.masters[0];
     expect(m.part).toBe(PART);
-    expect(m.bg).toBe('#FFFFFF');
+    // A new deck is never blank white: it opens in the default design theme.
+    expect(m.bg).toBe(DEFAULT_THEME.bg);
+    expect(m.title.color).toBe(DEFAULT_THEME.title);
+    expect(m.body.color).toBe(DEFAULT_THEME.body);
     expect(m.title.size).toBe(44);
     expect(m.body.size).toBe(28);
     expect(m.footer).toBeNull();
