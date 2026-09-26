@@ -18,6 +18,7 @@ import type { OfficeModel, SheetsModel } from '../model';
 import { writeXlsx } from '../ooxml';
 import { entryData, readRawZip, utf8, writeZip } from '../zip';
 import { createSheet } from './view';
+import { shownAt } from './cells.testkit';
 import { formatChoices } from './sheetview';
 import { readBookLook } from './xlsxlook';
 
@@ -61,7 +62,7 @@ const selectCell = (editor: Editor, ref: string): void => {
 };
 
 const shown = (wrap: HTMLElement, row: number, col: number): string =>
-  wrap.querySelector<HTMLInputElement>(`input[data-r="${row}"][data-c="${col}"]`)?.previousElementSibling?.textContent ?? '';
+  shownAt(wrap, row, col) ?? '';
 
 const PERCENT = (): string => formatChoices().find((c) => c.value.includes('%'))!.value;
 const THOUSANDS = (): string => formatChoices().find((c) => c.value.includes(','))?.value ?? '#,##0';

@@ -15,6 +15,7 @@ import '../strings';
 import type { Editor, EditorContext } from '../editor';
 import type { Edit, OfficeModel, SheetsModel } from '../model';
 import { createSheet } from './view';
+import { cellEl, shownAt, typeInto } from './cells.testkit';
 
 /** Column A repeats three words with no digits in them, so a fill COPIES it rather than stepping a
  *  number — which makes a fill that lands in the wrong row visible at a glance. */
@@ -56,17 +57,17 @@ function withViewport(wrap: HTMLElement, height = 480, width = 900): void {
   Object.defineProperty(wrap, 'clientWidth', { value: width, configurable: true });
 }
 
-const cell = (wrap: HTMLElement, modelRow: number, c: number): HTMLInputElement | null =>
-  wrap.querySelector<HTMLInputElement>(`.faisal-office-cell[data-r="${modelRow}"][data-c="${c}"]`);
+const cell = (wrap: HTMLElement, modelRow: number, c: number): HTMLElement | null => cellEl(wrap, modelRow, c);
 
 /** The cell element at a DRAWN position — the space a drag moves in. */
 const tdAt = (wrap: HTMLElement, drawnRow: number, c: number): HTMLElement | null =>
   wrap.querySelector<HTMLElement>(`.fo-td[data-drawn="${drawnRow}"][data-c="${c}"]`);
 
-/** The model row each drawn row shows (column A's input carries `data-r` = model row). */
+/** The model row each drawn row shows (column A's cell carries `data-r` = model row, blank below a filter). */
 const drawnRows = (wrap: HTMLElement): number[] =>
-  [...wrap.querySelectorAll<HTMLInputElement>('.fo-td[data-drawn] .faisal-office-cell[data-r][data-c="0"]')]
-    .map((i) => Number(i.dataset.r))
+  [...wrap.querySelectorAll<HTMLElement>('.fo-td.faisal-office-cell[data-drawn][data-c="0"]')]
+    .filter((td) => td.dataset.r !== '')
+    .map((td) => Number(td.dataset.r))
     .filter((n) => Number.isFinite(n));
 
 /** Ribbon control lookup, the same way `virtual-view.test.ts` reaches the Data tab. */
@@ -130,13 +131,13 @@ describe('the fill handle and an active filter', () => {
     expect(drawnRows(h.wrap)).toEqual([0, 2, 40]);
     // The rows the filter hid are not in the document at all (drawn row 3 exists, but it is one of
     // the blank rows the grid draws below the data — it carries no model row).
-    expect(h.wrap.querySelector('.faisal-office-cell[data-r="3"]')).toBeNull();
-    expect(h.wrap.querySelector('.faisal-office-cell[data-r="39"]')).toBeNull();
+    expect(h.wrap.querySelector('.fo-td[data-r="3"]')).toBeNull();
+    expect(h.wrap.querySelector('.fo-td[data-r="39"]')).toBeNull();
     expect(cell(h.wrap, 3, 0)).toBeNull();
 
     // A3 is the sheet address of MODEL row 2 (row numbers are 1-based on screen), drawn row 1.
     nameBoxTo(h.editor, 'A3');
-    expect(cell(h.wrap, 2, 0)?.value).toBe(WORDS[1]);
+    expect(shownAt(h.wrap, 2, 0)).toBe(WORDS[1]);
     dragHandleTo(h, 2, 0);                                 // onto drawn row 2 = model row 40
 
     const rows = h.model().grids[0].rows;
@@ -155,7 +156,7 @@ describe('the fill handle and an active filter', () => {
     // The last row the filter kept is drawn 2 (model row 40); everything below it is a blank row
     // the grid draws to look like a sheet. A fill that starts there has nowhere real to go.
     nameBoxTo(h.editor, 'A41');
-    expect(cell(h.wrap, 40, 0)?.value).toBe(WORDS[39 % 3]);
+    expect(shownAt(h.wrap, 40, 0)).toBe(WORDS[39 % 3]);
     const before = h.model().grids[0].rows.length;
     dragHandleTo(h, 5, 0);                                 // drawn rows 3, 4, 5 are all blank
     expect(h.model().grids[0].rows.length).toBe(before);   // nothing appended
@@ -169,12 +170,8 @@ describe('the fill handle', () => {
     const h = harness(sheet());
     withViewport(h.wrap);
     h.editor.render();
-    const a2 = cell(h.wrap, 1, 0)!;                        // sheet A2 = model row 1
-    a2.value = '10';
-    a2.dispatchEvent(new Event('input', { bubbles: true }));
-    const a3 = cell(h.wrap, 2, 0)!;                        // sheet A3 = model row 2
-    a3.value = '20';
-    a3.dispatchEvent(new Event('input', { bubbles: true }));
+    typeInto(cell(h.wrap, 1, 0)!, '10');                   // sheet A2 = model row 1
+    typeInto(cell(h.wrap, 2, 0)!, '20');                   // sheet A3 = model row 2
     h.commits.length = 0;                                  // the two seeding edits are not the subject
     nameBoxTo(h.editor, 'A2:A3');                          // select 10 and 20
     dragHandleTo(h, 4, 0);                                 // two rows down: model rows 3 and 4
@@ -190,12 +187,8 @@ describe('the fill handle', () => {
     const h = harness(sheet());
     withViewport(h.wrap);
     h.editor.render();
-    const a2 = cell(h.wrap, 1, 0)!;
-    a2.value = 'شهري';
-    a2.dispatchEvent(new Event('input', { bubbles: true }));
-    const a3 = cell(h.wrap, 2, 0)!;
-    a3.value = 'سنوي';
-    a3.dispatchEvent(new Event('input', { bubbles: true }));
+    typeInto(cell(h.wrap, 1, 0)!, 'شهري');
+    typeInto(cell(h.wrap, 2, 0)!, 'سنوي');
     h.commits.length = 0;
     nameBoxTo(h.editor, 'A2:A3');
     dragHandleTo(h, 4, 0);

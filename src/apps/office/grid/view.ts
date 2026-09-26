@@ -8,9 +8,11 @@
  * widths, row heights, merged cells, frozen panes, fonts, fills, borders and
  * alignment — is drawn as Excel draws it.
  *
- * Every data cell is a text field holding the cell's raw content (the formula when
- * it has one); a formatted value is drawn over it until the field is focused, so the
- * grid shows "30" while the formula bar and the field hold "=SUM(B1:B2)".
+ * A cell is plain text (its formatted value); there is ONE floating editor, opened over
+ * the active cell by typing, F2, a double-click or a tap on the active cell, and the grid
+ * itself takes the keyboard the rest of the time (`nav.ts` says what each key means). So
+ * the grid shows "30" while the formula bar and the editor hold "=SUM(B1:B2)", and a big
+ * sheet costs a text node per cell instead of a text field per cell.
  */
 import { t, getLocale } from '../../../kernel/i18n';
 import type { Editor, EditorContext, StatusInfo } from '../editor';
@@ -44,7 +46,7 @@ import { draggedHeight, isCircularAt, MAX_ROW_HEIGHT, MIN_ROW_HEIGHT, measureCel
 import { validationAt, validationProblem, withoutRules, type RangedValidation } from './rules';
 import { parseListSource, type CompareOp, type ValidationRule } from '../calc/index';
 import type { BookLook, CellStyle } from './xlsxlook';
-import { hasArabic, startsRtl } from '../writer/docops';
+import { cellAlignment, sheetDirection } from './layout';
 import { isCoarsePointer } from '../../../shell/device';
 import {
   MAX_SORT_LEVELS, addChart, addCondRule, addSortLevel, chartNumber, chartTypeChoices, clearCondRules,
@@ -61,6 +63,8 @@ import {
   DEFAULT_ROW_HEIGHT, OVERSCAN_ROWS, TOUCH_ROW_HEIGHT, rowOffsets, rowWindow, type RowWindow,
 } from './virtual';
 import { copyIndex, fillCells, fillPlan, seriesFrom, type FillPlan, type FillRect } from './fill';
+import { editorKey, gridKey, lastUsedCell } from './nav';
+import './strings';
 
 /** Columns drawn past the data on an editable sheet, so a sheet still looks like one. */
 const PAD_ROWS = 30;
@@ -102,18 +106,7 @@ export function displayValue(value: string, fmt: string | undefined): string {
  * Arabic — how Excel shows an Arabic sheet. Display only; the file is not changed.
  */
 export function sheetIsRtl(rows: readonly (readonly string[])[], stated: boolean | undefined): boolean {
-  if (stated !== undefined) return stated;
-  let text = 0;
-  let arabic = 0;
-  for (const row of rows.slice(0, 500)) {
-    for (const cell of row) {
-      const v = cell.trim();
-      if (!v || /^-?\d+(\.\d+)?(E[+-]?\d+)?$/i.test(v)) continue;
-      text++;
-      if (hasArabic(v)) arabic++;
-    }
-  }
-  return text > 0 && arabic * 2 > text;
+  return sheetDirection(rows, stated, false);
 }
 
 /** Parses TSV (what spreadsheets put on the clipboard) into rows of cells. */
@@ -163,7 +156,6 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   };
   let active: Cell = { row: 0, col: 0 };
   let anchor: Cell = { row: 0, col: 0 };
-  let editing = false;
   let dragging = false;
   let freezeTop: boolean | null = null;
   /** The status bar's zoom: CSS `zoom` on the scroll box, so its scroll metrics stay in sheet
@@ -184,6 +176,19 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   fxbar.append(nameBox, fxLabel, fx);
   const scroll = el('div', 'faisal-office-gridwrap fo-gridwrap');
   scroll.dir = 'ltr';
+  // The grid itself holds the keyboard focus between entries (arrows, typing, copy, paste).
+  scroll.tabIndex = 0;
+  scroll.setAttribute('aria-label', t('office.sheetGrid'));
+  /** The one floating editor: parked out of the document until an entry starts. */
+  const cellEditor = el('input', 'fo-celleditor');
+  cellEditor.type = 'text';
+  cellEditor.dir = 'auto';
+  cellEditor.spellcheck = false;
+  cellEditor.autocomplete = 'off';
+  /** The cell being edited (drawn row, model row, column); null when no entry is open. */
+  let editAt: { row: number; mr: number; col: number } | null = null;
+  /** 'enter': started by typing, so an arrow commits; 'edit': F2 or a double-click, arrows move the caret. */
+  let editMode: 'enter' | 'edit' = 'enter';
   const tabsBar = el('div', 'fo-sheettabs');
   tabsBar.setAttribute('role', 'tablist');
   tabsBar.setAttribute('aria-label', t('office.sheets'));
@@ -253,26 +258,16 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const sheet = m.active;
     const grid = gridAt(m, sheet);
     if (!grid) return;
-    if (active.row !== r || active.col !== c) { active = { row: r, col: c }; anchor = active; } // the cell typed in is the active one
+    // The cell typed in is the active one (`r` is a model row: a filter may draw it elsewhere).
+    const drawn = drawnRowOf(r);
+    if (active.row !== drawn || active.col !== c) { active = { row: drawn, col: c }; anchor = active; }
     const before = cellState(r, c);
     const after = cellStateFor(typed, r, c, sheet);
     if (after.value === before.value && (after.formula ?? null) === (before.formula ?? null)) return;
     const growsGrid = r >= grid.rows.length || c >= gridWidth(grid);
     ctx.commit(formulaCellEdit(sheet, r, c, before, after));
     showResult();
-    if (growsGrid) {
-      // The grid grew under the caret: redraw, then put the caret back where the owner is typing.
-      const wasFocused = document.activeElement instanceof HTMLInputElement && document.activeElement.dataset.r === String(r) && document.activeElement.dataset.c === String(c);
-      renderGrid();
-      const input = inputs.get(`${r}:${c}`);
-      if (wasFocused && input) {
-        keepCaret = true;
-        input.value = typed;
-        input.focus();
-        input.setSelectionRange(typed.length, typed.length);
-        editing = true;
-      }
-    } else refreshValues();
+    if (growsGrid) renderGrid(); else refreshValues();
   }
 
   /**
@@ -302,8 +297,8 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   /** One drawn row: its element and the cells it currently holds, in column order. */
   interface RowRecord {
     tr: HTMLTableRowElement;
-    inputs: HTMLInputElement[];
     tds: HTMLTableCellElement[];
+    views: HTMLElement[];
     cols: number[];
   }
 
@@ -312,8 +307,9 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   let body: HTMLTableSectionElement | null = null;
   let spacerTop: HTMLTableRowElement | null = null;
   let spacerBottom: HTMLTableRowElement | null = null;
-  let inputs = new Map<string, HTMLInputElement>();
   let tds = new Map<string, HTMLTableCellElement>();
+  /** Each drawn cell's text holder, by the same `drawn:col` key. */
+  let viewOf = new Map<string, HTMLElement>();
   /** The rows in the document right now — never the whole sheet. */
   let rowCells = new Map<number, RowRecord>();
   /** Cumulative row tops; rebuilt when the sheet or its row heights change. */
@@ -440,30 +436,29 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     return best;
   }
 
-  function styleCell(td: HTMLTableCellElement, input: HTMLInputElement, view: HTMLElement, s: CellStyle | undefined, value: string): void {
-    const numeric = /^-?\d+(\.\d+)?(E[+-]?\d+)?$/i.test(value.trim()) && value.trim() !== '';
-    const h = s?.hAlign ?? (numeric ? 'right' : undefined);
-    // The overlay takes the text's own direction, so text too long for its cell is
-    // clipped at its inline end and an Arabic word keeps its beginning visible.
-    const rtl = !numeric && startsRtl(value) === true;
-    view.dir = numeric ? 'ltr' : rtl ? 'rtl' : 'ltr';
-    const physical = (a: string): string => {
-      if (a === 'center' || a === 'centerContinuous') return 'center';
-      const right = a === 'right';
-      return right !== rtl ? 'flex-end' : 'flex-start';
-    };
-    if (h) { view.style.justifyContent = physical(h); view.style.textAlign = h === 'centerContinuous' ? 'center' : h; }
+  /**
+   * Lines a cell's text up (`layout.ts`): a number, or a formula's numeric result, on the right;
+   * text at the start of its own direction, so text too long for its cell is clipped at its
+   * inline end and an Arabic word keeps its beginning visible.
+   */
+  function alignCell(view: HTMLElement, s: CellStyle | undefined, value: string): void {
+    const a = cellAlignment(value, s?.hAlign);
+    view.dir = a.dir;
+    view.style.justifyContent = a.justify;
+    view.style.textAlign = a.textAlign;
+  }
+
+  function styleCell(td: HTMLTableCellElement, view: HTMLElement, s: CellStyle | undefined, value: string): void {
+    alignCell(view, s, value);
     if (!s) return;
     if (s.fill) td.style.backgroundColor = `#${s.fill}`;
     const color = s.color && s.color !== '000000' ? `#${s.color}` : s.fill ? '#000000' : '';
-    for (const node of [input, view]) {
-      if (s.bold) node.style.fontWeight = '700';
-      if (s.italic) node.style.fontStyle = 'italic';
-      if (s.underline || s.strike) node.style.textDecorationLine = `${s.underline ? 'underline ' : ''}${s.strike ? 'line-through' : ''}`;
-      if (s.size && s.size !== 11) node.style.fontSize = `${Math.round(s.size * 4 / 3)}px`;
-      if (s.font) node.style.fontFamily = `"${s.font.replace(/"/g, '')}", var(--faisal-font)`;
-      if (color) node.style.color = color;
-    }
+    if (s.bold) view.style.fontWeight = '700';
+    if (s.italic) view.style.fontStyle = 'italic';
+    if (s.underline || s.strike) view.style.textDecorationLine = `${s.underline ? 'underline ' : ''}${s.strike ? 'line-through' : ''}`;
+    if (s.size && s.size !== 11) view.style.fontSize = `${Math.round(s.size * 4 / 3)}px`;
+    if (s.font) view.style.fontFamily = `"${s.font.replace(/"/g, '')}", var(--faisal-font)`;
+    if (color) view.style.color = color;
     if (s.vAlign === 'center') view.style.alignItems = 'center';
     else if (s.vAlign === 'top') view.style.alignItems = 'flex-start';
     if (s.wrap) view.classList.add('is-wrap');
@@ -475,9 +470,11 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
   }
 
   function renderGrid(): void {
+    // A redraw replaces every cell, the one being edited too: the entry is committed first.
+    if (editAt) commitEdit(0, 0, false);
     const m = sheets();
-    inputs = new Map();
     tds = new Map();
+    viewOf = new Map();
     rowCells = new Map();
     winFirst = -1;
     winLast = -1;
@@ -606,6 +603,8 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
    */
   function renderRows(first: number, last: number): void {
     if (!body) return;
+    // The row being edited is scrolling out of the window: the entry is committed, as Excel does.
+    if (editAt && editAt.row >= frozenRows && (editAt.row < first || editAt.row >= last)) commitEdit(0, 0, false);
     const keep = new Map<number, RowRecord>();
     const frag = document.createDocumentFragment();
     for (let r = 0; r < frozenRows; r++) {
@@ -621,9 +620,9 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     }
     body.replaceChildren(frag);
     rowCells = keep;
-    inputs = new Map();
     tds = new Map();
-    for (const [r, rec] of keep) rec.cols.forEach((c, i) => { inputs.set(`${r}:${c}`, rec.inputs[i]); tds.set(`${r}:${c}`, rec.tds[i]); });
+    viewOf = new Map();
+    for (const [r, rec] of keep) rec.cols.forEach((c, i) => { tds.set(`${r}:${c}`, rec.tds[i]); viewOf.set(`${r}:${c}`, rec.views[i]); });
     paintSelection();
     measureRowHeight();
   }
@@ -679,83 +678,189 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
       tr.classList.add('is-frozen');
       tr.style.top = `${HEADER_HEIGHT + (offsets?.[r] ?? 0)}px`;
     }
-    const rec: RowRecord = { tr, inputs: [], tds: [], cols: [] };
+    const rec: RowRecord = { tr, tds: [], views: [], cols: [] };
     const rules = condCache[r];
     for (let c = 0; c < cols; c++) {
       if (!blank && covered.has(`${mr}:${c}`)) continue;
-      const td = el('td', 'faisal-office-celld fo-td');
+      const inData = !blank && mr < dataRows && c < dataCols;
+      const td = el('td', `faisal-office-celld fo-td ${inData ? 'faisal-office-cell' : 'fo-cell-empty'}`);
       td.style.height = `${height}px`;
-      // DRAWN coordinates on the cell itself (the input's `data-r`/`data-c` are the model row and
-      // the column, which is what typing needs; the fill handle and its preview walk drawn cells).
+      // DRAWN coordinates (`data-drawn`: what the selection and the fill handle walk) and the MODEL
+      // row (`data-r`: where the data lives — blank for a row below a filtered sheet).
       td.dataset.drawn = String(r);
+      td.dataset.r = blank ? '' : String(mr);
       td.dataset.c = String(c);
       const merge = blank ? undefined : mergeAt.get(`${mr}:${c}`);
       if (merge) { td.rowSpan = merge.r1 - mr + 1; td.colSpan = merge.c1 - c + 1; }
-      const inData = !blank && mr < dataRows && c < dataCols;
-      const input = el('input', inData ? 'faisal-office-cell' : 'fo-cell-empty');
-      input.type = 'text';
-      input.dir = 'auto';
-      input.spellcheck = false;
-      input.autocomplete = 'off';
       // With a filter on, the blank rows below the visible data take no typing: a row the filter
       // hid must never be edited through a row that merely looks empty (clear the filter first).
-      input.readOnly = !ctx.editable() || (blank && !!rowMap);
-      input.dataset.r = blank ? '' : String(mr);
-      input.dataset.c = String(c);
-      input.setAttribute('aria-label', blank ? '' : `${columnName(c)}${mr + 1}`);
-      input.value = blank ? '' : rawOf(mr, c);
+      if (!ctx.editable() || (blank && !!rowMap)) td.setAttribute('aria-readonly', 'true');
       const view = el('span', 'fo-cellview');
-      view.setAttribute('aria-hidden', 'true');
       const value = blank ? '' : grid?.rows[mr]?.[c] ?? '';
       const s = blank ? undefined : styleAt(mr, c);
       // A chosen number format wins over the file's own: the owner asked for it just now.
       const chosen = blank ? '' : formatForCell(sheetView.formats, mr, c);
       view.textContent = chosen ? displayText(value, chosen, getLocale() === 'ar' ? 'ar' : 'en') : displayValue(value, s?.numFmt);
-      styleCell(td, input, view, s, value);
+      styleCell(td, view, s, value);
       styleConditional(td, view, blank ? null : rules?.[c] ?? null);
-      input.addEventListener('focus', () => {
-        if (keepCaret) { keepCaret = false; active = { row: r, col: c }; anchor = active; paintSelection(); return; }
-        active = { row: r, col: c };
-        if (!dragging && !shiftFocus) anchor = active;
-        shiftFocus = false;
-        editing = false;
-        input.select();
-        select(true);
-        showResult();
-      });
-      input.addEventListener('input', () => { if (mr < 0) return; editing = true; commitCell(mr, c, input.value); fx.value = input.value; });
-      input.addEventListener('change', () => { if (mr >= 0) checkEntry(mr, c, td); });
+      td.append(view);
       if (!blank) decorateCell(td, mr, c);
-      input.addEventListener('dblclick', () => { editing = true; input.setSelectionRange(input.value.length, input.value.length); });
-      td.addEventListener('pointerdown', (ev) => {
-        if (ev.button !== 0) return;
-        if (ev.shiftKey) { ev.preventDefault(); active = { row: r, col: c }; select(false); return; }
-        dragging = true;
-        anchor = { row: r, col: c };
-        active = anchor;
-      });
-      td.addEventListener('pointerenter', () => {
-        if (filling) {
-          // The live preview: which cells the release would write, marked while the pointer is
-          // over them. Nothing is written until the pointer goes up.
-          fillTarget = fillSource ? fillPlan(fillSource, { row: r, col: c }) : null;
-          fillPreview = fillSource && fillTarget ? fillCells(fillSource, fillTarget) : [];
-          paintFillPreview();
-          return;
-        }
-        if (!dragging) return;
-        active = { row: r, col: c };
-        paintSelection();
-      });
-      td.append(view, input);
       tr.append(td);
-      rec.inputs.push(input);
       rec.tds.push(td);
+      rec.views.push(view);
       rec.cols.push(c);
     }
     rowCells.set(r, rec);
     return rec;
   }
+
+  /* ─────────────────────── pointer: one set of listeners for every cell ─────────────────────── */
+
+  /** The drawn cell an event happened in (the cells carry no listeners of their own). */
+  function cellOf(target: EventTarget | null): { td: HTMLTableCellElement; row: number; col: number } | null {
+    const node = target instanceof Element ? target : null;
+    const td = node?.closest<HTMLTableCellElement>('.fo-td');
+    if (!td || td.dataset.drawn === undefined || !scroll.contains(td)) return null;
+    return { td, row: Number(td.dataset.drawn), col: Number(td.dataset.c) };
+  }
+  /** A tap on the cell that is already active opens the editor (the phone's F2). */
+  let tapToEdit = false;
+
+  scroll.addEventListener('pointerdown', (ev) => {
+    if (ev.button !== 0) return;
+    const hit = cellOf(ev.target);
+    if (!hit || (ev.target as Element).closest('.fo-celleditor, .fo-listbtn, .fo-fillhandle, .fo-filterbtn')) return;
+    if (editAt) commitEdit(0, 0, false);
+    const single = anchor.row === active.row && anchor.col === active.col;
+    tapToEdit = ev.pointerType !== 'mouse' && isCoarsePointer() && !ev.shiftKey && single && hit.row === active.row && hit.col === active.col;
+    if (ev.shiftKey) { ev.preventDefault(); active = { row: hit.row, col: hit.col }; select(false); return; }
+    // A finger drag scrolls the sheet; a mouse (or pen) drag selects.
+    dragging = ev.pointerType !== 'touch';
+    anchor = { row: hit.row, col: hit.col };
+    active = anchor;
+    paintSelection();
+    showResult();
+    focusGrid();
+    ctx.refresh();
+  });
+  const onCellEnter = (ev: Event): void => {
+    const hit = cellOf(ev.target);
+    if (hit) enterCell(hit.row, hit.col);
+  };
+  scroll.addEventListener('pointerover', onCellEnter);
+  scroll.addEventListener('pointerenter', onCellEnter);
+  /** The pointer is over a drawn cell: a fill drag previews, a selection drag extends. */
+  function enterCell(r: number, c: number): void {
+    if (filling) {
+      // The live preview: which cells the release would write, marked while the pointer is
+      // over them. Nothing is written until the pointer goes up.
+      fillTarget = fillSource ? fillPlan(fillSource, { row: r, col: c }) : null;
+      fillPreview = fillSource && fillTarget ? fillCells(fillSource, fillTarget) : [];
+      paintFillPreview();
+      return;
+    }
+    if (!dragging || (active.row === r && active.col === c)) return;
+    active = { row: r, col: c };
+    paintSelection();
+  }
+  scroll.addEventListener('click', (ev) => {
+    if (!tapToEdit) return;
+    tapToEdit = false;
+    if (cellOf(ev.target)) startEdit(null);
+  });
+  scroll.addEventListener('dblclick', (ev) => {
+    if ((ev.target as Element).closest?.('.fo-celleditor') || !cellOf(ev.target)) return;
+    startEdit(null);
+  });
+
+  /* ─────────────────────────── the floating editor ─────────────────────────── */
+
+  function focusGrid(): void {
+    if (document.activeElement !== scroll) scroll.focus({ preventScroll: true });
+  }
+
+  /**
+   * Opens the editor over the active cell: `text` starts a new entry (a typed key), `null` edits
+   * what is there (F2, a double-click, a tap). The formula bar opens it without taking the focus.
+   */
+  function startEdit(text: string | null, focus = true): void {
+    if (!ctx.editable() || !sheets() || editAt) return;
+    const mr = modelRowOf(active.row);
+    if (mr < 0) return;                          // a blank row below a filtered sheet takes nothing
+    revealRow(active.row);
+    revealCol(active.col);
+    updateWindow();
+    const host = tds.get(`${active.row}:${active.col}`);
+    if (!host) return;
+    editAt = { row: active.row, mr, col: active.col };
+    editMode = text === null ? 'edit' : 'enter';
+    cellEditor.value = text ?? rawOf(mr, active.col);
+    const view = viewOf.get(`${active.row}:${active.col}`);
+    const st = cellEditor.style;
+    st.fontWeight = view?.style.fontWeight ?? '';
+    st.fontStyle = view?.style.fontStyle ?? '';
+    st.fontSize = view?.style.fontSize ?? '';
+    st.fontFamily = view?.style.fontFamily ?? '';
+    cellEditor.setAttribute('aria-label', `${columnName(active.col)}${mr + 1}`);
+    host.classList.add('is-editing');
+    host.append(cellEditor);
+    root.classList.add('is-editing');
+    fx.value = cellEditor.value;
+    if (!focus) return;
+    cellEditor.focus({ preventScroll: true });
+    const end = cellEditor.value.length;
+    try { cellEditor.setSelectionRange(end, end); } catch { /* not a text field in every engine */ }
+  }
+
+  function closeEditor(): void {
+    cellEditor.parentElement?.classList.remove('is-editing');
+    editAt = null;
+    cellEditor.remove();
+    root.classList.remove('is-editing');
+  }
+
+  /** Writes the entry (one undoable edit), checks it, then moves as Enter, Tab or an arrow asks. */
+  function commitEdit(dr: number, dc: number, refocus = true): void {
+    const at = editAt;
+    if (!at) return;
+    const text = cellEditor.value;
+    closeEditor();
+    commitCell(at.mr, at.col, text);
+    checkEntry(at.mr, at.col);
+    if (dr || dc) move(dr, dc, false);
+    else if (refocus) focusGrid();
+    syncBars();
+  }
+
+  /** Esc: the cell keeps what it had. */
+  function cancelEdit(): void {
+    if (!editAt) return;
+    closeEditor();
+    focusGrid();
+    syncBars();
+  }
+
+  cellEditor.addEventListener('input', () => { fx.value = cellEditor.value; });
+  cellEditor.addEventListener('keydown', (ev) => {
+    const mod = ev.ctrlKey || ev.metaKey;
+    const k = ev.key.toLowerCase();
+    // Undo and redo while typing are the field's own (the window's would undo the sheet under it).
+    if (mod && (k === 'z' || k === 'y')) { ev.stopPropagation(); return; }
+    // A save writes what is being typed too.
+    if (mod && k === 's') { commitEdit(0, 0); return; }
+    const action = editorKey(ev, editMode, sheetRtl);
+    if (action.kind === 'type') return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (action.kind === 'cancel') cancelEdit(); else commitEdit(action.dr, action.dc);
+  });
+  cellEditor.addEventListener('blur', (ev) => {
+    // Moving into the formula bar keeps the same entry open; anywhere else writes it.
+    if (!editAt || ev.relatedTarget === fx) return;
+    commitEdit(0, 0, false);
+  });
+
+  /* ─────────────────────────── moving around ─────────────────────────── */
 
   /** Scrolls `row` into view (below the sticky header) so it can be drawn and focused. */
   function revealRow(row: number): void {
@@ -767,20 +872,26 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     else if (view > 0 && bottom > scroll.scrollTop + view) scroll.scrollTop = bottom - view;
   }
 
+  /** Scrolls column `col` into view beside the sticky row numbers (either direction). */
+  function revealCol(col: number): void {
+    let start = 0;
+    for (let i = 0; i < col; i++) start += widthOf(i);
+    const end = start + widthOf(col);
+    const view = Math.max(0, scroll.clientWidth - 48);
+    const cur = Math.abs(scroll.scrollLeft);
+    let next = cur;
+    if (start < cur) next = start;
+    else if (view > 0 && end > cur + view) next = end - view;
+    if (next !== cur) scroll.scrollLeft = sheetRtl ? -next : next;
+  }
+
   /** Makes the active cell exist in the document (scrolling to it if it is out of the window). */
   function focusCell(row: number, col: number): void {
     revealRow(row);
+    revealCol(col);
     updateWindow();
-    const input = inputs.get(`${row}:${col}`);
-    if (input) focusInput(input);
+    focusGrid();
   }
-
-  function focusInput(input: HTMLInputElement): void {
-    shiftFocus = true;
-    input.focus({ preventScroll: true });
-  }
-  let shiftFocus = false;
-  let keepCaret = false;
   document.addEventListener('pointerup', onPointerUp);
   function onPointerUp(): void {
     // A fill drag ends here: the preview becomes one edit (or nothing, if it never left the source).
@@ -795,18 +906,17 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     const m = sheets();
     if (!m) return;
     const grid = m.grids[m.active];
-    for (const [key, input] of inputs) {
+    for (const [key, view] of viewOf) {
       const [r, c] = key.split(':').map(Number);
       // `key` holds drawn rows; the data lives at the model row a filter maps them to.
       const mr = modelRowOf(r);
-      if (document.activeElement !== input) input.value = rawOf(mr, c);
-      const view = input.previousElementSibling as HTMLElement | null;
-      if (view) {
-        const chosen = formatForCell(sheetView.formats, mr, c);
-        const raw = grid?.rows[mr]?.[c] ?? '';
-        view.textContent = chosen ? displayText(raw, chosen, getLocale() === 'ar' ? 'ar' : 'en') : displayValue(raw, styleAt(mr, c)?.numFmt);
-      }
-      const td = input.parentElement as HTMLTableCellElement | null;
+      if (mr < 0) continue;
+      const chosen = formatForCell(sheetView.formats, mr, c);
+      const raw = grid?.rows[mr]?.[c] ?? '';
+      const s = styleAt(mr, c);
+      view.textContent = chosen ? displayText(raw, chosen, getLocale() === 'ar' ? 'ar' : 'en') : displayValue(raw, s?.numFmt);
+      alignCell(view, s, raw);
+      const td = tds.get(key);
       if (td) styleConditional(td, view, condCache[r]?.[c] ?? null);
     }
     // A sheet whose file has no widths keeps its columns fitted while the owner types.
@@ -992,46 +1102,69 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
 
   function select(fromFocus: boolean): void {
     paintSelection();
-    if (!fromFocus) {
-      const input = inputs.get(`${active.row}:${active.col}`);
-      if (input && document.activeElement !== input) focusInput(input);
-      else if (!input) focusCell(active.row, active.col);
-    }
+    if (!fromFocus) focusCell(active.row, active.col);
+    showResult();
     ctx.refresh();
   }
 
-  function move(dr: number, dc: number, extend: boolean): void {
-    // While a filter is on, the caret stays inside the rows the filter left visible.
-    const lastRow = rowMap ? Math.max(0, rowMap.length - 1) : Number.POSITIVE_INFINITY;
-    active = {
-      row: Math.max(0, Math.min(lastRow, active.row + dr)),
-      col: Math.max(0, Math.min(cols - 1, active.col + dc)),
-    };
+  /** Puts the active cell at `to` (Shift keeps the anchor, so the selection grows). */
+  function goTo(to: Cell, extend: boolean): void {
+    active = to;
     if (!extend) anchor = active;
-    shiftFocus = extend;
-    // The target may be outside the drawn window: this scrolls to it, draws it, then focuses it.
+    // The target may be outside the drawn window: this scrolls to it and draws it.
     focusCell(active.row, active.col);
-    if (extend) paintSelection();
+    paintSelection();
+    showResult();
+    ctx.refresh();
+  }
+
+  /** The last drawn row the caret may reach: inside the rows a filter left visible. */
+  const lastNavRow = (): number => (rowMap ? Math.max(0, rowMap.length - 1) : Math.max(0, rowCount - 1));
+
+  function move(dr: number, dc: number, extend: boolean): void {
+    goTo({
+      row: Math.max(0, Math.min(lastNavRow(), active.row + dr)),
+      col: Math.max(0, Math.min(cols - 1, active.col + dc)),
+    }, extend);
+  }
+
+  /** Whether the drawn cell holds anything (Ctrl+arrow stops at the edges of the data). */
+  function filledAt(r: number, c: number): boolean {
+    const m = sheets();
+    const mr = modelRowOf(r);
+    return !!m && mr >= 0 && (gridAt(m, m.active)?.rows[mr]?.[c] ?? '') !== '';
   }
 
   scroll.addEventListener('keydown', (ev) => {
-    const target = ev.target as HTMLElement;
-    if (!(target instanceof HTMLInputElement) || !target.dataset.r) return;
-    const k = ev.key;
-    if (k === 'Enter') { ev.preventDefault(); editing = false; move(ev.shiftKey ? -1 : 1, 0, false); return; }
-    if (k === 'Tab') { ev.preventDefault(); editing = false; move(0, ev.shiftKey ? -1 : 1, false); return; }
-    if (k === 'F2') { editing = true; target.setSelectionRange(target.value.length, target.value.length); ev.preventDefault(); return; }
-    if (k === 'Escape' && editing) { editing = false; target.value = rawOf(modelRowOf(active.row), active.col); target.select(); return; }
-    if ((k === 'Delete' || (k === 'Backspace' && !editing)) && ctx.editable()) {
-      ev.preventDefault();
-      clearRange();
-      return;
-    }
-    if (!editing && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(k)) {
-      ev.preventDefault();
-      const dr = k === 'ArrowUp' ? -1 : k === 'ArrowDown' ? 1 : 0;
-      const dc = k === 'ArrowLeft' ? -1 : k === 'ArrowRight' ? 1 : 0;
-      move(dr, dc, ev.shiftKey);
+    if (ev.target !== scroll) return;            // the editor, a list button, a filter arrow: their own keys
+    const m = sheets();
+    if (!m) return;
+    const grid = gridAt(m, m.active);
+    const used = lastUsedCell(grid?.rows ?? []);
+    const action = gridKey(ev, {
+      active,
+      rtl: sheetRtl,
+      bounds: { lastRow: lastNavRow(), lastCol: cols - 1 },
+      page: Math.max(1, Math.floor((scroll.clientHeight - HEADER_HEIGHT) / rowHeight) - 1),
+      lastUsed: { row: drawnRowOf(used.row), col: used.col },
+      filled: filledAt,
+      editable: ctx.editable(),
+    });
+    switch (action.kind) {
+      case 'move': ev.preventDefault(); goTo(action.to, action.extend); return;
+      case 'edit': ev.preventDefault(); startEdit(action.text); return;
+      case 'clear': ev.preventDefault(); clearRange(); return;
+      case 'selectAll': {
+        ev.preventDefault();
+        anchor = { row: 0, col: 0 };
+        active = { row: Math.max(0, drawnRowOf(used.row)), col: Math.max(0, dataCols - 1) };
+        select(true);
+        return;
+      }
+      default:
+        // An input method (Arabic, Japanese…) announces itself without a character: open an empty
+        // entry and let the composition land in it.
+        if ((ev.key === 'Process' || ev.keyCode === 229) && ctx.editable()) startEdit('');
     }
   });
 
@@ -1049,42 +1182,75 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     if (edits.length) { ctx.commit(compositeEdit(edits)); refreshValues(); }
   }
 
-  root.addEventListener('copy', (ev) => {
-    if (document.activeElement === fx || document.activeElement === nameBox) return;
-    const input = document.activeElement as HTMLInputElement | null;
+  /** The selection as TSV (what other spreadsheets read from the clipboard). */
+  function selectionTsv(): string {
     const g = range();
-    if (input && editing && input.selectionStart !== input.selectionEnd) return;
     const m = sheets();
     const grid = m ? gridAt(m, m.active) : null;
     const rows: string[][] = [];
     for (let r = g.r0; r <= g.r1; r++) { const mr = modelRowOf(r); const row: string[] = []; for (let c = g.c0; c <= g.c1; c++) row.push(mr < 0 ? '' : grid?.rows[mr]?.[c] ?? ''); rows.push(row); }
-    ev.clipboardData?.setData('text/plain', toTsv(rows));
+    return toTsv(rows);
+  }
+  /** Copy and cut act on the grid only; the editor, the formula bar and the name box keep their own. */
+  const gridHasFocus = (): boolean => document.activeElement === scroll;
+  root.addEventListener('copy', (ev) => {
+    if (!gridHasFocus()) return;
+    ev.clipboardData?.setData('text/plain', selectionTsv());
     ev.preventDefault();
   });
+  root.addEventListener('cut', (ev) => {
+    if (!gridHasFocus()) return;
+    ev.clipboardData?.setData('text/plain', selectionTsv());
+    ev.preventDefault();
+    if (ctx.editable()) clearRange();
+  });
   root.addEventListener('paste', (ev) => {
+    if (!gridHasFocus() || !ctx.editable()) return;
     const text = ev.clipboardData?.getData('text/plain') ?? '';
-    if (document.activeElement === fx || document.activeElement === nameBox || !ctx.editable()) return;
-    if (!/[\t\n]/.test(text.replace(/\n$/, ''))) return; // a single value: the field takes it itself
     ev.preventDefault();
     const m = sheets();
     if (!m) return;
-    const rows = parseTsv(text);
-    const edits: Edit[] = [];
     const base = modelRowOf(active.row);
     if (base < 0) return;                        // a blank row below a filtered sheet takes nothing
+    const rows = parseTsv(text.replace(/\r?\n$/, ''));
+    const edits: Edit[] = [];
     rows.forEach((row, dr) => row.forEach((value, dc) => {
       const r = base + dr;
       const c = active.col + dc;
-      edits.push(formulaCellEdit(m.active, r, c, cellState(r, c), { value }));
+      const before = cellState(r, c);
+      const after = cellStateFor(value, r, c, m.active);
+      if (after.value !== before.value || (after.formula ?? null) !== (before.formula ?? null)) edits.push(formulaCellEdit(m.active, r, c, before, after));
     }));
+    if (!edits.length) return;
     ctx.commit(compositeEdit(edits));
+    // The pasted block is selected, as a spreadsheet does.
+    const height = Math.max(1, rows.length);
+    const width = Math.max(1, ...rows.map((r) => r.length));
+    anchor = { ...active };
+    active = { row: drawnRowOf(base + height - 1), col: active.col + width - 1 };
     renderGrid();
   });
 
-  fx.addEventListener('input', () => { if (ctx.editable()) commitCell(modelRowOf(active.row), active.col, fx.value); });
+  // The formula bar is a second way into the same entry: typing there opens the editor on the cell
+  // (without taking the focus) and keeps both in step; Enter, Tab and Esc work as in the cell.
+  fx.addEventListener('input', () => {
+    if (!ctx.editable()) return;
+    if (!editAt) { startEdit(fx.value, false); editMode = 'edit'; }
+    if (editAt) cellEditor.value = fx.value;
+  });
   fx.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter') { ev.preventDefault(); const mr = modelRowOf(active.row); if (mr >= 0) checkEntry(mr, active.col); move(1, 0, false); }
-    if (ev.key === 'Escape') { fx.value = rawOf(modelRowOf(active.row), active.col); inputs.get(`${active.row}:${active.col}`)?.focus(); }
+    if (ev.key === 'Enter' || ev.key === 'Tab') {
+      ev.preventDefault();
+      if (editAt) commitEdit(ev.key === 'Tab' ? 0 : ev.shiftKey ? -1 : 1, ev.key === 'Tab' ? (ev.shiftKey ? -1 : 1) : 0);
+      else move(ev.key === 'Tab' ? 0 : 1, ev.key === 'Tab' ? 1 : 0, false);
+    } else if (ev.key === 'Escape') {
+      ev.preventDefault();
+      if (editAt) cancelEdit(); else focusGrid();
+      fx.value = rawOf(modelRowOf(active.row), active.col);
+    }
+  });
+  fx.addEventListener('blur', (ev) => {
+    if (editAt && ev.relatedTarget !== cellEditor) commitEdit(0, 0, false);
   });
   nameBox.addEventListener('keydown', (ev) => {
     if (ev.key !== 'Enter') return;
@@ -2234,7 +2400,7 @@ export function createSheet(ctx: EditorContext, book: BookLook | null): Editor {
     tabs,
     render(): void {
       const m = sheets();
-      if (m && active.row === 0 && active.col === 0 && !inputs.size) anchor = active;
+      if (m && active.row === 0 && active.col === 0 && !tds.size) anchor = active;
       renderGrid();
       syncBars();
     },

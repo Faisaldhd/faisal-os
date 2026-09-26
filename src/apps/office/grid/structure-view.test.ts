@@ -18,6 +18,7 @@ import '../strings';
 import type { Editor, EditorContext } from '../editor';
 import type { Edit, OfficeModel, SheetsModel } from '../model';
 import { createSheet } from './view';
+import { clickCell, shownAt } from './cells.testkit';
 import { formatChoices } from './sheetview';
 
 const WORDS = ['ألف', 'باء', 'جيم'];
@@ -57,12 +58,8 @@ function withViewport(wrap: HTMLElement, height = 480, width = 900): void {
   Object.defineProperty(wrap, 'clientWidth', { value: width, configurable: true });
 }
 
-const cell = (wrap: HTMLElement, modelRow: number, c: number): HTMLInputElement | null =>
-  wrap.querySelector<HTMLInputElement>(`input[data-r="${modelRow}"][data-c="${c}"]`);
-
-/** What the cell SHOWS (the formatted text drawn over the field), not what it holds. */
-const shown = (wrap: HTMLElement, modelRow: number, c: number): string =>
-  cell(wrap, modelRow, c)?.previousElementSibling?.textContent ?? '';
+/** What the cell SHOWS (its formatted text), not what it holds. */
+const shown = (wrap: HTMLElement, modelRow: number, c: number): string => shownAt(wrap, modelRow, c) ?? '';
 
 const nameBoxTo = (editor: Editor, ref: string): void => {
   const box = editor.element.querySelector<HTMLInputElement>('.fo-namebox')!;
@@ -140,9 +137,10 @@ describe('insert and delete with a filter active', () => {
     const before = h.model().grids[0].rows.map((r) => r.slice());
     // Drawn rows 0..2 are the header and the two kept rows; drawn 3 is the first BLANK one, and it
     // shows no model row at all (modelRowOf → -1), so there is nothing a delete could remove.
-    const blank = h.wrap.querySelector<HTMLInputElement>('.fo-td[data-drawn="3"] input');
+    const blank = h.wrap.querySelector<HTMLElement>('.fo-td[data-drawn="3"][data-c="0"]');
     expect(blank).toBeTruthy();
-    blank!.focus();
+    expect(blank!.dataset.r).toBe('');
+    clickCell(blank!);
     h.commits.length = 0;
 
     ribbonControl(h.editor, 'home', 'delrow').run();
