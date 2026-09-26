@@ -248,7 +248,11 @@ describe('key derivation and permissions', () => {
 });
 
 describe('encryptPdf against pdf.js (the independent reference)', () => {
-  it('opens with the user password and shows the page that was there', async () => {
+  // A pdf.js decrypt + parse of this document measured past the suite's 20 s default while three
+  // gates ran together on the shared machine (the same load that made the formula and photo budgets
+  // swing 15x). The allowance is for the clock only: every claim below is still asserted, once.
+  const HEAVY = { timeout: 60_000 } as const;
+  it('opens with the user password and shows the page that was there', HEAVY, async () => {
     const out = await encryptPdf(await sample(), PROTECTION);
     const opened = await openWith(out, USER);
     expect(opened.pages).toBe(1);

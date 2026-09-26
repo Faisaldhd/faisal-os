@@ -13,6 +13,28 @@ import { computeSheets, evaluateInModel, workbookFromModel } from './sheets';
 import { ERR, formatGeneral, isError, textToNumber, type Scalar } from './values';
 import { Workbook } from './workbook';
 
+/**
+ * This machine's speed, measured here rather than assumed: the same fixed arithmetic workload that
+ * the budgets are expressed against. Load (a teammate's gate, a parallel test file) slows this by
+ * the same factor it slows the engine, so the ratio below survives a busy machine while a genuine
+ * regression — which adds work to the engine alone — still fails it.
+ */
+function referenceMs(): number {
+  let sink = 0;
+  const t0 = performance.now();
+  for (let i = 0; i < 4_000_000; i++) sink += Math.sqrt(i & 1023);
+  const ms = performance.now() - t0;
+  return sink > 0 ? ms : ms; // the result is used, so the loop cannot be optimised away
+}
+
+/** A budget: at least `floorMs`, and never tighter than `factor` x this machine's own reference. */
+function budgetMs(factor: number, floorMs: number): number {
+  let best = Infinity;
+  for (let i = 0; i < 3; i++) best = Math.min(best, referenceMs());
+  return Math.max(floorMs, best * factor);
+}
+
+
 const show = (v: Scalar): Scalar | string => (isError(v) ? v.code : v);
 
 function one(formula: string): Scalar | string {
@@ -370,7 +392,17 @@ describe('the SheetsModel bridge', () => {
 });
 
 /** The wall-clock budget for one recalc of the sheet below, in ms. */
-const RECALC_BUDGET_MS = 300;
+/**
+ * The recalc budget for the 10,000-row sheet with 1,000 VLOOKUPs.
+ *
+ * Measured: **92.9 ms** alone, **87.9 ms** beside two background loaders, **537.7 ms** beside six,
+ * and **1404 ms** while three teammates ran their gates — a 15x swing that is the machine's load,
+ * not the engine's work. A fixed ceiling therefore has to choose between failing that machine and
+ * hiding a regression, so the budget is a multiple of the reference measured in this test (idle:
+ * ~20x the reference, floored at 300 ms — about 3x the calm measurement of 92.9 ms). A change that
+ * makes the engine do four times the work fails it on any machine; the load alone does not.
+ */
+const RECALC_BUDGET_MS = budgetMs(20, 300);
 /** Samples per measurement: the best one is asserted, so a single stalled sample cannot fail a build. */
 const RECALC_SAMPLES = 3;
 
@@ -406,14 +438,17 @@ function bestOf(samples: number, budget: number, sample: () => number): number {
 }
 
 describe('performance', () => {
-  it('recalculates a 10,000-row sheet with a SUM column and 1,000 VLOOKUPs well under 300 ms', () => {
+  it('recalculates a 10,000-row sheet with a SUM column and 1,000 VLOOKUPs inside a budget that scales with the machine', () => {
     // Warm-up on a smaller sheet: the first pass pays for the JIT, the interned formula strings and
     // the empty dependency caches, none of which belong to the measurement.
     buildBigSheet(2_000, 200).recalc();
 
     let full = Infinity;
     let incremental = Infinity;
-    for (let run = 0; run < RECALC_SAMPLES && (full >= RECALC_BUDGET_MS || incremental >= RECALC_BUDGET_MS); run++) {
+    // Exactly RECALC_SAMPLES samples, no early exit: "best of three" is only a claim if three were
+    // taken, and the spread between them is what shows how loaded the machine was.
+    const samples: string[] = [];
+    for (let run = 0; run < RECALC_SAMPLES; run++) {
       // A fresh sheet per sample: `recalc()` only recomputes dirty cells, so re-measuring the same
       // workbook would time nothing and quietly hollow the claim out.
       const wb = buildBigSheet();
@@ -429,9 +464,10 @@ describe('performance', () => {
       const sampleIncremental = performance.now() - t1;
       full = Math.min(full, sampleFull);
       incremental = Math.min(incremental, sampleIncremental);
+      samples.push(`${sampleFull.toFixed(1)}/${sampleIncremental.toFixed(1)}`);
     }
     // eslint-disable-next-line no-console
-    console.log(`[perf] full recalc ${full.toFixed(1)} ms, one-cell edit ${incremental.toFixed(1)} ms (best of ≤${RECALC_SAMPLES})`);
+    console.log(`[perf] full recalc ${full.toFixed(1)} ms, one-cell edit ${incremental.toFixed(1)} ms (best of ${RECALC_SAMPLES}: full/edit [${samples.join(', ')}]; budget ${RECALC_BUDGET_MS.toFixed(0)} ms, reference ${referenceMs().toFixed(1)} ms)`);
     expect(full).toBeLessThan(RECALC_BUDGET_MS);
     expect(incremental).toBeLessThan(RECALC_BUDGET_MS);
   });
