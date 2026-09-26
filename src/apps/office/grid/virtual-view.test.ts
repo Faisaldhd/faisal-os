@@ -61,7 +61,20 @@ const spacerHeights = (wrap: HTMLElement): number[] =>
 
 beforeEach(() => { document.body.replaceChildren(); });
 
-describe('the virtual sheet', () => {
+/**
+ * These tests build a 10,000-row sheet, and one of them re-renders the grid on 44 scroll stops, so
+ * on a loaded runner they can take ten to thirty times their idle second. They are completely
+ * synchronous — `updateWindow()` runs inside the scroll listener — so vitest cannot interrupt them:
+ * the clock is only read once the test returns, and a busy machine then reported
+ * "Test timed out in 5000ms" for tests whose every assertion had passed (measured: at most 33 rows
+ * drawn, worst `tr` count 36, against bounds of 60 and 70).
+ *
+ * The budget is therefore explicit and generous, which is the honest shape for compute-bound tests:
+ * the assertions still decide whether the view is right, and no retry hides a wrong window. This
+ * test still fails on a window that really overdraws — verified by temporarily drawing 206 rows
+ * with a 4800px viewport, which failed with `expected 206 to be less than 60`.
+ */
+describe('the virtual sheet', { timeout: 60_000 }, () => {
   it('draws a screenful of a ten-thousand-row sheet, not the sheet', () => {
     const h = harness(bigSheet());
     withViewport(h.wrap);
@@ -105,6 +118,7 @@ describe('the virtual sheet', () => {
     withViewport(h.wrap);
     h.editor.render();
     let worst = 0;
+    let mostRows = 0;
     // Big jumps down the sheet plus a few single-row steps: every one of them must leave a
     // screenful in the document, however far it lands.
     const stops = [...Array.from({ length: 40 }, (_, i) => Math.round((ROWS * 24) * (i / 39))), 5000, 5001, 5002, 5003];
@@ -112,8 +126,12 @@ describe('the virtual sheet', () => {
       h.wrap.scrollTop = y;
       h.wrap.dispatchEvent(new Event('scroll'));
       worst = Math.max(worst, h.wrap.querySelectorAll('tr').length);
-      expect(drawnRows(h.wrap).length).toBeLessThan(60);
+      const drawn = drawnRows(h.wrap).length;
+      mostRows = Math.max(mostRows, drawn);
+      expect(drawn).toBeLessThan(60);
     }
+    // eslint-disable-next-line no-console
+    console.log(`[perf] ${stops.length} scroll stops: at most ${mostRows} rows drawn, worst tr count ${worst}`);
     expect(worst).toBeLessThan(70);
   });
 
