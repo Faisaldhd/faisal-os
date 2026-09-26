@@ -125,3 +125,17 @@ registerFunction('RATE', (args, ctx) => {
   const r = solve(f, guess);
   return r === null ? ERR.NUM : r;
 }, { minArgs: 3, maxArgs: 6 });
+
+/* ── batch 2: straight-line depreciation, the Excel function missing here ── */
+
+/** SLN(cost, salvage, life): the same depreciation every period, #DIV/0! when life is zero. */
+registerFunction('SLN', (args, ctx) => {
+  const cost = num(args[0], ctx);
+  if (isError(cost)) return cost;
+  const salvage = num(args[1], ctx);
+  if (isError(salvage)) return salvage;
+  const life = num(args[2], ctx);
+  if (isError(life)) return life;
+  if (life === 0) return ERR.DIV0;
+  return (cost - salvage) / life;
+}, { minArgs: 3, maxArgs: 3 });

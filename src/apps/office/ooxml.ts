@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Office — writing Word (.docx) and Excel (.xlsx) packages.
  *
  * Both are ZIP archives of XML parts. Every part written here is built from the
@@ -153,7 +153,10 @@ export function xlsxSheet(grid: Grid, sheet = 0, formulas?: Record<string, strin
   const width = grid.rows.reduce((w, row) => Math.max(w, row.length), 0);
   const ref = autoFilterRef(grid.rows.length, width);
   const filter = filters?.length && ref ? autoFilterXml(filters, ref) : null;
-  return `${DECL}<worksheet xmlns="${S_NS}"><sheetData>${rows}</sheetData>${filter ?? ''}${conditional ?? ''}</worksheet>`;
+  // `xmlns:r` is declared even when nothing in this part uses it: a `<drawing r:id>` (added by
+  // `withDrawing` below) carries a prefix, and a prefix with no binding is not XML — Excel refuses
+  // to open such a workbook and openpyxl raises "unbound prefix". Excel itself declares it always.
+  return `${DECL}<worksheet xmlns="${S_NS}" xmlns:r="${DOC_REL}"><sheetData>${rows}</sheetData>${filter ?? ''}${conditional ?? ''}</worksheet>`;
 }
 
 /**
