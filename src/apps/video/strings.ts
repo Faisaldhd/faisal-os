@@ -354,6 +354,7 @@ defineStrings('video', {
     exportSavedShort: 'حُفظ: {path}',
     exportCancelled: 'أُلغي التصدير ولم يُحفظ أي ملف.',
     exportFailed: 'فشل التصدير: {reason}',
+    exportBothFailed: 'تعذّر التصدير بالمسارين: المُرمّز السريع والتسجيل العادي. جرّب دقّة أو صيغة أخرى.',
     playExport: 'تشغيل',
     showInFiles: 'عرض في الملفات',
 
@@ -769,6 +770,7 @@ defineStrings('video', {
     exportSavedShort: 'Saved: {path}',
     exportCancelled: 'Export cancelled. No file was saved.',
     exportFailed: 'Export failed: {reason}',
+    exportBothFailed: 'The export failed on both paths: the fast encoder and ordinary recording. Try another resolution or format.',
     playExport: 'Play',
     showInFiles: 'Show in Files',
 

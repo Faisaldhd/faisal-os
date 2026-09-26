@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ExportBothFailed,
   baseNameWithoutExtension,
   checkQuota,
   exportName,
@@ -7,11 +8,13 @@ import {
   planExport,
   planName,
   quotaFraction,
+  shouldFallBackFromMp4,
   VFS_FILE_LIMIT,
   VFS_TOTAL_LIMIT,
   webCodecsReady,
   type ExportEnv,
 } from './export';
+import { ExportCancelled } from './engine-port';
 
 const NO_WEBCODECS = { videoEncoder: false, audioEncoder: false, trackGenerator: false, audioData: false, trackProcessor: false };
 const FULL_WEBCODECS = { videoEncoder: true, audioEncoder: true, trackGenerator: true, audioData: true, trackProcessor: true };
@@ -46,8 +49,7 @@ const input = (overrides: Partial<Parameters<typeof planExport>[0]> = {}) => ({
 });
 
 describe('engine choice', () => {
-  it('uses MediaRecorder when WebCodecs is not there at all', () => {
-    const plan = planExport(input(), encoderProbe(true));
+  it('uses MediaRecorder when WebCodecs is not there at all', () => {    const plan = planExport(input(), encoderProbe(true));
     expect(plan.engine).toBe('mediarecorder');
     expect(plan.reason).toBe('mediarecorder');
     expect(plan.mime).toBe('video/webm;codecs=vp9,opus');
@@ -179,5 +181,31 @@ describe('storage limits', () => {
     expect(quotaFraction(0)).toBe(0);
     expect(quotaFraction(VFS_FILE_LIMIT * 2)).toBe(1);
     expect(quotaFraction(Number.NaN)).toBe(0);
+  });
+});
+
+/**
+ * The fallback after the fast path gives up. WebCodecs claims support, starts, and then fails on
+ * a real machine often enough that the export must not die with it — but a cancellation is the
+ * user's decision, and re-running behind their back would be worse than the failure.
+ */
+describe('falling back from the WebCodecs export', () => {
+  it('retries on the recorder for any real failure', () => {
+    expect(shouldFallBackFromMp4(new Error('encoder threw'), false)).toBe(true);
+    expect(shouldFallBackFromMp4(new DOMException('closed', 'InvalidStateError'), false)).toBe(true);
+    expect(shouldFallBackFromMp4('a string somewhere', false)).toBe(true);
+  });
+
+  it('never retries after a cancellation, however it arrives', () => {
+    expect(shouldFallBackFromMp4(new ExportCancelled(), false)).toBe(false);
+    expect(shouldFallBackFromMp4(new Error('anything at all'), true)).toBe(false);
+  });
+
+  it('carries both failures, so the UI can say one honest sentence', () => {
+    const both = new ExportBothFailed(new Error('mp4 gave up'), new Error('no recorder'));
+    expect(both).toBeInstanceOf(Error);
+    expect(both.name).toBe('ExportBothFailed');
+    expect((both.mp4 as Error).message).toBe('mp4 gave up');
+    expect((both.recorder as Error).message).toBe('no recorder');
   });
 });
