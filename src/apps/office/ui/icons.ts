@@ -125,6 +125,10 @@ export const ICONS = {
   transition: ['M3 6h9v12H3z', 'M15 6h6', 'M15 12h6', 'M15 18h6'],
   sparkle: ['M12 3l2 6 6 2-6 2-2 6-2-6-6-2 6-2z'],
   timer: ['M12 8v5l3 2', 'M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16z', 'M9 2h6'],
+  // A note at the foot of the page: the page, its text, Word's own separator rule, and the number.
+  footnote: ['M7 3h7l3 3v9H7z', 'M14 3v3h3', 'M10 8h4', 'M10 11h2', 'M4 16h16', 'M11 21v-4l-1 .6'],
+  // A note at the end of the document: the page with its text, and the number after the last line.
+  endnote: ['M6 3h12v18H6z', 'M9 7h6', 'M9 10h6', 'M9 13h3', 'M17 17v4', 'M16 18l1-.7'],
 } as const;
 
 export type IconName = keyof typeof ICONS;

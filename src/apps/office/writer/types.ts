@@ -74,6 +74,11 @@ export interface OpaqueRun {
   newImage?: NewImage;
   /** A footnote or endnote reference: the note itself, read from `footnotes.xml`/`endnotes.xml`. */
   note?: NoteInfo;
+  /**
+   * What a note-kind run points at: a note, or a comment. Set even when the target could not be
+   * read, so a missing note can be told apart from a comment mark (which has no note by design).
+   */
+  ref?: 'footnote' | 'endnote' | 'comment';
   src?: number;
 }
 

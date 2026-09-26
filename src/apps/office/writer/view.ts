@@ -18,7 +18,7 @@
  */
 import { t } from '../../../kernel/i18n';
 import type { Editor, EditorContext, StatusInfo } from '../editor';
-import type { DocModel, ParagraphAlign, ParagraphFormat } from '../model';
+import type { DocModel, Edit, ParagraphAlign, ParagraphFormat } from '../model';
 import { paragraphEdit } from '../model';
 import { button, clamp, el, observeSize } from '../ui/dom';
 import { icon } from '../ui/icons';
@@ -32,6 +32,9 @@ import { galleryStyles, resolveStyle, type DocLook, type ParaLook, type TextLook
 import { toHtml, toMarkdown } from './export';
 import { ODT_MIME, odtTitleOf, toOdt } from './odt';
 import { findAll, type Match } from './find';
+// The note commands are the merged model layer (`notemodel.ts`): the UI never numbers or edits a
+// note by itself — it calls `insertNote` / `setNoteText` / `removeNote` and draws what comes back.
+import { insertNote, removeNote, setNoteText, type NoteKind } from './notemodel';
 import { paginate, PX } from './paginate';
 import {
   applyChangeToText, authorStamp, counts as revisionCounts, decide, decideAll, emptyLog, pending as pendingRevisions, shiftAfter,
@@ -77,6 +80,65 @@ function fontStack(name: string | undefined): string {
   return `"${name.replace(/["\\]/g, '')}", ${base}`;
 }
 
+/* ─────────────────────────── notes (الحواشي) ─────────────────────────── */
+
+/** One note as the reader sees it: where its reference sits, and the number at that reference. */
+export interface NoteEntry { blockId: number; runIndex: number; kind: NoteKind; text: string; number: number }
+
+/**
+ * Every note of the document in reading order, each numbered 1, 2, 3… **within its own kind** —
+ * Word numbers footnotes and endnotes in two separate sequences, so a document can hold "footnote 1"
+ * and "endnote 1" at once.
+ *
+ * This numbering is for DISPLAY only, and it is read from the model, never kept beside it: the ids
+ * and the order they must keep come from `renumberNotes` (notemodel.ts), so nothing here can drift
+ * away from what the file will say.
+ */
+export function documentNotes(blocks: readonly DocBlock[]): NoteEntry[] {
+  const seen: Record<NoteKind, number> = { footnote: 0, endnote: 0 };
+  const out: NoteEntry[] = [];
+  for (const block of blocks) {
+    block.runs.forEach((run, runIndex) => {
+      if (run.t !== 'opaque' || run.kind !== 'note' || !run.note) return;
+      seen[run.note.kind] += 1;
+      out.push({ blockId: block.id, runIndex, kind: run.note.kind, text: run.note.text, number: seen[run.note.kind] });
+    });
+  }
+  return out;
+}
+
+/** The runs with a boundary at `offset`, so a zero-width element can sit exactly at the caret. */
+export function splitRunsAt(runs: readonly Run[], offset: number): Run[] {
+  const out: Run[] = [];
+  let at = 0;
+  for (const run of runs) {
+    const end = at + run.text.length;
+    if (run.t === 'text' && offset > at && offset < end) {
+      out.push({ ...run, text: run.text.slice(0, offset - at) }, { ...run, text: run.text.slice(offset - at) });
+    } else out.push(run);
+    at = end;
+  }
+  return out;
+}
+
+/** The index a zero-width element at `offset` goes at, in runs already split at `offset`. */
+export function runIndexAt(runs: readonly Run[], offset: number): number {
+  let at = 0;
+  for (let i = 0; i < runs.length; i++) {
+    const end = at + runs[i].text.length;
+    if (offset <= at || offset < end) return i;
+    at = end;
+  }
+  return runs.length;
+}
+
+/** The text offset of a run in its paragraph — where a caret sits next to a zero-width element. */
+export function runTextOffset(runs: readonly Run[], runIndex: number): number {
+  let at = 0;
+  for (let i = 0; i < runIndex && i < runs.length; i++) at += runs[i].text.length;
+  return at;
+}
+
 export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
   const doc = (): DocModel | null => {
     const m = ctx.model();
@@ -88,7 +150,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
   let mode: 'page' | 'draft' = 'page';
   let fluid = false;
   let sideOpen = false;
-  let sideTab: 'nav' | 'comments' = look?.comments.length ? 'comments' : 'nav';
+  let sideTab: 'nav' | 'notes' | 'comments' = look?.comments.length ? 'comments' : 'nav';
   let pending: RunProps | null = null;
   let lastSel: Sel | null = null;
   /** Set while a Draft field has focus: formatting then acts on that whole paragraph. */
@@ -101,6 +163,14 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
   const mediaUrls = new Map<string, string>();
   const newUrls = new WeakMap<Uint8Array, string>();
   const opaqueText = new WeakMap<HTMLElement, string>();
+  /** The number every reference shows, by "blockId:runIndex" — refilled whenever the page is drawn. */
+  let noteNumbers = new Map<string, number>();
+
+  /** Reads the numbers the reader shows at each reference out of the document that is being drawn. */
+  function recountNotes(): void {
+    noteNumbers = new Map();
+    for (const note of documentNotes(doc()?.blocks ?? [])) noteNumbers.set(`${note.blockId}:${note.runIndex}`, note.number);
+  }
 
   /* ───────────────────────────── DOM ───────────────────────────── */
 
@@ -260,6 +330,38 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     if (run.kind === 'page') {
       span.classList.add('fo-pagebreak');
       span.append(el('span', 'fo-pagebreak-label', t('office.pageBreak')));
+      return span;
+    }
+    if (run.kind === 'note' && run.note) {
+      // A note reference is drawn as the number the reader sees. The badge is a MARKER, never text:
+      // `reconcile()` and `locate()` read the paragraph back from the page and skip exactly the
+      // elements carrying `data-skip` (the same rule `fo-marker` and the `<br>` filler follow), so
+      // the number can never leak into the paragraph's text or push the caret — and
+      // `contentEditable=false` keeps the caret out of the badge itself.
+      const number = noteNumbers.get(`${doc()?.blocks?.[b]?.id ?? -1}:${index}`) ?? 0;
+      const kind = run.note.kind;
+      const blockId = doc()?.blocks?.[b]?.id ?? -1;
+      span.classList.add('fo-note', `is-${kind}`);
+      span.dataset.skip = '1';
+      span.contentEditable = 'false';
+      span.dataset.note = String(index);
+      span.textContent = String(number);
+      const label = t(kind === 'footnote' ? 'office.footnoteRef' : 'office.endnoteRef', { n: number });
+      span.setAttribute('aria-label', label);
+      // Tapping the number opens the note itself in the panel — the same place Word's own pane is,
+      // and the only way to read a note whose text is not on the page.
+      span.addEventListener('click', () => openNotes(blockId, index));
+      return span;
+    }
+    if (run.kind === 'note' && run.ref && run.ref !== 'comment') {
+      // A reference whose note is not in the package at all. It is shown — and claims no number —
+      // so the owner can see the file is broken instead of wondering where the number went; the
+      // note commands refuse to touch such a document (see `notesLocked`).
+      span.classList.add('fo-note', 'is-missing');
+      span.dataset.skip = '1';
+      span.contentEditable = 'false';
+      span.textContent = '?';
+      span.setAttribute('aria-label', t('office.noteMissing'));
       return span;
     }
     const inner = el('span');
@@ -609,6 +711,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     paraEls = [];
     units = [];
     unitOfPara = [];
+    recountNotes();
     if (!m) return;
     const blocks = m.blocks as DocBlock[];
     const counters = new Map<string, number>();
@@ -640,6 +743,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     const old = paraEls[i];
     const m = doc();
     if (!old || !m) { renderFlow(); return; }
+    recountNotes();
     const counters = new Map<string, number>();
     // List counters depend on the paragraphs before: recount cheaply.
     for (let k = 0; k < i; k++) {
@@ -858,6 +962,53 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     return { node: p, offset: fill ? [...p.childNodes].indexOf(fill) : p.childNodes.length };
   }
 
+  /**
+   * The note reference the caret is sitting against in the page: the one before it (Backspace) or
+   * the one after it (Delete). A reference is zero-width, so the paragraph's offsets say the same
+   * thing on both of its sides — the DOM boundary is the only witness of which side the caret is on.
+   */
+  function noteAtCaret(direction: 'before' | 'after'): { blockId: number; runIndex: number } | null {
+    const s = window.getSelection();
+    if (!s || !s.rangeCount || !s.isCollapsed) return null;
+    const range = s.getRangeAt(0);
+    const p = paraOf(range.startContainer);
+    if (!p || !flow.contains(p)) return null;
+    const badge = touchingNote(range.startContainer, range.startOffset, direction, p);
+    if (!badge) return null;
+    const block = blocksNow()[Number(p.dataset.i)];
+    const runIndex = Number(badge.dataset.note);
+    if (!block || !Number.isInteger(runIndex)) return null;
+    return { blockId: block.id, runIndex };
+  }
+
+  /** The note badge touching a caret boundary inside `p`, walking out to the paragraph itself. */
+  function touchingNote(container: Node, offset: number, direction: 'before' | 'after', p: HTMLElement): HTMLElement | null {
+    const asBadge = (n: Node | undefined): HTMLElement | null =>
+      n instanceof HTMLElement && n.classList.contains('fo-note') ? n : null;
+    let node: Node | null = container;
+    let off = offset;
+    while (node) {
+      // The paragraph itself is the last level: past it there is nothing to delete from.
+      const atParagraph = node === p;
+      if (node.nodeType === Node.TEXT_NODE) {
+        // Inside a run's text there is no element on that side unless the boundary is its very edge.
+        const text = node as Text;
+        if ((direction === 'before' ? off : text.data.length - off) !== 0) return null;
+      } else {
+        const kids = [...node.childNodes];
+        if (direction === 'before' ? off > 0 : off < kids.length) {
+          return asBadge(direction === 'before' ? kids[off - 1] : kids[off]);
+        }
+      }
+      if (atParagraph) return null;
+      const parent: Node | null = node.parentNode;
+      if (!parent) return null;
+      off = [...parent.childNodes].indexOf(node as ChildNode) + (direction === 'after' ? 1 : 0);
+      node = parent;
+    }
+    return null;
+  }
+
   function setCaret(from: Pos, to: Pos = from): void {
     const pa = paraEls[from.b];
     const pb = paraEls[to.b];
@@ -1028,6 +1179,12 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
   function del(sel: Sel, back: boolean, word: boolean): void {
     if (removeSelectedImage()) return;
     if (!sel.collapsed) { deleteRange(sel); return; }
+    // A note reference has no text at all, so the paragraph's offsets cannot say whether the caret
+    // sits before the number or after it — only the page can. Backspace against the number deletes
+    // the note, and Delete against its other side does the same; both go through `removeNote`, so
+    // the note's text leaves the file with its reference.
+    const touching = noteAtCaret(back ? 'before' : 'after');
+    if (touching) { deleteNote(touching.blockId, touching.runIndex); return; }
     const blocks = blocksNow();
     const block = blocks[sel.from.b];
     if (!block || block.locked) return;
@@ -1388,6 +1545,152 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     insertBlocksAfter([{ id: nextId++, runs: [{ t: 'opaque', text: '\n', xml: '', kind: 'page' }] }, emptyBlock(nextId++)], [undefined, undefined]);
   }
 
+  /* ─────────────────────────── footnotes & endnotes ─────────────────────────── */
+
+  /**
+   * One undoable edit over every paragraph a note command changed. Inserting or deleting a note
+   * renumbers the references that follow it — which may live in OTHER paragraphs — so each changed
+   * paragraph is committed, and all of them travel as a single undo step (the way a batch of
+   * revision verdicts does). Comparing by identity is exact: `insertNote`/`removeNote`/`setNoteText`
+   * return the very same objects for the paragraphs they did not touch.
+   */
+  function noteEdit(next: readonly DocBlock[], key: string): Edit | null {
+    const m = doc();
+    if (!m?.blocks) return null;
+    const edits = next.flatMap((block, i) => (block === m.blocks?.[i]
+      ? []
+      : [blockSplice(i, sliceOf(m, i, 1), { blocks: [block], formats: [m.formats?.[i]] }, key)]));
+    if (!edits.length) return null;
+    if (edits.length === 1) return edits[0];
+    return {
+      key,
+      apply: (model) => edits.reduce((acc, edit) => edit.apply(acc), model),
+      revert: (model) => [...edits].reverse().reduce((acc, edit) => edit.revert(acc), model),
+    };
+  }
+
+  /**
+   * Commits what a note command produced and redraws the page: a reference appeared, vanished or
+   * moved, so the numbers of other references may have changed with it — only a full redraw can be
+   * trusted to show that. `focus` opens the notes panel on the note that was just inserted.
+   */
+  function applyNoteEdit(next: readonly DocBlock[], key: string, caret: Pos | null, focus?: { blockId: number; runIndex: number }): void {
+    const edit = noteEdit(next, key);
+    if (!edit) return;
+    if (focus) { sideOpen = true; sideTab = 'notes'; }
+    ctx.commit(edit);
+    renderFlow();
+    if (mode === 'draft') renderDraft();
+    renderSide();
+    if (caret) setCaret(caret);
+    ctx.refresh();
+    if (focus) focusNote(focus.blockId, focus.runIndex);
+  }
+
+  /**
+   * Where a note about to be inserted goes: the caret, or the end of the last paragraph when the
+   * caret was never placed (the same fallback the table and picture commands use).
+   */
+  function noteAnchor(): Pos | null {
+    const blocks = doc()?.blocks ?? [];
+    const sel = targetRange();
+    if (sel) return blocks[sel.from.b] ? sel.from : null;
+    const last = blocks.length - 1;
+    if (last < 0) return null;
+    return { b: last, o: blockText(blocks[last]).length };
+  }
+
+  /**
+   * The note references the file holds but this app could not read. A comment is not one of them:
+   * a comment mark has no note by design. Anything else here means the package is broken in a way
+   * that would make the save rebuild the notes part from the model alone — so nothing about notes
+   * is changed while one exists, and the owner is told why instead of losing the file's notes.
+   */
+  function unreadableNotes(): number {
+    let count = 0;
+    for (const block of doc()?.blocks ?? []) {
+      for (const run of block.runs) {
+        if (run.t === 'opaque' && run.kind === 'note' && !run.note && run.ref !== 'comment') count += 1;
+      }
+    }
+    return count;
+  }
+
+  /** True when a note command must refuse: the file holds a note this app could not read. */
+  function notesLocked(): boolean {
+    if (!unreadableNotes()) return false;
+    ctx.setStatus(t('office.noteUnreadable'));
+    return true;
+  }
+
+  /**
+   * Inserts a footnote or an endnote at the caret. The reference is a zero-width run, so the
+   * paragraph is split at the caret first and the note goes exactly between the two halves; the
+   * note's own text starts empty and is typed in the panel that opens.
+   */
+  function insertNoteAt(kind: NoteKind): void {
+    const m = doc();
+    if (!m?.blocks || !ctx.editable() || notesLocked()) return;
+    const pos = noteAnchor();
+    const block = pos ? m.blocks[pos.b] : undefined;
+    if (!pos || !block) return;
+    if (block.locked) { ctx.setStatus(t('office.noteLocked')); return; }
+    const offset = clamp(pos.o, 0, blockText(block).length);
+    const runs = splitRunsAt(block.runs, offset);
+    const at = runIndexAt(runs, offset);
+    const split = m.blocks.map((b, i) => (i === pos.b ? { ...b, runs } : b));
+    const { blocks: next } = insertNote(split, block.id, at, kind);
+    applyNoteEdit(next, `note:add:${kind}`, { b: pos.b, o: offset }, { blockId: block.id, runIndex: at });
+    ctx.setStatus(t('office.noteAdded'));
+  }
+
+  /** Deletes a note — through `removeNote`, so its text goes with the reference and nothing is left behind. */
+  function deleteNote(blockId: number, runIndex: number): void {
+    const m = doc();
+    const index = (m?.blocks ?? []).findIndex((b) => b.id === blockId);
+    const block = index >= 0 ? m?.blocks?.[index] : undefined;
+    if (!m?.blocks || !block || !ctx.editable() || notesLocked()) return;
+    const run = block.runs[runIndex];
+    if (run?.t !== 'opaque' || run.kind !== 'note' || !run.note) return;
+    const at = runTextOffset(block.runs, runIndex);
+    applyNoteEdit(removeNote(m.blocks, blockId, runIndex), 'note:del', { b: index, o: at });
+    ctx.setStatus(t('office.noteDeleted'));
+  }
+
+  /** Writes the text typed into a note's own field into the model (the page itself does not move). */
+  function editNote(blockId: number, runIndex: number, text: string): void {
+    const m = doc();
+    if (!m?.blocks || !ctx.editable() || notesLocked()) return;
+    const edit = noteEdit(setNoteText(m.blocks, blockId, runIndex, text), `note:text:${blockId}:${runIndex}`);
+    if (!edit) return;
+    // No redraw: a note's text is not drawn on the page, and redrawing the panel would take the
+    // focus out of the field the owner is typing in. The key merges a burst of typing into one step.
+    ctx.commit(edit);
+    ctx.refresh();
+  }
+
+  /** Puts the caret in a note's field in the panel, and brings that field into view. */
+  function focusNote(blockId: number, runIndex: number): void {
+    const field = noteField(blockId, runIndex);
+    if (!field) return;
+    field.focus({ preventScroll: true });
+    field.setSelectionRange(field.value.length, field.value.length);
+    field.scrollIntoView({ block: 'nearest' });
+  }
+
+  function noteField(blockId: number, runIndex: number): HTMLTextAreaElement | null {
+    return side.querySelector<HTMLTextAreaElement>(`.fo-note-field[data-note="${blockId}:${runIndex}"]`);
+  }
+
+  /** Opens the notes panel, optionally on one note (the reference that was tapped in the page). */
+  function openNotes(blockId?: number, runIndex?: number): void {
+    sideOpen = true;
+    sideTab = 'notes';
+    renderSide();
+    ctx.refresh();
+    if (blockId !== undefined && runIndex !== undefined) focusNote(blockId, runIndex);
+  }
+
   function headings(): Array<{ b: number; level: number; text: string }> {
     const m = doc();
     const out: Array<{ b: number; level: number; text: string }> = [];
@@ -1484,6 +1787,63 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
 
   /* ─────────────────────────── the side panel ─────────────────────────── */
 
+  /* ─────────────────────────── the notes panel ─────────────────────────── */
+
+  /**
+   * The Notes tab: every note of the document in reading order — the footnotes, then the endnotes,
+   * each with its own numbering — with its text in a field and a delete button that is always
+   * visible. Nothing here needs a hover, and every control is the size the phone layout asks for.
+   */
+  function renderNotes(body: HTMLElement): void {
+    const entries = documentNotes(doc()?.blocks ?? []);
+    if (!entries.length) {
+      body.append(emptyState('footnote', t('office.notesEmpty')));
+      return;
+    }
+    for (const kind of ['footnote', 'endnote'] as const) {
+      const list = entries.filter((entry) => entry.kind === kind);
+      if (!list.length) continue;
+      body.append(el('div', 'fo-notes-group', t(kind === 'footnote' ? 'office.footnotesTitle' : 'office.endnotesTitle')));
+      for (const entry of list) body.append(noteCard(entry));
+    }
+    if (!ctx.editable()) body.append(el('p', 'fo-panel-note', t('office.notesReadOnly')));
+  }
+
+  /** One note in the panel: its number, its text, and the two things that can be done to it. */
+  function noteCard(entry: NoteEntry): HTMLElement {
+    const card = el('div', 'fo-note-card');
+    const head = el('div', 'fo-note-head');
+    const badge = el('span', `fo-note-badge is-${entry.kind}`, String(entry.number));
+    badge.setAttribute('aria-hidden', 'true');
+    head.append(badge);
+    card.append(head);
+    const field = el('textarea', 'fo-note-field');
+    field.value = entry.text;
+    field.rows = 2;
+    field.dir = 'auto';
+    field.readOnly = !ctx.editable();
+    field.dataset.note = `${entry.blockId}:${entry.runIndex}`;
+    field.setAttribute('aria-label', t('office.noteTextLabel', { n: entry.number }));
+    field.addEventListener('input', () => editNote(entry.blockId, entry.runIndex, field.value));
+    card.append(field);
+    const actions = el('div', 'fo-note-actions');
+    const go = el('button', 'fo-note-btn', t('office.showInDocument'));
+    go.type = 'button';
+    go.addEventListener('click', () => {
+      const index = (doc()?.blocks ?? []).findIndex((b) => b.id === entry.blockId);
+      if (index < 0) return;
+      paraEls[index]?.scrollIntoView({ block: 'center' });
+      setCaret({ b: index, o: runTextOffset(doc()?.blocks?.[index]?.runs ?? [], entry.runIndex) });
+    });
+    const remove = el('button', 'fo-note-btn is-danger', t('office.noteDelete', { n: entry.number }));
+    remove.type = 'button';
+    remove.disabled = !ctx.editable();
+    remove.addEventListener('click', () => deleteNote(entry.blockId, entry.runIndex));
+    actions.append(go, remove);
+    card.append(actions);
+    return card;
+  }
+
   function renderSide(): void {
     side.hidden = !sideOpen;
     root.classList.toggle('has-side', sideOpen);
@@ -1491,7 +1851,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     const head = el('div', 'fo-panel-head');
     const tabs = el('div', 'fo-panel-tabs');
     tabs.setAttribute('role', 'tablist');
-    for (const [id, label] of [['nav', t('office.navigator')], ['comments', t('office.comments')]] as const) {
+    for (const [id, label] of [['nav', t('office.navigator')], ['notes', t('office.notesPanel')], ['comments', t('office.comments')]] as const) {
       const b = el('button', 'fo-panel-tab', label);
       b.type = 'button';
       b.setAttribute('role', 'tab');
@@ -1511,6 +1871,8 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
         item.addEventListener('click', () => { paraEls[h.b]?.scrollIntoView({ block: 'start', behavior: 'smooth' }); setCaret({ b: h.b, o: 0 }); });
         body.append(item);
       }
+    } else if (sideTab === 'notes') {
+      renderNotes(body);
     } else {
       const comments = look?.comments ?? [];
       if (!comments.length) body.append(emptyState('comment', t('office.commentsEmpty')));
@@ -1535,7 +1897,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     side.replaceChildren(head, body);
   }
 
-  function emptyState(name: 'navigator' | 'comment', text: string): HTMLElement {
+  function emptyState(name: 'navigator' | 'comment' | 'footnote', text: string): HTMLElement {
     const box = el('div', 'fo-empty-small');
     box.append(icon(name, 32), el('p', undefined, text));
     return box;
@@ -1682,6 +2044,14 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
               { type: 'button', id: 'date', icon: 'date', label: t('office.insertDate'), showLabel: true, enabled: can, run: insertDate },
             ],
           },
+          {
+            // A note is inserted at the caret and its text is typed in the panel that opens, so the
+            // whole feature is reachable from the ribbon alone — no hover, no right-click.
+            label: t('office.groupNotes'), controls: [
+              { type: 'button', id: 'footnote', icon: 'footnote', label: t('office.insertFootnote'), showLabel: true, enabled: can, run: () => insertNoteAt('footnote') },
+              { type: 'button', id: 'endnote', icon: 'endnote', label: t('office.insertEndnote'), showLabel: true, enabled: can, run: () => insertNoteAt('endnote') },
+            ],
+          },
         ],
       },
       {
@@ -1705,6 +2075,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
               { type: 'button', id: 'pageview', icon: 'pageView', label: t('office.pageView'), showLabel: true, pressed: () => mode === 'page', run: () => setMode('page') },
               { type: 'button', id: 'draftview', icon: 'draft', label: t('office.draftView'), showLabel: true, pressed: () => mode === 'draft', run: () => setMode('draft') },
               { type: 'button', id: 'navigator', icon: 'navigator', label: t('office.navigator'), showLabel: true, pressed: () => sideOpen && sideTab === 'nav', run: () => { sideOpen = !(sideOpen && sideTab === 'nav'); sideTab = 'nav'; renderSide(); } },
+              { type: 'button', id: 'notespanel', icon: 'footnote', label: t('office.notesPanel'), showLabel: true, pressed: () => sideOpen && sideTab === 'notes', run: () => { sideOpen = !(sideOpen && sideTab === 'notes'); sideTab = 'notes'; renderSide(); ctx.refresh(); } },
             ],
           },
           {

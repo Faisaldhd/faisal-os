@@ -41,19 +41,26 @@ function notesOf(blocks: readonly DocBlock[]): { kind: string; id: number; text:
 }
 
 describe('footnotes in a real .docx', () => {
-  it('writes the parts Word expects, with the separators and ids that are not reserved', async () => {
+  it('writes the parts Word expects, with the structural notes and ids that are not reserved', async () => {
     const bytes = await rebuildDocxRich(TWO_NOTES);
     expect(bytes).toBeTruthy();
     const archive = readRawZip(bytes!);
     const part = await entryData(archive, 'word/footnotes.xml');
     expect(part).toBeTruthy();
     const xml = new TextDecoder().decode(part!);
-    expect(xml).toContain('w:type="separator" w:id="0"');
-    expect(xml).toContain('w:type="continuationSeparator" w:id="1"');
+    // Word's own convention: the two structural notes are -1 and 0 and carry `w:type`.
+    expect(xml).toContain('w:type="separator" w:id="-1"');
+    expect(xml).toContain('w:type="continuationSeparator" w:id="0"');
     expect(xml).toContain('الحاشية الأولى');
     expect(xml).toContain('الحاشية الثانية');
-    // No real note may sit on the reserved ids.
-    expect(/w:footnote w:id="[01]"(?![^>]*w:type=)/.test(xml)).toBe(false);
+    // No real note may sit on a structural id (or on the id of another note).
+    const tags = xml.match(/<w:footnote [^>]*>/g) ?? [];
+    const structural = tags.filter((tag) => /w:type=/.test(tag));
+    const real = tags.filter((tag) => !/w:type=/.test(tag));
+    expect(structural).toHaveLength(2);
+    const ids = tags.map((tag) => Number(/w:id="(-?\d+)"/.exec(tag)?.[1]));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(real.map((tag) => Number(/w:id="(-?\d+)"/.exec(tag)?.[1]))).toEqual([2, 3]);
     // The endnote went to its own part, not into the footnote one.
     expect(xml).not.toContain('نهاية الوثيقة');
     const endnotes = await entryData(archive, 'word/endnotes.xml');

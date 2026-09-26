@@ -17,7 +17,7 @@
  * Nothing here touches the DOM: the result is plain data, tested on its own.
  */
 import { entryData, readRawZip, type RawZip } from '../zip';
-import { FIRST_NOTE_ID, NOTES_PART, readNotesPart, type NoteKind } from './footnotes';
+import { NOTES_PART, readNotesPart, type NoteKind } from './footnotes';
 import type { NoteInfo } from './types';
 
 /**
@@ -40,8 +40,9 @@ function noteOfReference(xml: string, element: XmlElement): NoteInfo | undefined
   const footnote = child(element, 'footnoteReference');
   const target = footnote ?? child(element, 'endnoteReference');
   if (!target) return undefined;
+  // Any finite id: Word numbers its own notes from 1, and a producer may use any numbering it likes.
   const id = Number(attrLocal(xml, target, 'id'));
-  if (!Number.isFinite(id) || id < FIRST_NOTE_ID) return undefined;
+  if (!Number.isFinite(id)) return undefined;
   const found = noteLookup.get(noteKey(footnote ? 'footnote' : 'endnote', id));
   return found ? { ...found } : undefined;
 }
@@ -704,8 +705,11 @@ function runOf(xml: string, element: XmlElement, index: number, theme: Theme, st
     if (br) return { t: 'opaque', text, xml: raw, kind: 'break', src: index };
     if (child(element, 'fldChar') || child(element, 'instrText')) return { t: 'opaque', text, xml: raw, kind: 'field', src: index };
     if (child(element, 'footnoteReference') || child(element, 'endnoteReference') || child(element, 'commentReference')) {
-      const note = noteOfReference(xml, element);
-      return { t: 'opaque', text, xml: raw, kind: 'note', ...(note ? { note } : {}), src: index };
+      // What the run points at travels with it even when the target could not be read: a comment is
+      // a mark with no note by design, while a note reference with no note is a broken package.
+      const ref = child(element, 'footnoteReference') ? 'footnote' : child(element, 'endnoteReference') ? 'endnote' : 'comment';
+      const note = ref === 'comment' ? undefined : noteOfReference(xml, element);
+      return { t: 'opaque', text, xml: raw, kind: 'note', ref, ...(note ? { note } : {}), src: index };
     }
     return { t: 'opaque', text, xml: raw, kind: 'object', src: index };
   }

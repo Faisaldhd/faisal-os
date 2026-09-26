@@ -424,6 +424,25 @@
 .fo-comment-text { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .fo-link { appearance: none; border: 0; background: none; color: var(--app-blue); font: inherit; cursor: pointer; padding: 4px 0; min-height: 32px; }
 
+/* footnotes and endnotes (الحواشي): the number sits in the body, the text in the panel.
+   The badge is a MARKER (data-skip in the view), so it inherits the paragraph's font and colour
+   family and only tints like an editor affordance — the caret blue this editor already uses. */
+.fo-note { color: #1a3fd1; font-size: .72em; line-height: 1; vertical-align: super; cursor: pointer; user-select: none; -webkit-user-select: none; }
+.fo-note.is-endnote { color: #7a3fa0; }
+.fo-note.is-missing { color: #a4642a; }
+.fo-notes-group { margin: 4px 0 0; font-size: 12px; font-weight: 700; color: var(--app-text-2); }
+.fo-note-card { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border: 1px solid var(--app-hairline); border-radius: 10px; background: var(--app-glass-strong); }
+.fo-note-head { display: flex; align-items: center; gap: 8px; }
+.fo-note-badge { display: grid; place-items: center; min-width: 32px; height: 32px; padding: 0 6px; border-radius: 8px; background: rgba(91, 141, 239, .18); color: var(--app-blue); font: 700 13px var(--faisal-font); font-variant-numeric: tabular-nums; }
+.fo-note-badge.is-endnote { background: rgba(200, 137, 75, .18); color: var(--app-copper); }
+.fo-note-field { box-sizing: border-box; width: 100%; min-height: 44px; padding: 8px 12px; border: 1px solid var(--app-hairline-strong); border-radius: 6px; background: var(--app-glass); color: var(--app-text); font: 14px/1.6 var(--faisal-font); resize: vertical; overflow-wrap: anywhere; }
+.fo-note-field:focus { outline: 2px solid var(--app-copper-2); outline-offset: 0; }
+.fo-note-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.fo-note-btn { flex: 1 1 auto; min-height: 44px; min-width: 64px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--app-line, #d5d9e1); background: var(--app-field, #fff); color: inherit; font: 13px var(--faisal-font); cursor: pointer; }
+.fo-note-btn.is-danger { border-color: var(--app-copper, #C8894B); }
+.fo-note-btn:hover { background: rgba(127, 127, 127, .12); }
+.fo-note-btn:disabled { opacity: .5; cursor: default; }
+
 /* ───────────────────────────── sheet ───────────────────────────── */
 
 .fo-calc { flex: 1; min-height: 0; display: flex; flex-direction: column; }
