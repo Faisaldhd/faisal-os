@@ -88,12 +88,37 @@ export function cxnHolderXml(st: DeckCxn | null, end: DeckCxn | null, ids?: Read
 }
 
 /**
+ * `<p:grpSp>`: one group with its own box and its children in the group's own coordinates.
+ *
+ * `chOff`/`chExt` are the child coordinate space, which is what lets a diagram be built at the
+ * origin and then placed anywhere on the slide. Children carry their own `cNvPr id`s, all unique
+ * on the slide, and a connector inside the group names its neighbours by those ids — the same
+ * `a:stCxn`/`a:endCxn` a top-level connector uses, which is how PowerPoint keeps a diagram wired
+ * when the group is dragged.
+ */
+export function groupXml(s: DeckShape, id: number, name: string, ids?: ReadonlyMap<number, number>): string {
+  const box = s.box ?? { x: 0, y: 0, w: s.w, h: s.h };
+  const children = s.children.map((c) => shapeXml(c, ids?.get(c.uid) ?? c.spid, null, ids)).join('');
+  return `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="${id}" name="${name}"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>` +
+    `<p:grpSpPr><a:xfrm><a:off x="${int(s.x)}" y="${int(s.y)}"/><a:ext cx="${int(s.w)}" cy="${int(s.h)}"/>` +
+    `<a:chOff x="${int(box.x)}" y="${int(box.y)}"/><a:chExt cx="${int(box.w)}" cy="${int(box.h)}"/></a:xfrm></p:grpSpPr>` +
+    `${children}</p:grpSp>`;
+}
+
+/** True when a group can be written as it is: this writer has no way to relate a picture's bytes
+ *  from inside a group, so the save is refused rather than emitting a picture with no media. */
+export function groupWritable(s: DeckShape): boolean {
+  return s.children.every((c) => (c.kind === 'group' ? groupWritable(c) : c.kind !== 'pic' && c.kind !== 'frame'));
+}
+
+/**
  * The markup of a new shape. `id` is its `cNvPr id` on the slide; `embed` the
  * relationship id of a picture's media part; `ids` the ids of the other new shapes, so a
  * connector can name the shapes it is attached to.
  */
 export function shapeXml(s: DeckShape, id: number, embed: string | null, ids?: ReadonlyMap<number, number>): string {
-  const name = xmlText(s.name || `${s.kind === 'pic' ? 'Picture' : s.kind === 'line' ? 'Connector' : s.kind === 'text' ? 'TextBox' : 'Shape'} ${id}`);
+  const name = xmlText(s.name || `${s.kind === 'pic' ? 'Picture' : s.kind === 'line' ? 'Connector' : s.kind === 'text' ? 'TextBox' : s.kind === 'group' ? 'Group' : 'Shape'} ${id}`);
+  if (s.kind === 'group') return groupXml(s, id, name, ids);
   if (s.kind === 'pic') {
     return `<p:pic><p:nvPicPr><p:cNvPr id="${id}" name="${name}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>` +
       `<p:blipFill><a:blip r:embed="${embed ?? ''}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
@@ -119,8 +144,7 @@ export function shapeXml(s: DeckShape, id: number, embed: string | null, ids?: R
 }
 
 /** `<p:transition>` for the two kinds this app writes; '' for none. */
-export function transitionXml(t: Transition): string {
-  if (t === 'fade') return '<p:transition spd="med"><p:fade/></p:transition>';
+export function transitionXml(t: Transition): string {  if (t === 'fade') return '<p:transition spd="med"><p:fade/></p:transition>';
   if (t === 'push') return '<p:transition spd="med"><p:push dir="u"/></p:transition>';
   return '';
 }
