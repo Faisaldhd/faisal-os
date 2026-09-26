@@ -139,8 +139,7 @@ export const ICONS = {
   footnote: ['M7 3h7l3 3v9H7z', 'M14 3v3h3', 'M10 8h4', 'M10 11h2', 'M4 16h16', 'M11 21v-4l-1 .6'],
   // A note at the end of the document: the page with its text, and the number after the last line.
   endnote: ['M6 3h12v18H6z', 'M9 7h6', 'M9 10h6', 'M9 13h3', 'M17 17v4', 'M16 18l1-.7'],
-  // The sheet (Phase C): a link, the format painter's brush, conditional formatting's banded cells.
-  link: ['M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1', 'M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'],
+  // The sheet (Phase C): the format painter's brush, conditional formatting's banded cells.
   brush: ['M14 4h6v6l-7 7', 'M13 17l-3-3 7-7', 'M10 14c-2 0-4 1.5-4 4 0 1-1 2-2 2h5a4 4 0 0 0 4-3'],
   condFormat: ['M4 4h16v16H4z', 'M4 10h16', 'M4 15h16', 'F:M5 5h6v4H5z', 'F:M5 11h10v3H5z'],
 } as const;
