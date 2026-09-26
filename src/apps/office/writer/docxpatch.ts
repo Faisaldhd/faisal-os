@@ -655,15 +655,18 @@ export async function patchDocxRich(
   /* footnotes / endnotes: the note's text lives in its own part, the reference in the body */
   for (const kind of ['footnote', 'endnote'] as const) {
     const notes = notesOf(current, kind);
-    // A file whose notes this app did not read keeps its part untouched: never delete notes that
-    // are not in the model.
-    if (!notes.length) continue;
+    // A file whose notes this app did not READ keeps its part untouched: never delete notes that are
+    // not in the model. That is measured on the BASELINE — the model that same archive reads as — and
+    // not on the current one, so deleting the LAST note really deletes it: an empty model over a
+    // baseline that had notes means the owner removed them, and leaving the part behind would keep
+    // their text in the file with nothing pointing at it.
+    if (!notes.length && !notesOf(baseline, kind).length) continue;
     const partPath = NOTES_PART[kind];
     const before = (await loadPart(archive, partPath))?.xml ?? null;
     const xml = buildNotesPart(kind, notes);
     if (xml === before) continue;
     if (before) replacements.set(partPath, utf8(xml));
-    else {
+    else if (notes.length) {
       additions.set(partPath, utf8(xml));
       relsXml = addRelationship(relsXml ?? null, kind === 'footnote' ? 'footnotes' : 'endnotes', kind === 'footnote' ? 'footnotes.xml' : 'endnotes.xml').xml;
       ctXml = ensureOverride(ctXml ?? contentTypes([]), `/${partPath}`, NOTES_CONTENT_TYPE[kind]);
