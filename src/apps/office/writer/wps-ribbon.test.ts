@@ -158,6 +158,26 @@ describe('the Writer ribbon, tab by tab', () => {
     expect(model().page?.cols).toBe(2);
   });
 
+  it('puts a page number in the footer from Insert › Page number, draws it, and undoes it', async () => {
+    const { controls, model, host, ctx } = mount([para(0, 'hello')]);
+    const menu = controls.get('pagenumber') as MenuControl;
+    const pick = (label: string): void => {
+      const item = menu.items().find((i) => i !== 'sep' && i.label === label);
+      if (!item || item === 'sep') throw new Error(`no ${label}`);
+      item.run();
+    };
+    pick(t('office.wPageNumberOfTotal'));
+    expect(model().headerFooter?.footer?.text).toBe(`${t('office.wPageWord')} \u0001 ${t('office.wOfWord')} \u0002`);
+    pick(t('office.wPageNumberBottom'));
+    expect(model().headerFooter?.footer).toEqual({ text: '\u0001', align: 'center' });
+    await new Promise((r) => setTimeout(r, 120));
+    expect(host.querySelector('.fo-footer .fo-hfline')?.textContent).toBe('1');
+    pick(t('office.wPageNumberRemove'));
+    expect(model().headerFooter?.footer).toBeNull();
+    ctx.undo();
+    expect(model().headerFooter?.footer?.text).toBe('\u0001');
+  });
+
   it('reads in either language', () => {
     const was = getLocale();
     setLocale('en');

@@ -834,7 +834,13 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
 
   function pageGeometry(): { w: number; h: number; top: number; bottom: number; left: number; right: number; cols: number; colGap: number } {
     const p = pageSetup();
-    return { w: p.w * PX, h: p.h * PX, top: p.top * PX, bottom: p.bottom * PX, left: p.left * PX, right: p.right * PX, cols: Math.max(1, p.cols), colGap: p.colGap * PX };
+    // As in Word, a header taller than the top margin pushes the text down (and a footer, up).
+    const hf = hfNow();
+    const lines = (x: HfSetup | null): number => (x ? x.text.split('\n').filter((l) => l.trim()).length : 0);
+    const LINE = 9 * 1.4;
+    const top = Math.max(p.top, lines(hf.header) ? p.header + lines(hf.header) * LINE + 6 : 0);
+    const bottom = Math.max(p.bottom, lines(hf.footer) ? p.footer + lines(hf.footer) * LINE + 6 : 0);
+    return { w: p.w * PX, h: p.h * PX, top: top * PX, bottom: bottom * PX, left: p.left * PX, right: p.right * PX, cols: Math.max(1, p.cols), colGap: p.colGap * PX };
   }
 
   /** The document's default header and footer: the owner's, else the file's. */
@@ -889,8 +895,10 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     box.title = t(kind === 'headers' ? 'office.wHeader' : 'office.wFooter');
     if (kind === 'headers') box.style.top = `${setup.header * PX}px`;
     else box.style.bottom = `${setup.footer * PX}px`;
-    box.style.insetInline = `${g.left}px ${g.right}px`;
-    const band = kind === 'headers' ? g.top - setup.header * PX : g.bottom - setup.footer * PX;
+    // Word's margins are physical edges: left is left in either direction.
+    box.style.left = `${g.left}px`;
+    box.style.right = `${g.right}px`;
+    const band = kind === 'headers' ? setup.top * PX - setup.header * PX : setup.bottom * PX - setup.footer * PX;
     box.style.minHeight = `${Math.max(12, band - 4)}px`;
     box.addEventListener('dblclick', () => { if (can() && !reading) openHeaderFooter(kind === 'headers' ? 'header' : 'footer'); });
     return box;
@@ -906,7 +914,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     flow.style.left = fluid ? '' : `${g.left}px`;
     flow.style.top = fluid ? '' : `${g.top}px`;
     flow.style.height = '';
-    for (const unit of units) { unit.style.top = ''; unit.style.insetInlineStart = ''; unit.style.position = ''; }
+    for (const unit of units) { unit.style.top = ''; unit.style.left = ''; unit.style.position = ''; }
     if (fluid) {
       for (const unit of units) unit.style.marginTop = '';
       pageLayer.replaceChildren();
@@ -936,7 +944,8 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
         if (u.style.marginTop) u.style.marginTop = '';
         u.style.position = 'relative';
         u.style.top = `${slot.page * stride + slot.y - natural}px`;
-        u.style.insetInlineStart = `${slot.col * (colWidth + g.colGap)}px`;
+        // Columns run left to right, as Word lays out a section that is not marked right-to-left.
+        u.style.left = `${slot.col * (colWidth + g.colGap)}px`;
         natural += heights[k];
       });
       pages = laid.pages;
@@ -960,7 +969,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       page.append(hfZone('headers', g, k), hfZone('footers', g, k));
       for (let c = 1; c < cols; c++) {
         const rule = el('div', 'fo-colrule');
-        rule.style.insetInlineStart = `${g.left + c * colWidth + (c - 0.5) * g.colGap}px`;
+        rule.style.left = `${g.left + c * colWidth + (c - 0.5) * g.colGap}px`;
         rule.style.top = `${g.top}px`;
         rule.style.bottom = `${g.bottom}px`;
         page.append(rule);
@@ -2248,7 +2257,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     error.setAttribute('role', 'alert');
     body.append(top.row, bottom.row, left.row, right.row, error);
     openModal({
-      title: t('office.wMargins'), body, okLabel: t('office.close'), cancelLabel: t('office.cancel'), host: ctx.host(),
+      title: t('office.wMargins'), body, okLabel: t('office.apply'), cancelLabel: t('office.cancel'), host: ctx.host(),
       onOk: () => {
         const pt = (v: number): number => Math.round(v * (72 / 2.54) * 10) / 10;
         const next = withMargins(page, { top: pt(top.value()), bottom: pt(bottom.value()), left: pt(left.value()), right: pt(right.value()) });
@@ -2287,7 +2296,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     const pageNo = checkField(t('office.wHfPageNo'), (now.footer?.text ?? '').includes(PAGE_FIELD));
     body.append(header.row, headerAlign.row, footer.row, footerAlign.row, pageNo.row, el('p', 'fo-form-hint', t('office.wHfFieldsHint')));
     openModal({
-      title: t('office.wHeaderFooterTitle'), body, okLabel: t('office.close'), cancelLabel: t('office.cancel'), host: ctx.host(),
+      title: t('office.wHeaderFooterTitle'), body, okLabel: t('office.apply'), cancelLabel: t('office.cancel'), host: ctx.host(),
       onOk: () => {
         const make = (value: string, visual: string): HfSetup | null => {
           const text = stored(value).trim();
@@ -2308,7 +2317,11 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     const now = hfNow();
     const strip = (hf: HfSetup | null): HfSetup | null => {
       if (!hf) return null;
-      const text = hf.text.split('\n').map((line) => line.replace(/[\u0001\u0002]/g, '').replace(new RegExp(`\\s*(${t('office.wPageWord')}|${t('office.wOfWord')})\\s*$`), '').trim()).filter(Boolean).join('\n');
+      // "Page X of Y" (as this app writes it, in either language) goes whole; a lone field goes too.
+      const ofTotal = [['Page', 'of'], ['صفحة', 'من'], [t('office.wPageWord'), t('office.wOfWord')]].map(([p, o]) => `${p} ${PAGE_FIELD} ${o} ${PAGES_FIELD}`);
+      const text = hf.text.split('\n')
+        .map((line) => ofTotal.reduce((acc, pattern) => acc.split(pattern).join(''), line).replace(/[\u0001\u0002]/g, '').trim())
+        .filter(Boolean).join('\n');
       return text ? { ...hf, text } : null;
     };
     const withNumber = (hf: HfSetup | null, field: string): HfSetup => {
@@ -2382,7 +2395,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     }));
     body.append(family.row, size.row, ...toggles.map((x) => x.field.row));
     openModal({
-      title: t('office.wFontTitle'), body, okLabel: t('office.close'), cancelLabel: t('office.cancel'), host: ctx.host(),
+      title: t('office.wFontTitle'), body, okLabel: t('office.apply'), cancelLabel: t('office.cancel'), host: ctx.host(),
       onOk: () => {
         const patch: PropsPatch = {};
         if (family.value() !== now.font) patch.font = family.value();
@@ -2415,7 +2428,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
     const indentF = decimalField(t('office.wIndentPt'), indentOf(keep.from.b), 0, 288, 1);
     body.append(alignF.row, dirF.row, lineF.row, indentF.row);
     openModal({
-      title: t('office.wParagraphTitle'), body, okLabel: t('office.close'), cancelLabel: t('office.cancel'), host: ctx.host(),
+      title: t('office.wParagraphTitle'), body, okLabel: t('office.apply'), cancelLabel: t('office.cancel'), host: ctx.host(),
       onOk: () => {
         const dir = dirF.value() === 'rtl' ? 'rtl' : 'ltr';
         const logicalRtl = dir === 'rtl' && (now.logicalRtl || now.dir !== dir);
