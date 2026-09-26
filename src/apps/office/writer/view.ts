@@ -2646,7 +2646,8 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
   /** The phone's bottom sheets: formatting, inserting, and a table's rows and columns — large targets only. */
   function openPhoneSheet(anchor: HTMLElement, which: 'format' | 'insert' | 'table'): void {
     const box = el('div', 'fo-sheet-ribbon');
-    const group = (label: string): HTMLElement => { box.append(el('div', 'fo-sheet-group', label)); const g = el('div', 'fo-sheet-grid'); box.append(g); return g; };
+    // A heading per group; a sheet with one group has only the sheet's own title (no repeated heading).
+    const group = (label: string | null): HTMLElement => { if (label) box.append(el('div', 'fo-sheet-group', label)); const g = el('div', 'fo-sheet-grid'); box.append(g); return g; };
     const act = (g: HTMLElement, name: Parameters<typeof button>[0], label: string, run: () => void, pressed?: boolean): void => {
       const b = button(name, label, () => { pop.close(); run(); }, { showLabel: true, keepFocus: true, toggle: pressed !== undefined });
       if (pressed !== undefined) b.setAttribute('aria-pressed', String(pressed));
@@ -2691,7 +2692,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       const styles = group(t('office.groupStyles'));
       for (const item of styleItems()) act(styles, 'styles', item.label, item.run, item.checked);
     } else if (which === 'insert') {
-      const g = group(t('office.tabInsert'));
+      const g = group(null);
       act(g, 'table', t('office.insertTable'), askTable);
       act(g, 'image', t('office.insertImage'), insertImage);
       act(g, 'link', t('office.wLink'), openLinkDialog);
@@ -2701,7 +2702,7 @@ export function createWriter(ctx: EditorContext, look: DocLook | null): Editor {
       act(g, 'date', t('office.insertDate'), insertDate);
       act(g, 'symbol', t('office.wSymbol'), () => openSymbols(anchor));
     } else {
-      const g = group(t('office.wTableOps'));
+      const g = group(null);
       act(g, 'rowAdd', t('office.wRowAbove'), () => runTableOp('rowAbove'));
       act(g, 'rowAdd', t('office.wRowBelow'), () => runTableOp('rowBelow'));
       act(g, 'colAdd', t('office.wColBefore'), () => runTableOp('colBefore'));
